@@ -1,0 +1,305 @@
+<script>
+var BOOT=null;
+var ITEMS=[];
+var EDITING=-1;
+var REVISION_REQUEST_ID='';
+var CURRENT_DETAIL=null;
+var FORM_URL='';
+var EVIDENCE_URL='';
+
+function gas(name) {
+  var args = Array.prototype.slice.call(arguments,1);
+  return new Promise(function(resolve,reject){
+    var runner=google.script.run.withSuccessHandler(resolve).withFailureHandler(reject);
+    runner[name].apply(runner,args);
+  });
+}
+
+function $(id){ return document.getElementById(id); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function rp(n){ return 'Rp'+Number(n||0).toLocaleString('id-ID'); }
+function humanStatus(s){ return String(s||'').replaceAll('_',' ').replace(/\b\w/g,function(x){return x.toUpperCase();}); }
+function showError(e){ $('error').textContent=(e&&e.message)||String(e);$('error').classList.add('show');window.scrollTo({top:0,behavior:'smooth'}); }
+function showOk(s){ $('ok').textContent=s;$('ok').classList.add('show');setTimeout(function(){$('ok').classList.remove('show');},4500); }
+function clearAlerts(){ $('error').classList.remove('show');$('ok').classList.remove('show'); }
+
+async function init(){
+  try{
+    BOOT=await gas('bootstrap');
+    $('roleChip').textContent=BOOT.user.role;
+    $('userChip').textContent=BOOT.user.name+' · '+BOOT.user.email;
+    $('paymentDate').value=BOOT.today;
+    routeRole();
+    renderDashboard(BOOT.dashboard);
+  }catch(e){showError(e);}
+}
+
+function routeRole(){
+  if(BOOT.user.role==='REQUESTOR'){
+    $('requestorView').classList.remove('hidden');
+    $('approvalView').classList.add('hidden');
+    var e=BOOT.user;
+    $('employeeGrid').innerHTML=[
+      ['Name',e.name],['Employee ID',e.employeeId],['Department',e.department],['Location',e.location],['Division',e.division]
+    ].map(function(x){return '<div class="field"><label>'+esc(x[0])+'</label><div class="readonly">'+esc(x[1])+'</div></div>';}).join('');
+  }else{
+    $('requestorView').classList.add('hidden');
+    $('approvalView').classList.remove('hidden');
+    $('queueTitle').textContent=BOOT.user.role==='REVIEWER'?'Reviewer Dashboard':'Approval Dashboard';
+    $('queueHint').textContent=BOOT.user.role==='REVIEWER'?'Requests waiting for Dimas Jenar review':'Requests reviewed by Dimas Jenar and waiting for Ervan Mardianto';
+  }
+}
+
+async function refreshDashboard(){
+  clearAlerts();
+  try{
+    var d=await gas('refreshDashboard');
+    BOOT.dashboard=d;
+    renderDashboard(d);
+  }catch(e){showError(e);}
+}
+
+function renderDashboard(d){
+  if(d.role==='REQUESTOR') renderMyRequests(d.requests||[]);
+  else renderQueue(d.requests||[]);
+}
+
+function renderMyRequests(rows){
+  var body=$('myRequests');
+  if(!rows.length){body.innerHTML='<tr><td colspan="6" class="hint">No expense requests yet.</td></tr>';return;}
+  body.innerHTML=rows.map(function(r){
+    var revise=(r.status==='REVIEW_REJECTED'||r.status==='APPROVAL_REJECTED')
+      ? '<button class="btn secondary" onclick="event.stopPropagation();beginRevision(\''+esc(r.requestId)+'\')">Revise</button>'
+      : '';
+    return '<tr class="queue-row" onclick="openDetail(\''+esc(r.requestId)+'\')">'+
+      '<td><b>'+esc(r.refNo)+'</b><br>'+revise+'</td>'+
+      '<td>'+esc(r.requestDate)+'</td>'+
+      '<td class="money">'+rp(r.total)+'</td>'+
+      '<td><span class="status '+esc(r.status)+'">'+esc(humanStatus(r.status))+'</span></td>'+
+      '<td>R'+esc(r.revision)+'</td>'+
+      '<td>'+esc(r.lastReason||'')+'</td></tr>';
+  }).join('');
+}
+
+function renderQueue(rows){
+  var body=$('queueBody');
+  if(!rows.length){body.innerHTML='<tr><td colspan="6" class="hint">No pending requests.</td></tr>';return;}
+  body.innerHTML=rows.map(function(r){
+    return '<tr class="queue-row" onclick="openDetail(\''+esc(r.requestId)+'\')">'+
+      '<td><b>'+esc(r.refNo)+'</b></td><td>'+esc(r.employeeName)+'</td><td>'+esc(r.requestDate)+'</td>'+
+      '<td class="money">'+rp(r.total)+'</td><td>R'+esc(r.revision)+'</td>'+
+      '<td><span class="status '+esc(r.status)+'">'+esc(humanStatus(r.status))+'</span></td></tr>';
+  }).join('');
+}
+
+function syncEvidenceLabel(){
+  var files=Array.from($('evidence').files||[]);
+  $('evidenceLabel').textContent=files.length?files.length+' file(s) selected':'Attach at least 1 file';
+}
+
+function syncAdd(){
+  var ok=$('category').value.trim()&&$('purpose').value.trim()&&$('paymentDate').value&&Number($('amount').value)>0&&$('evidence').files.length>0;
+  $('addBtn').disabled=!ok;
+}
+
+function clearBuilder(){
+  $('category').value='';$('purpose').value='';$('amount').value='';$('evidence').value='';
+  $('paymentDate').value=BOOT.today;
+  $('evidenceLabel').textContent='Attach at least 1 file';
+  EDITING=-1;$('addBtn').textContent='+ Add';syncAdd();
+}
+
+function addPayment(){
+  clearAlerts();
+  var files=Array.from($('evidence').files||[]);
+  if(!files.length){showError('Evidence is required before adding a payment.');return;}
+  var item={
+    category:$('category').value.trim(),
+    purpose:$('purpose').value.trim(),
+    paymentDate:$('paymentDate').value,
+    amount:Math.round(Number($('amount').value)),
+    evidenceFiles:files,
+    evidenceNames:files.map(function(f){return f.name;})
+  };
+  if(!item.category||!item.purpose||!item.paymentDate||!item.amount){showError('Complete all payment fields.');return;}
+  if(EDITING>=0) ITEMS[EDITING]=item;
+  else {
+    if(ITEMS.length>=BOOT.maxItems){showError('Maximum '+BOOT.maxItems+' payments.');return;}
+    ITEMS.push(item);
+  }
+  clearBuilder();
+  renderItems();
+}
+
+function editPayment(i){
+  var x=ITEMS[i];
+  $('category').value=x.category;$('purpose').value=x.purpose;$('paymentDate').value=x.paymentDate;$('amount').value=x.amount;
+  $('evidence').value='';$('evidenceLabel').textContent='Re-attach evidence to update this payment';
+  EDITING=i;$('addBtn').textContent='Update';syncAdd();
+  $('composer').scrollIntoView({behavior:'smooth'});
+}
+
+function deletePayment(i){
+  ITEMS.splice(i,1);
+  if(EDITING===i)clearBuilder();
+  renderItems();
+}
+
+function renderItems(){
+  var body=$('itemsBody');
+  if(!ITEMS.length)body.innerHTML='<tr><td colspan="7" class="hint">No payments added yet.</td></tr>';
+  else body.innerHTML=ITEMS.map(function(x,i){
+    var ev=x.evidenceFiles&&x.evidenceFiles.length?x.evidenceFiles.length+' file(s)':'<span style="color:#b42318">Evidence required</span>';
+    return '<tr><td>'+(i+1)+'</td><td>'+esc(x.category)+'</td><td>'+esc(x.purpose)+'</td><td>'+esc(x.paymentDate)+'</td>'+
+      '<td>'+ev+'</td><td class="money">'+rp(x.amount)+'</td>'+
+      '<td><button class="btn secondary" onclick="editPayment('+i+')">Edit</button> <button class="btn danger" onclick="deletePayment('+i+')">Delete</button></td></tr>';
+  }).join('');
+  $('total').textContent=rp(ITEMS.reduce(function(s,x){return s+Number(x.amount||0);},0));
+  var ready=ITEMS.length>0&&ITEMS.every(function(x){return x.evidenceFiles&&x.evidenceFiles.length;});
+  $('submitBtn').disabled=!ready;
+}
+
+async function mergeEvidencePdf(){
+  var PDFDocument=PDFLib.PDFDocument;
+  var StandardFonts=PDFLib.StandardFonts;
+  var rgb=PDFLib.rgb;
+  var out=await PDFDocument.create();
+  var font=await out.embedFont(StandardFonts.Helvetica);
+  var bold=await out.embedFont(StandardFonts.HelveticaBold);
+
+  for(var i=0;i<ITEMS.length;i++){
+    var item=ITEMS[i];
+    var cover=out.addPage([595.28,841.89]);
+    cover.drawText('PAYMENT '+String(i+1).padStart(2,'0'),{x:50,y:775,size:18,font:bold,color:rgb(.04,.22,.41)});
+    cover.drawText('Category: '+item.category,{x:50,y:738,size:11,font:font});
+    cover.drawText('Purpose: '+item.purpose.substring(0,85),{x:50,y:715,size:11,font:font});
+    cover.drawText('Payment Date: '+item.paymentDate,{x:50,y:692,size:11,font:font});
+    cover.drawText('Amount: IDR '+Number(item.amount).toLocaleString('en-US'),{x:50,y:669,size:11,font:bold});
+
+    for(var j=0;j<item.evidenceFiles.length;j++){
+      var file=item.evidenceFiles[j];
+      var bytes=new Uint8Array(await file.arrayBuffer());
+      if(file.type==='application/pdf'||file.name.toLowerCase().endsWith('.pdf')){
+        var src=await PDFDocument.load(bytes);
+        var pages=await out.copyPages(src,src.getPageIndices());
+        pages.forEach(function(p){out.addPage(p);});
+      }else{
+        var image;
+        if(file.type==='image/png'||file.name.toLowerCase().endsWith('.png')) image=await out.embedPng(bytes);
+        else image=await out.embedJpg(bytes);
+        var page=out.addPage([595.28,841.89]);
+        var maxW=515,maxH=760;
+        var scale=Math.min(maxW/image.width,maxH/image.height,1);
+        var w=image.width*scale,h=image.height*scale;
+        page.drawImage(image,{x:(595.28-w)/2,y:(841.89-h)/2,width:w,height:h});
+      }
+    }
+  }
+  return await out.save();
+}
+
+function bytesToBase64(bytes){
+  var binary='',chunk=0x8000;
+  for(var i=0;i<bytes.length;i+=chunk)binary+=String.fromCharCode.apply(null,bytes.subarray(i,Math.min(i+chunk,bytes.length)));
+  return btoa(binary);
+}
+
+async function submitExpense(){
+  clearAlerts();
+  if(!$('submitBtn').disabled){
+    var btn=$('submitBtn');var old=btn.textContent;btn.disabled=true;btn.textContent='Preparing evidence…';
+    try{
+      var pdf=await mergeEvidencePdf();
+      if(pdf.length>BOOT.maxEvidenceTotalMb*1024*1024)throw new Error('Merged evidence exceeds '+BOOT.maxEvidenceTotalMb+' MB.');
+      btn.textContent='Submitting…';
+      var payload={
+        revisionRequestId:REVISION_REQUEST_ID||'',
+        items:ITEMS.map(function(x){return {category:x.category,purpose:x.purpose,paymentDate:x.paymentDate,amount:x.amount,evidenceNames:x.evidenceNames};}),
+        evidencePdfBase64:bytesToBase64(pdf)
+      };
+      var r=await gas('submitExpense',payload);
+      showOk((REVISION_REQUEST_ID?'Revision submitted: ':'Expense submitted: ')+r.refNo);
+      resetComposer();
+      await refreshDashboard();
+    }catch(e){showError(e);}
+    finally{btn.textContent=old;renderItems();}
+  }
+}
+
+async function beginRevision(requestId){
+  clearAlerts();
+  try{
+    var r=await gas('getRequestForRevision',requestId);
+    REVISION_REQUEST_ID=r.requestId;
+    ITEMS=r.items.map(function(x){return {category:x.category,purpose:x.purpose,paymentDate:x.paymentDate,amount:x.amount,evidenceFiles:[],evidenceNames:[]};});
+    $('composerTitle').textContent='Revise '+r.refNo;
+    $('revisionNotice').innerHTML='<b>'+esc(humanStatus(r.status))+'</b><br>'+esc(r.lastReason)+'<br><span class="hint">Re-attach evidence for every payment. The Ref No stays the same.</span>';
+    $('revisionNotice').classList.remove('hidden');
+    $('cancelRevision').classList.remove('hidden');
+    renderItems();
+    $('composer').scrollIntoView({behavior:'smooth'});
+  }catch(e){showError(e);}
+}
+
+function resetComposer(){
+  ITEMS=[];EDITING=-1;REVISION_REQUEST_ID='';
+  $('composerTitle').textContent='Create Expense Request';
+  $('revisionNotice').classList.add('hidden');$('revisionNotice').innerHTML='';
+  $('cancelRevision').classList.add('hidden');
+  clearBuilder();renderItems();
+}
+
+function docUrl(d){
+  var bin=atob(d.base64),arr=new Uint8Array(bin.length);
+  for(var i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
+  return URL.createObjectURL(new Blob([arr],{type:d.mimeType||'application/pdf'}));
+}
+function revokeDocs(){if(FORM_URL)URL.revokeObjectURL(FORM_URL);if(EVIDENCE_URL)URL.revokeObjectURL(EVIDENCE_URL);FORM_URL='';EVIDENCE_URL='';}
+
+async function openDetail(requestId){
+  clearAlerts();
+  $('modal').classList.add('show');$('detailRef').textContent='Loading…';$('decisionBox').classList.add('hidden');$('revisionAction').classList.add('hidden');
+  $('formFrame').src='about:blank';$('evidenceFrame').src='about:blank';
+  try{
+    var all=await Promise.all([gas('getRequestDetail',requestId),gas('getDocumentBase64',requestId,'form'),gas('getDocumentBase64',requestId,'evidence')]);
+    CURRENT_DETAIL=all[0];var r=all[0];
+    $('detailRef').textContent=r.refNo;
+    $('detailSub').textContent=r.employeeName+' · '+humanStatus(r.status)+' · Revision '+r.revision;
+    $('detailMeta').innerHTML=[
+      ['Requestor',r.employeeName],['Employee ID',r.employee.employeeId],['Request Date',r.requestDate],['Total',rp(r.total)],['Status',humanStatus(r.status)],['Revision','R'+r.revision]
+    ].map(function(x){return '<div class="field"><label>'+esc(x[0])+'</label><div class="readonly">'+esc(x[1])+'</div></div>';}).join('');
+    revokeDocs();FORM_URL=docUrl(all[1]);EVIDENCE_URL=docUrl(all[2]);$('formFrame').src=FORM_URL;$('evidenceFrame').src=EVIDENCE_URL;
+    $('history').innerHTML=(r.actions||[]).length?r.actions.map(function(a){
+      return '<div class="hist"><div class="hint">'+esc(String(a.timestamp))+'</div><div><b>'+esc(a.action.replaceAll('_',' '))+'</b> · '+esc(a.actorName)+' <span class="hint">('+esc(a.actorRole)+')</span>'+(a.reason?'<br><span style="color:#b42318">Reason: '+esc(a.reason)+'</span>':'')+'</div></div>';
+    }).join(''):'<div class="hint">No workflow history.</div>';
+
+    if(r.canReview||r.canApprove){
+      $('decisionBox').classList.remove('hidden');$('rejectReason').value='';syncReject();
+      $('approveBtn').textContent=r.canApprove?'Final Approve':'Approve & Forward';
+    }
+    if(r.canRevise){
+      $('revisionAction').classList.remove('hidden');
+      $('revisionAction').innerHTML='<button class="btn primary" onclick="closeDetail();beginRevision(\''+esc(r.requestId)+'\')">Revise & Resubmit</button>';
+    }
+  }catch(e){closeDetail();showError(e);}
+}
+
+function syncReject(){$('rejectBtn').disabled=!$('rejectReason').value.trim();}
+async function decide(action){
+  if(!CURRENT_DETAIL)return;
+  var reason=$('rejectReason').value.trim();
+  if(action==='REJECT'&&!reason){showError('Rejection reason is required.');return;}
+  $('approveBtn').disabled=true;$('rejectBtn').disabled=true;
+  try{
+    if(BOOT.user.role==='REVIEWER')await gas('reviewRequest',{requestId:CURRENT_DETAIL.requestId,action:action,reason:reason});
+    else await gas('approveRequest',{requestId:CURRENT_DETAIL.requestId,action:action,reason:reason});
+    closeDetail();showOk(action==='APPROVE'?'Request approved successfully.':'Request rejected and notification sent.');await refreshDashboard();
+  }catch(e){showError(e);}
+  finally{$('approveBtn').disabled=false;syncReject();}
+}
+
+function closeDetail(){revokeDocs();$('modal').classList.remove('show');CURRENT_DETAIL=null;}
+function backdropClose(e){if(e.target===$('modal'))closeDetail();}
+
+window.addEventListener('load',init);
+</script>
