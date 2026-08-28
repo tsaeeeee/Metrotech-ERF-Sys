@@ -1,0 +1,8 @@
+node_modules/
+.env
+secrets/
+signatures/*
+!signatures/README.md
+data/
+*.log
+.DS_Store
