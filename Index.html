@@ -1,0 +1,77 @@
+<!doctype html>
+<html>
+<head>
+  <base target="_top">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <?!= include_('Styles'); ?>
+  <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+</head>
+<body>
+<div class="shell">
+  <header class="top">
+    <div><h1>Expense Approval System</h1><div class="sub">Metrotech Indonesia</div></div>
+    <div class="chips"><span id="roleChip" class="chip">Loading…</span><span id="userChip" class="chip pale">Google Workspace</span></div>
+  </header>
+
+  <div id="error" class="alert error"></div>
+  <div id="ok" class="alert ok"></div>
+
+  <main id="requestorView" class="hidden">
+    <section class="card">
+      <div class="section-head"><div class="title">Employee Information</div><button class="btn secondary" onclick="resetComposer()">+ New Request</button></div>
+      <div id="employeeGrid" class="grid5"></div>
+    </section>
+
+    <section id="composer" class="card">
+      <div class="section-head"><div class="title" id="composerTitle">Create Expense Request</div><button id="cancelRevision" class="btn secondary hidden" onclick="resetComposer()">Cancel Revision</button></div>
+      <div id="revisionNotice" class="notice hidden"></div>
+      <div class="builder">
+        <div class="field"><label>Category</label><input id="category" oninput="syncAdd()" placeholder="Category"></div>
+        <div class="field wide"><label>Purpose of Payment</label><input id="purpose" oninput="syncAdd()" placeholder="Purpose"></div>
+        <div class="field"><label>Payment Date</label><input id="paymentDate" type="date" onchange="syncAdd()"></div>
+        <div class="field"><label>Amount (IDR)</label><input id="amount" type="number" min="1" step="1" oninput="syncAdd()" placeholder="0"></div>
+        <div class="field"><label>Evidence *</label><input id="evidence" type="file" accept="application/pdf,image/png,image/jpeg" multiple onchange="syncAdd();syncEvidenceLabel()"><div id="evidenceLabel" class="hint">Attach at least 1 file</div></div>
+        <button id="addBtn" class="btn secondary" disabled onclick="addPayment()">+ Add</button>
+      </div>
+      <div class="hint mt">A payment cannot be added without evidence. Evidence stays in your browser until Submit, then all evidence is merged into one PDF.</div>
+
+      <div class="table-wrap"><table><thead><tr><th>#</th><th>Category</th><th>Purpose</th><th>Date</th><th>Evidence</th><th class="money">Amount</th><th></th></tr></thead><tbody id="itemsBody"></tbody></table></div>
+      <div class="total"><span>Total</span><span id="total">Rp0</span></div>
+      <div class="actions"><button id="submitBtn" class="btn primary" disabled onclick="submitExpense()">Submit Expense</button></div>
+    </section>
+
+    <section class="card">
+      <div class="title">My Requests</div>
+      <div class="table-wrap"><table><thead><tr><th>Ref No</th><th>Date</th><th>Total</th><th>Status</th><th>Revision</th><th>Reason</th></tr></thead><tbody id="myRequests"></tbody></table></div>
+    </section>
+  </main>
+
+  <main id="approvalView" class="hidden">
+    <section class="card">
+      <div class="section-head"><div><div class="title" id="queueTitle">Pending Requests</div><div id="queueHint" class="hint"></div></div><button class="btn secondary" onclick="refreshDashboard()">Refresh</button></div>
+      <div class="table-wrap"><table><thead><tr><th>Ref No</th><th>Requestor</th><th>Date</th><th>Total</th><th>Revision</th><th>Status</th></tr></thead><tbody id="queueBody"></tbody></table></div>
+    </section>
+  </main>
+</div>
+
+<div id="modal" class="modal" onclick="backdropClose(event)">
+  <div class="modal-card">
+    <div class="modal-head"><div><h2 id="detailRef">Request</h2><div id="detailSub" class="hint"></div></div><button class="btn secondary" onclick="closeDetail()">Close</button></div>
+    <div id="detailMeta" class="meta"></div>
+    <div class="split">
+      <div class="viewer"><div class="viewer-head">Expense Request Form</div><iframe id="formFrame"></iframe></div>
+      <div class="viewer"><div class="viewer-head">Evidence PDF</div><iframe id="evidenceFrame"></iframe></div>
+    </div>
+    <div id="decisionBox" class="decision hidden">
+      <div class="field grow"><label>Rejection Reason <span class="hint">(required when rejecting)</span></label><textarea id="rejectReason" oninput="syncReject()" placeholder="Explain what needs to be corrected…"></textarea></div>
+      <button id="rejectBtn" class="btn danger" disabled onclick="decide('REJECT')">Reject</button>
+      <button id="approveBtn" class="btn success" onclick="decide('APPROVE')">Approve</button>
+    </div>
+    <div id="revisionAction" class="decision hidden"></div>
+    <section class="history"><div class="title">Workflow History</div><div id="history"></div></section>
+  </div>
+</div>
+
+<?!= include_('Client'); ?>
+</body>
+</html>
