@@ -356,4 +356,5 @@ async function logout(){
   await loadUsers();
 }
 
+loadSystemStatus();
 loadMe();
