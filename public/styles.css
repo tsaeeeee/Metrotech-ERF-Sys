@@ -23,3 +23,6 @@ h1{margin:0;color:var(--navy);font-size:26px}h2{margin:0 0 12px;color:var(--navy
 
 @media(max-width:1000px){.payment-form{grid-template-columns:1fr 1fr}.grid{grid-template-columns:repeat(2,1fr)}.detail-summary{grid-template-columns:repeat(3,1fr)}.pdf-split{grid-template-columns:1fr}}
 @media(max-width:760px){header{align-items:flex-start;flex-direction:column}.users,.grid,.payment-form,.detail-summary{grid-template-columns:1fr}.card{overflow:auto}.form-footer{align-items:stretch;flex-direction:column}.submit{width:100%}.modal{padding:0}.modal-panel{width:100vw;height:100vh;border-radius:0}.decision-actions{flex-direction:column}.decision-actions .btn{width:100%}}
+
+.auth-warning{grid-column:1/-1;border:1px solid #f4d19b;background:#fff7e8;color:#7a4b00;border-radius:10px;padding:14px}
+.google-login{max-width:420px}
