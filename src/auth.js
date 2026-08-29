@@ -13,7 +13,7 @@ export function configureAuth() {
         const email = String(profile.emails?.[0]?.value || '').toLowerCase();
         if (!email) return done(null, false, { message: 'Google account email was not returned.' });
 
-        const domain = String(process.env.ALLOWED_GOOGLE_DOMAIN || '').toLowerCase();
+        const domain = String(process.env.ALLOWED_GOOGLE_DOMAIN || '').toLowerCase().trim();
         if (domain && !email.endsWith('@' + domain)) {
           return done(null, false, { message: 'Company Google Workspace account required.' });
         }
@@ -25,11 +25,8 @@ export function configureAuth() {
     }
   ));
 
-  passport.serializeUser((user, done) => done(null, user));
+  passport.serializeUser((user, done) => done(null, { email:user.email }));
   passport.deserializeUser((user, done) => done(null, user));
 }
 
-export function requireAuth(req, res, next) {
-  if (req.isAuthenticated?.() && req.user?.email) return next();
-  return res.status(401).json({ error: 'Authentication required.' });
-}
+export { passport };
