@@ -60,8 +60,7 @@ async function loadUsers(){
 async function login(email){
   try{
     await api('/api/dev/login',{method:'POST',body:JSON.stringify({email})});
-    await loadSystemStatus();
-loadMe();
+    await loadMe();
   }catch(e){msg(e.message,'err')}
 }
 
