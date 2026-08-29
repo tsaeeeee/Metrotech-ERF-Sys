@@ -1,12 +1,13 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { google } from 'googleapis';
 
 const SIGNATURE_DIR=process.env.SIGNATURE_DIR || '/data/signatures';
+const PDF_MODE=String(process.env.PDF_MODE || 'mock').toLowerCase();
 
 function money(n){ return 'Rp ' + Number(n||0).toLocaleString('id-ID'); }
 function dateText(v){ return String(v||'').slice(0,10); }
-
 async function ensureParent(filePath){ await fs.mkdir(path.dirname(filePath),{recursive:true}); }
 
 export async function buildEvidencePdf({request,items,files,outPath}) {
@@ -67,7 +68,139 @@ async function embedSignature(doc, filename){
   }catch{return null}
 }
 
-export async function buildFormPdf({request,items,outPath}) {
+function signatureVisibility(request){
+  return {
+    requestor:true,
+    reviewer:['PENDING_APPROVAL','APPROVAL_REJECTED','APPROVED'].includes(request.status),
+    approver:request.status==='APPROVED'
+  };
+}
+
+async function stampSignaturesOnPdf(pdfBytes,request){
+  const doc=await PDFDocument.load(pdfBytes);
+  const page=doc.getPages()[0];
+  if(!page) return pdfBytes;
+
+  const visible=signatureVisibility(request);
+  const sigs=[
+    {file:request.requestor_signature,show:visible.requestor,x:Number(process.env.SIG_REQUESTOR_X||75),y:Number(process.env.SIG_REQUESTOR_Y||88)},
+    {file:request.reviewer_signature,show:visible.reviewer,x:Number(process.env.SIG_REVIEWER_X||265),y:Number(process.env.SIG_REVIEWER_Y||88)},
+    {file:request.approver_signature,show:visible.approver,x:Number(process.env.SIG_APPROVER_X||430),y:Number(process.env.SIG_APPROVER_Y||88)}
+  ];
+  const maxW=Number(process.env.SIG_WIDTH||90);
+  const maxH=Number(process.env.SIG_HEIGHT||40);
+  for(const s of sigs){
+    if(!s.show) continue;
+    const img=await embedSignature(doc,s.file);
+    if(!img) continue;
+    const scale=Math.min(maxW/img.width,maxH/img.height);
+    page.drawImage(img,{x:s.x,y:s.y,w:img.width*scale,h:img.height*scale});
+  }
+  return await doc.save();
+}
+
+function sheetA1(title,cell){
+  return `'${String(title).replaceAll("'","''")}'!${cell}`;
+}
+
+async function buildGoogleSheetFormPdf({request,items,outPath}){
+  const templateId=process.env.TEMPLATE_SPREADSHEET_ID;
+  if(!templateId) throw new Error('TEMPLATE_SPREADSHEET_ID is not configured.');
+
+  const auth=new google.auth.GoogleAuth({
+    scopes:[
+      'https://www.googleapis.com/auth/drive',
+      'https://www.googleapis.com/auth/spreadsheets'
+    ]
+  });
+  const authClient=await auth.getClient();
+  const drive=google.drive({version:'v3',auth:authClient});
+  const sheets=google.sheets({version:'v4',auth:authClient});
+
+  let tempId=null;
+  try{
+    const copied=await drive.files.copy({
+      fileId:templateId,
+      requestBody:{name:`TEMP ${request.ref_no} r${request.revision}`}
+    });
+    tempId=copied.data.id;
+    if(!tempId) throw new Error('Failed to create temporary template copy.');
+
+    const meta=await sheets.spreadsheets.get({
+      spreadsheetId:tempId,
+      fields:'sheets.properties'
+    });
+    const requestedTitle=String(process.env.TEMPLATE_SHEET_NAME||'').trim();
+    const targetSheet=meta.data.sheets?.find(s=>s.properties?.title===requestedTitle) || meta.data.sheets?.[0];
+    if(!targetSheet?.properties?.title) throw new Error('Template does not contain a usable sheet.');
+    const title=targetSheet.properties.title;
+    const gid=targetSheet.properties.sheetId;
+
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId:tempId,
+      range:sheetA1(title,'B16:G31')
+    });
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId:tempId,
+      range:sheetA1(title,'G32')
+    });
+
+    const data=[
+      {range:sheetA1(title,'G3'),values:[[dateText(request.request_date)]]},
+      {range:sheetA1(title,'G4'),values:[[request.ref_no]]},
+      {range:sheetA1(title,'D9'),values:[[request.employee_name]]},
+      {range:sheetA1(title,'D10'),values:[[request.employee_id]]},
+      {range:sheetA1(title,'D11'),values:[[request.department]]},
+      {range:sheetA1(title,'D12'),values:[[request.location]]},
+      {range:sheetA1(title,'D13'),values:[[request.division]]},
+      {range:sheetA1(title,'G32'),values:[[Number(request.total)]]}
+    ];
+
+    items.slice(0,16).forEach((it,i)=>{
+      const row=16+i;
+      data.push(
+        {range:sheetA1(title,`B${row}`),values:[[it.category]]},
+        {range:sheetA1(title,`E${row}`),values:[[it.purpose]]},
+        {range:sheetA1(title,`F${row}`),values:[[dateText(it.payment_date || it.paymentDate)]]},
+        {range:sheetA1(title,`G${row}`),values:[[Number(it.amount)]]}
+      );
+    });
+
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId:tempId,
+      requestBody:{valueInputOption:'USER_ENTERED',data}
+    });
+
+    const tokenResponse=await authClient.getAccessToken();
+    const token=typeof tokenResponse==='string'?tokenResponse:tokenResponse?.token;
+    if(!token) throw new Error('Could not obtain Google access token.');
+
+    const exportUrl=new URL(`https://docs.google.com/spreadsheets/d/${tempId}/export`);
+    exportUrl.searchParams.set('format','pdf');
+    exportUrl.searchParams.set('gid',String(gid));
+    exportUrl.searchParams.set('portrait','true');
+    exportUrl.searchParams.set('fitw','true');
+    exportUrl.searchParams.set('sheetnames','false');
+    exportUrl.searchParams.set('printtitle','false');
+    exportUrl.searchParams.set('pagenumbers','false');
+    exportUrl.searchParams.set('gridlines','false');
+    exportUrl.searchParams.set('fzr','false');
+
+    const response=await fetch(exportUrl,{headers:{Authorization:`Bearer ${token}`}});
+    if(!response.ok) throw new Error(`Google PDF export failed: HTTP ${response.status}`);
+    const exported=new Uint8Array(await response.arrayBuffer());
+    const stamped=await stampSignaturesOnPdf(exported,request);
+    await ensureParent(outPath);
+    await fs.writeFile(outPath,stamped);
+    return outPath;
+  } finally {
+    if(tempId){
+      try{await drive.files.delete({fileId:tempId})}catch{}
+    }
+  }
+}
+
+async function buildMockFormPdf({request,items,outPath}) {
   await ensureParent(outPath);
   const doc=await PDFDocument.create();
   const page=doc.addPage([595,842]);
@@ -92,7 +225,6 @@ export async function buildFormPdf({request,items,outPath}) {
     iy-=20;
   }
 
-  const x=[42,64,170,365,438,553];
   const top=620;
   page.drawRectangle({x:42,y:top,width:511,height:24,borderWidth:1,borderColor:rgb(.8,.84,.88),color:rgb(.96,.97,.98)});
   const heads=['#','Category','Purpose of Payment','Date','Amount'];
@@ -115,12 +247,11 @@ export async function buildFormPdf({request,items,outPath}) {
   page.drawText(money(request.total),{x:445,y:y-4,size:10,font:bold,color:navy});
 
   const sigY=82;
+  const visible=signatureVisibility(request);
   const sigCols=[
-    {label:'Prepared By',name:request.employee_name,file:request.requestor_signature,show:true,x:68},
-    {label:'Reviewed By',name:request.reviewer_name,file:request.reviewer_signature,
-     show:['PENDING_APPROVAL','APPROVAL_REJECTED','APPROVED'].includes(request.status),x:252},
-    {label:'Approved By',name:request.approver_name,file:request.approver_signature,
-     show:request.status==='APPROVED',x:430}
+    {label:'Prepared By',name:request.employee_name,file:request.requestor_signature,show:visible.requestor,x:68},
+    {label:'Reviewed By',name:request.reviewer_name,file:request.reviewer_signature,show:visible.reviewer,x:252},
+    {label:'Approved By',name:request.approver_name,file:request.approver_signature,show:visible.approver,x:430}
   ];
   for(const s of sigCols){
     page.drawText(s.label,{x:s.x,y:sigY+75,size:9,font:bold,color:grey});
@@ -137,4 +268,9 @@ export async function buildFormPdf({request,items,outPath}) {
   page.drawText(`Status: ${request.status} · Revision ${request.revision}`,{x:42,y:28,size:8,font:normal,color:grey});
   await fs.writeFile(outPath,await doc.save());
   return outPath;
+}
+
+export async function buildFormPdf(args) {
+  if(PDF_MODE==='google-sheet') return buildGoogleSheetFormPdf(args);
+  return buildMockFormPdf(args);
 }
