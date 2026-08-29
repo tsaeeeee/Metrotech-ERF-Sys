@@ -77,15 +77,34 @@ app.get('/auth/google/callback',(req,res,next)=>{
   return passport.authenticate('google',{failureRedirect:'/?auth=failed'})(req,res,()=>res.redirect('/'));
 });
 
-app.get('/api/dev/users', async (req,res)=>{
-  if(!DEV_AUTH) return res.sendStatus(404);
-  res.json({users:await listActiveEmployees()});
-});
+const DEV_ACCOUNTS=[
+  {
+    username:String(process.env.DEV_REQUESTOR_USERNAME||'tsabit').toLowerCase(),
+    password:String(process.env.DEV_REQUESTOR_PASSWORD||'dev123'),
+    email:String(process.env.DEV_REQUESTOR_EMAIL||'requestor-dev@metrotech.local').toLowerCase()
+  },
+  {
+    username:String(process.env.DEV_REVIEWER_USERNAME||'dimas').toLowerCase(),
+    password:String(process.env.DEV_REVIEWER_PASSWORD||'dev123'),
+    email:String(process.env.DEV_REVIEWER_EMAIL||'reviewer-dev@metrotech.local').toLowerCase()
+  },
+  {
+    username:String(process.env.DEV_APPROVER_USERNAME||'ervan').toLowerCase(),
+    password:String(process.env.DEV_APPROVER_PASSWORD||'dev123'),
+    email:String(process.env.DEV_APPROVER_EMAIL||'approver-dev@metrotech.local').toLowerCase()
+  }
+];
 
-app.post('/api/dev/login', async (req,res)=>{
-  if(!DEV_AUTH) return res.sendStatus(404);
-  const employee=await getEmployee(String(req.body.email||''));
-  if(!employee) return res.status(404).json({error:'Employee not found'});
+app.post('/api/login', async (req,res)=>{
+  if(!DEV_AUTH) return res.status(404).json({error:'Local login is disabled.'});
+  const username=String(req.body.username||'').trim().toLowerCase();
+  const password=String(req.body.password||'');
+  const account=DEV_ACCOUNTS.find(a=>a.username===username && a.password===password);
+  if(!account) return res.status(401).json({error:'Invalid username or password.'});
+
+  const employee=await getEmployee(account.email);
+  if(!employee) return res.status(403).json({error:'Login account is not mapped to an active employee.'});
+
   req.session.user={email:employee.email};
   res.json({ok:true,employee});
 });
