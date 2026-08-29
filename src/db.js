@@ -42,24 +42,23 @@ export async function listRequestsForEmployee(employee) {
     params=[employee.email];
   } else if (employee.role === 'REVIEWER') {
     q = `select id,ref_no,request_date,employee_name,total,status,revision,last_rejection_reason,updated_at
-         from requests where status='PENDING_REVIEW'
+         from requests where lower(reviewer_email)=lower($1) and status='PENDING_REVIEW'
          order by updated_at asc limit 100`;
-    params=[];
+    params=[employee.email];
   } else {
     q = `select id,ref_no,request_date,employee_name,total,status,revision,last_rejection_reason,updated_at
-         from requests where status='PENDING_APPROVAL'
+         from requests where lower(approver_email)=lower($1) and status='PENDING_APPROVAL'
          order by updated_at asc limit 100`;
-    params=[];
+    params=[employee.email];
   }
   const { rows } = await pool.query(q,params);
   return rows;
 }
 
-async function getWorkflowActorTx_(client, role) {
+async function getWorkflowActorTx(client, role) {
   const { rows } = await client.query(
     `select email,name,role,signature_file
-     from employees where role=$1 and active=true order by name limit 1`,
-    [role]
+     from employees where role=$1 and active=true order by name limit 1`, [role]
   );
   return rows[0] || null;
 }
@@ -68,68 +67,167 @@ export async function createExpenseRequest(employee, items) {
   const client = await pool.connect();
   try {
     await client.query('begin');
-
-    const reviewer = await getWorkflowActorTx_(client,'REVIEWER');
-    const approver = await getWorkflowActorTx_(client,'APPROVER');
+    const reviewer = await getWorkflowActorTx(client,'REVIEWER');
+    const approver = await getWorkflowActorTx(client,'APPROVER');
     if (!reviewer || !approver) throw new Error('Reviewer / Approver master data is incomplete.');
 
-    const dateResult = await client.query("select (now() at time zone 'Asia/Jakarta')::date as request_date");
-    const requestDate = dateResult.rows[0].request_date;
-
-    const counter = await client.query(
-      `insert into daily_counters(counter_date,last_sequence)
-       values($1,1)
-       on conflict(counter_date)
-       do update set last_sequence=daily_counters.last_sequence+1
-       returning last_sequence`,
-      [requestDate]
+    const { rows:dateRows } = await client.query("select (now() at time zone 'Asia/Jakarta')::date as request_date");
+    const requestDate = dateRows[0].request_date;
+    const { rows:counterRows } = await client.query(
+      `insert into daily_counters(counter_date,last_sequence) values($1,1)
+       on conflict(counter_date) do update set last_sequence=daily_counters.last_sequence+1
+       returning last_sequence`, [requestDate]
     );
-    const seq = Number(counter.rows[0].last_sequence);
-
-    const d = new Date(requestDate + 'T00:00:00Z');
-    const yyyy = String(d.getUTCFullYear());
-    const mm = String(d.getUTCMonth()+1).padStart(2,'0');
-    const dd = String(d.getUTCDate()).padStart(2,'0');
-    const refNo = `ERF-${yyyy}-${mm}${dd}-${String(seq).padStart(4,'0')}`;
+    const seq = Number(counterRows[0].last_sequence);
+    const compact = String(requestDate).slice(0,10).replaceAll('-','');
+    const refNo = `ERF-${compact.slice(0,4)}-${compact.slice(4)}-${String(seq).padStart(4,'0')}`;
     const total = items.reduce((s,x)=>s+Number(x.amount),0);
 
-    const ins = await client.query(
+    const { rows } = await client.query(
       `insert into requests(
-        ref_no,request_date,requester_email,employee_name,employee_id,
-        department,location,division,total,status,revision,
-        reviewer_email,approver_email
+        ref_no,request_date,requester_email,employee_name,employee_id,department,location,division,
+        total,status,revision,reviewer_email,approver_email
       ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,'PENDING_REVIEW',1,$10,$11)
-      returning id,ref_no,request_date,total,status,revision`,
-      [refNo,requestDate,employee.email,employee.name,employee.employee_id,
-       employee.department,employee.location,employee.division,total,
-       reviewer.email,approver.email]
+      returning *`,
+      [refNo,requestDate,employee.email,employee.name,employee.employee_id,employee.department,
+       employee.location,employee.division,total,reviewer.email,approver.email]
     );
-    const request = ins.rows[0];
-
-    for (let i=0;i<items.length;i++) {
-      const x=items[i];
-      await client.query(
-        `insert into request_items(
-          request_id,revision,line_no,category,purpose,payment_date,amount,evidence_names
-        ) values($1,1,$2,$3,$4,$5,$6,$7)`,
-        [request.id,i+1,x.category,x.purpose,x.paymentDate,x.amount,x.evidenceNames]
-      );
-    }
-
-    await client.query(
-      `insert into workflow_actions(
-        request_id,ref_no,revision,actor_email,actor_name,actor_role,
-        action,from_status,to_status,reason
-      ) values($1,$2,1,$3,$4,'REQUESTOR','SUBMITTED',null,'PENDING_REVIEW','')`,
-      [request.id,request.ref_no,employee.email,employee.name]
-    );
-
+    const request=rows[0];
+    await insertItems(client, request.id, 1, items);
+    await insertAction(client,request,employee,'SUBMITTED',null,'PENDING_REVIEW','');
     await client.query('commit');
     return request;
-  } catch (e) {
-    await client.query('rollback');
-    throw e;
-  } finally {
-    client.release();
+  } catch(e) {
+    await client.query('rollback'); throw e;
+  } finally { client.release(); }
+}
+
+async function insertItems(client, requestId, revision, items) {
+  for(let i=0;i<items.length;i++){
+    const x=items[i];
+    await client.query(
+      `insert into request_items(request_id,revision,line_no,category,purpose,payment_date,amount,evidence_names)
+       values($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [requestId,revision,i+1,x.category,x.purpose,x.paymentDate,x.amount,x.evidenceNames]
+    );
   }
+}
+
+async function insertAction(client, request, actor, action, fromStatus, toStatus, reason='') {
+  await client.query(
+    `insert into workflow_actions(
+      request_id,ref_no,revision,actor_email,actor_name,actor_role,action,from_status,to_status,reason
+    ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    [request.id,request.ref_no,request.revision,actor.email,actor.name,actor.role,action,fromStatus,toStatus,reason]
+  );
+}
+
+export async function getRequestDetail(id) {
+  const { rows } = await pool.query(
+    `select r.*,
+      req.signature_file as requestor_signature,
+      rev.name as reviewer_name, rev.signature_file as reviewer_signature,
+      app.name as approver_name, app.signature_file as approver_signature
+     from requests r
+     join employees req on req.email=r.requester_email
+     join employees rev on rev.email=r.reviewer_email
+     join employees app on app.email=r.approver_email
+     where r.id=$1`, [id]
+  );
+  if(!rows[0]) return null;
+  const request=rows[0];
+  const items=(await pool.query(
+    `select line_no,category,purpose,payment_date,amount,evidence_names
+     from request_items where request_id=$1 and revision=$2 order by line_no`,
+    [id,request.revision]
+  )).rows;
+  const actions=(await pool.query(
+    `select actor_name,actor_role,action,from_status,to_status,reason,created_at
+     from workflow_actions where request_id=$1 order by created_at,id`, [id]
+  )).rows;
+  return {request,items,actions};
+}
+
+export async function setDocumentPaths(id, formPath, evidencePath) {
+  const { rows } = await pool.query(
+    `update requests set form_pdf_path=coalesce($2,form_pdf_path),
+       evidence_pdf_path=coalesce($3,evidence_pdf_path),updated_at=now()
+     where id=$1 returning *`, [id,formPath,evidencePath]
+  );
+  return rows[0] || null;
+}
+
+export async function transitionRequest(id, actor, stage, decision, reason='') {
+  const client=await pool.connect();
+  try{
+    await client.query('begin');
+    const {rows}=await client.query('select * from requests where id=$1 for update',[id]);
+    const request=rows[0];
+    if(!request) throw Object.assign(new Error('Request not found.'),{status:404});
+    const approve=String(decision).toUpperCase()==='APPROVE';
+    const reject=String(decision).toUpperCase()==='REJECT';
+    if(!approve&&!reject) throw Object.assign(new Error('Decision must be APPROVE or REJECT.'),{status:400});
+    if(reject&&!String(reason).trim()) throw Object.assign(new Error('Rejection reason is required.'),{status:400});
+
+    let expected,toStatus,action,ownerEmail;
+    if(stage==='REVIEW'){
+      expected='PENDING_REVIEW'; ownerEmail=request.reviewer_email;
+      toStatus=approve?'PENDING_APPROVAL':'REVIEW_REJECTED';
+      action=approve?'REVIEW_APPROVED':'REVIEW_REJECTED';
+      if(actor.role!=='REVIEWER') throw Object.assign(new Error('Reviewer role required.'),{status:403});
+    } else {
+      expected='PENDING_APPROVAL'; ownerEmail=request.approver_email;
+      toStatus=approve?'APPROVED':'APPROVAL_REJECTED';
+      action=approve?'FINAL_APPROVED':'APPROVAL_REJECTED';
+      if(actor.role!=='APPROVER') throw Object.assign(new Error('Approver role required.'),{status:403});
+    }
+    if(request.status!==expected) throw Object.assign(new Error(`Request is already ${request.status}.`),{status:409});
+    if(String(ownerEmail).toLowerCase()!==String(actor.email).toLowerCase()) throw Object.assign(new Error('This request is assigned to another user.'),{status:403});
+
+    const {rows:updated}=await client.query(
+      `update requests set status=$2,last_rejection_reason=$3,updated_at=now()
+       where id=$1 returning *`,
+      [id,toStatus,reject?String(reason).trim():'']
+    );
+    const next=updated[0];
+    await insertAction(client,next,actor,action,expected,toStatus,reject?String(reason).trim():'');
+    await client.query('commit');
+    return next;
+  }catch(e){await client.query('rollback');throw e}finally{client.release()}
+}
+
+export async function reviseExpenseRequest(id, employee, items) {
+  const client=await pool.connect();
+  try{
+    await client.query('begin');
+    const {rows}=await client.query('select * from requests where id=$1 for update',[id]);
+    const request=rows[0];
+    if(!request) throw Object.assign(new Error('Request not found.'),{status:404});
+    if(String(request.requester_email).toLowerCase()!==String(employee.email).toLowerCase())
+      throw Object.assign(new Error('This is not your request.'),{status:403});
+    if(!['REVIEW_REJECTED','APPROVAL_REJECTED'].includes(request.status))
+      throw Object.assign(new Error('Only rejected requests can be revised.'),{status:409});
+
+    const oldStatus=request.status;
+    const newRevision=Number(request.revision)+1;
+    const total=items.reduce((s,x)=>s+Number(x.amount),0);
+    const {rows:updated}=await client.query(
+      `update requests set revision=$2,total=$3,status='PENDING_REVIEW',
+       last_rejection_reason='',form_pdf_path=null,evidence_pdf_path=null,updated_at=now()
+       where id=$1 returning *`, [id,newRevision,total]
+    );
+    const next=updated[0];
+    await insertItems(client,id,newRevision,items);
+    await insertAction(client,next,employee,'REVISED',oldStatus,'PENDING_REVIEW','');
+    await client.query('commit');
+    return next;
+  }catch(e){await client.query('rollback');throw e}finally{client.release()}
+}
+
+export async function logEmail({requestId=null,refNo=null,event,to,cc='',status,error=''}) {
+  await pool.query(
+    `insert into email_log(request_id,ref_no,event,mail_to,mail_cc,status,error)
+     values($1,$2,$3,$4,$5,$6,$7)`,
+    [requestId,refNo,event,to,cc,status,error]
+  );
 }
