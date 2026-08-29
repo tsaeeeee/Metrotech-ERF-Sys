@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Metrotech ERF</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="shell">
+<header><div><h1>Expense Request System</h1><p>Metrotech Indonesia · Development Preview</p></div><div id="userBadge" class="badge">Not signed in</div></header>
+<div id="msg"></div>
+
+<section id="loginCard" class="card">
+<h2>Development Login</h2>
+<p class="muted">Choose a dummy employee to preview each workflow layer.</p>
+<div id="users" class="users">Loading…</div>
+</section>
+
+<section id="dashboard" class="hidden">
+<div class="card">
+<div class="row"><div><h2 id="roleTitle">Dashboard</h2><p id="identity" class="muted"></p></div><button class="btn ghost" onclick="logout()">Switch Role</button></div>
+<div id="profile" class="grid"></div>
+</div>
+
+<div class="card">
+<h2 id="queueTitle">Requests</h2>
+<div id="empty" class="empty">No requests yet.</div>
+<table id="table" class="hidden">
+<thead><tr><th>Ref No</th><th>Requestor</th><th>Date</th><th>Total</th><th>Status</th><th>Revision</th></tr></thead>
+<tbody id="tbody"></tbody>
+</table>
+</div>
+
+<div id="nextCard" class="card">
+<h2>Build Status</h2>
+<p>This bootstrap confirms the VM, Node app, PostgreSQL, sessions, employee master, and role routing are connected.</p>
+<p class="muted">Next build: request form + evidence upload + PDF generation + reviewer/approver workflow.</p>
+</div>
+</section>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>
