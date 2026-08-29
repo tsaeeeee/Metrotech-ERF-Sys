@@ -21,6 +21,19 @@ async function api(url,opt={}){
   return body;
 }
 
+async function loadSystemStatus(){
+  try{
+    const health=await api('/health');
+    const official=String(health.pdfMode||'mock').toLowerCase()==='google-sheet';
+    $('#engineBadge').textContent=official?'PDF: OFFICIAL TEMPLATE':'PDF: MOCK';
+    $('#engineBadge').classList.toggle('official',official);
+    $('#engineBadge').classList.toggle('mock',!official);
+  }catch{
+    $('#engineBadge').textContent='PDF: unavailable';
+    $('#engineBadge').classList.add('mock');
+  }
+}
+
 async function loadUsers(){
   try{
     const mode=await api('/api/auth-mode');
@@ -47,7 +60,8 @@ async function loadUsers(){
 async function login(email){
   try{
     await api('/api/dev/login',{method:'POST',body:JSON.stringify({email})});
-    await loadMe();
+    await loadSystemStatus();
+loadMe();
   }catch(e){msg(e.message,'err')}
 }
 
@@ -86,9 +100,12 @@ function renderRequests(requests){
   $('#empty').classList.add('hidden');
   $('#table').classList.remove('hidden');
   $('#tbody').innerHTML=requests.map(r=>{
-    const rejected=['REVIEW_REJECTED','APPROVAL_REJECTED'].includes(r.status);
-    const revise=currentEmployee?.role==='REQUESTOR' && rejected
-      ? `<button class="btn tiny warning" onclick="startRevision('${r.id}')">Revise</button>`
+    const revisable=['REVIEW_REJECTED','APPROVAL_REJECTED','RECALLED'].includes(r.status);
+    const revise=currentEmployee?.role==='REQUESTOR' && revisable
+      ? `<button class="btn tiny warning" onclick="startRevision('${r.id}')">${r.status==='RECALLED'?'Edit & Resubmit':'Revise'}</button>`
+      : '';
+    const recall=currentEmployee?.role==='REQUESTOR' && r.status==='PENDING_REVIEW'
+      ? `<button class="btn tiny recall" onclick="recallRequest('${r.id}','${esc(r.ref_no)}')">Recall</button>`
       : '';
     return `<tr>
       <td><strong>${esc(r.ref_no)}</strong>${r.last_rejection_reason?`<div class="reason-mini">${esc(r.last_rejection_reason)}</div>`:''}</td>
@@ -97,7 +114,7 @@ function renderRequests(requests){
       <td class="money">${rupiah(r.total)}</td>
       <td><span class="status ${esc(r.status)}">${esc(r.status)}</span></td>
       <td>${r.revision}</td>
-      <td class="actions"><button class="btn tiny ghost" onclick="openRequest('${r.id}')">Open</button> ${revise}</td>
+      <td class="actions"><button class="btn tiny ghost" onclick="openRequest('${r.id}')">Open</button> ${recall} ${revise}</td>
     </tr>`;
   }).join('');
 }
@@ -201,15 +218,27 @@ async function startRevision(id){
   try{
     const data=await api(`/api/requests/${id}`);
     const refNo=data.request.ref_no;
+    const recalled=data.request.status==='RECALLED';
     const reason=data.request.last_rejection_reason||'Please revise this request.';
     revisionTarget={id,refNo};
     payments=[]; editingIndex=-1; renderPayments(); resetPaymentForm();
-    $('#requestFormTitle').textContent=`Revise ${refNo}`;
+    $('#requestFormTitle').textContent=`${recalled?'Edit & Resubmit':'Revise'} ${refNo}`;
     $('#revisionBanner').classList.remove('hidden');
-    $('#revisionBanner').innerHTML=`<strong>Rejected:</strong> ${esc(reason)}. Re-enter the payment data and attach evidence for the new revision.`;
+    $('#revisionBanner').innerHTML=recalled
+      ? `<strong>Recalled:</strong> This request has been pulled back from Reviewer. Re-enter the payment data and attach evidence, then submit it again.`
+      : `<strong>Rejected:</strong> ${esc(reason)}. Re-enter the payment data and attach evidence for the new revision.`;
     $('#cancelRevisionBtn').classList.remove('hidden');
     $('#submitExpenseBtn').textContent='Submit Revision';
     $('#requestForm').scrollIntoView({behavior:'smooth'});
+  }catch(e){msg(e.message,'err')}
+}
+
+async function recallRequest(id,refNo){
+  if(!confirm(`Recall ${refNo}? It will be removed from the Reviewer queue until you resubmit it.`)) return;
+  try{
+    const r=await api(`/api/requests/${id}/recall`,{method:'POST',body:'{}'});
+    msg(`${r.refNo} recalled successfully. Reviewer can no longer action it until you resubmit.`,'ok');
+    await loadMe();
   }catch(e){msg(e.message,'err')}
 }
 
