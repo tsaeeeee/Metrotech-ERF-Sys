@@ -7,7 +7,38 @@ const SIGNATURE_DIR=process.env.SIGNATURE_DIR || '/data/signatures';
 const PDF_MODE=String(process.env.PDF_MODE || 'mock').toLowerCase();
 
 function money(n){ return 'Rp ' + Number(n||0).toLocaleString('id-ID'); }
-function dateText(v){ return String(v||'').slice(0,10); }
+
+function isoDate(v){
+  if(!v) return '';
+  if(v instanceof Date && !Number.isNaN(v.getTime())){
+    return [
+      v.getUTCFullYear(),
+      String(v.getUTCMonth()+1).padStart(2,'0'),
+      String(v.getUTCDate()).padStart(2,'0')
+    ].join('-');
+  }
+  const raw=String(v);
+  const direct=raw.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if(direct) return `${direct[1]}-${direct[2]}-${direct[3]}`;
+  const d=new Date(v);
+  if(!Number.isNaN(d.getTime())){
+    return [
+      d.getUTCFullYear(),
+      String(d.getUTCMonth()+1).padStart(2,'0'),
+      String(d.getUTCDate()).padStart(2,'0')
+    ].join('-');
+  }
+  return raw;
+}
+
+function displayDate(v){
+  const iso=isoDate(v);
+  const m=iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!m) return iso;
+  const mons=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${m[3]}-${mons[Number(m[2])-1]}-${m[1].slice(-2)}`;
+}
+
 async function ensureParent(filePath){ await fs.mkdir(path.dirname(filePath),{recursive:true}); }
 
 export async function buildEvidencePdf({request,items,files,outPath}) {
@@ -25,7 +56,7 @@ export async function buildEvidencePdf({request,items,files,outPath}) {
     const lines=[
       ['Category',item.category],
       ['Purpose',item.purpose],
-      ['Payment Date',dateText(item.paymentDate || item.payment_date)],
+      ['Payment Date',displayDate(item.paymentDate || item.payment_date)],
       ['Amount',money(item.amount)]
     ];
     let y=680;
@@ -146,7 +177,7 @@ async function buildGoogleSheetFormPdf({request,items,outPath}){
     });
 
     const data=[
-      {range:sheetA1(title,'G3'),values:[[dateText(request.request_date)]]},
+      {range:sheetA1(title,'G3'),values:[[isoDate(request.request_date)]]},
       {range:sheetA1(title,'G4'),values:[[request.ref_no]]},
       {range:sheetA1(title,'D9'),values:[[request.employee_name]]},
       {range:sheetA1(title,'D10'),values:[[request.employee_id]]},
@@ -161,7 +192,7 @@ async function buildGoogleSheetFormPdf({request,items,outPath}){
       data.push(
         {range:sheetA1(title,`B${row}`),values:[[it.category]]},
         {range:sheetA1(title,`E${row}`),values:[[it.purpose]]},
-        {range:sheetA1(title,`F${row}`),values:[[dateText(it.payment_date || it.paymentDate)]]},
+        {range:sheetA1(title,`F${row}`),values:[[isoDate(it.payment_date || it.paymentDate)]]},
         {range:sheetA1(title,`G${row}`),values:[[Number(it.amount)]]}
       );
     });
@@ -211,7 +242,7 @@ async function buildMockFormPdf({request,items,outPath}) {
 
   page.drawText('PT METROTECH INDONESIA',{x:42,y:795,size:12,font:bold,color:navy});
   page.drawText('EXPENSE REQUEST FORM',{x:42,y:770,size:20,font:bold,color:navy});
-  page.drawText(`Request Date: ${dateText(request.request_date)}`,{x:395,y:798,size:9,font:normal});
+  page.drawText(`Request Date: ${displayDate(request.request_date)}`,{x:395,y:798,size:9,font:normal});
   page.drawText(`Ref No: ${request.ref_no}`,{x:395,y:782,size:9,font:bold});
 
   const info=[
@@ -238,7 +269,7 @@ async function buildMockFormPdf({request,items,outPath}) {
     page.drawText(String(i+1),{x:48,y:y+7,size:8,font:normal});
     page.drawText(String(it.category||'').slice(0,17),{x:68,y:y+7,size:8,font:normal});
     page.drawText(String(it.purpose||'').slice(0,40),{x:175,y:y+7,size:8,font:normal});
-    page.drawText(dateText(it.payment_date || it.paymentDate),{x:370,y:y+7,size:8,font:normal});
+    page.drawText(displayDate(it.payment_date || it.paymentDate),{x:370,y:y+7,size:8,font:normal});
     page.drawText(money(it.amount),{x:445,y:y+7,size:8,font:normal});
     y-=rowH;
   });
