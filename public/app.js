@@ -21,47 +21,26 @@ async function api(url,opt={}){
   return body;
 }
 
-async function loadSystemStatus(){
+async function submitLogin(event){
+  event.preventDefault();
+  clearMsg();
+  const username=$('#loginUsername').value.trim();
+  const password=$('#loginPassword').value;
+  const btn=$('#loginBtn');
+  btn.disabled=true;
+  btn.textContent='Signing In…';
   try{
-    const health=await api('/health');
-    const official=String(health.pdfMode||'mock').toLowerCase()==='google-sheet';
-    $('#engineBadge').textContent=official?'PDF: OFFICIAL TEMPLATE':'PDF: MOCK';
-    $('#engineBadge').classList.toggle('official',official);
-    $('#engineBadge').classList.toggle('mock',!official);
-  }catch{
-    $('#engineBadge').textContent='PDF: unavailable';
-    $('#engineBadge').classList.add('mock');
-  }
-}
-
-async function loadUsers(){
-  try{
-    const mode=await api('/api/auth-mode');
-    if(mode.devAuth){
-      $('#loginTitle').textContent='Development Login';
-      $('#loginHint').textContent='Choose a dummy employee to preview each workflow layer.';
-      const {users}=await api('/api/dev/users');
-      $('#users').innerHTML=users.map(u=>`
-        <button class="user-card" onclick="login('${esc(u.email)}')">
-          <strong>${esc(u.name)}</strong>
-          <span>${esc(u.role)}</span>
-          <small>${esc(u.email)}</small>
-        </button>`).join('');
-    }else{
-      $('#loginTitle').textContent='Google Workspace Sign In';
-      $('#loginHint').textContent='Use your company Google Workspace account. Your role is loaded automatically from the employee master.';
-      $('#users').innerHTML=mode.googleAuthReady
-        ? '<button class="user-card google-login" onclick="location.href=\'/auth/google\'"><strong>Continue with Google</strong><span>COMPANY WORKSPACE</span><small>Secure organization sign in</small></button>'
-        : '<div class="auth-warning">Google Workspace authentication is not configured yet.</div>';
-    }
-  }catch(e){msg(e.message,'err')}
-}
-
-async function login(email){
-  try{
-    await api('/api/dev/login',{method:'POST',body:JSON.stringify({email})});
+    await api('/api/login',{method:'POST',body:JSON.stringify({username,password})});
+    $('#loginPassword').value='';
     await loadMe();
-  }catch(e){msg(e.message,'err')}
+  }catch(e){
+    msg(e.message,'err');
+    $('#loginPassword').value='';
+    $('#loginPassword').focus();
+  }finally{
+    btn.disabled=false;
+    btn.textContent='Sign In';
+  }
 }
 
 async function loadMe(){
@@ -86,7 +65,8 @@ async function loadMe(){
     currentEmployee=null;
     $('#loginCard').classList.remove('hidden');
     $('#dashboard').classList.add('hidden');
-    await loadUsers();
+    $('#userBadge').textContent='Not signed in';
+    setTimeout(()=>$('#loginUsername')?.focus(),0);
   }
 }
 
@@ -310,6 +290,7 @@ async function openRequest(id){
       (currentEmployee.role==='APPROVER'&&r.status==='PENDING_APPROVAL');
     $('#decisionPanel').classList.toggle('hidden',!actionable);
     $('#decisionReason').value='';
+    $('#approveBtn').disabled=!actionable;
     $('#rejectBtn').disabled=true;
     $('#detailModal').classList.remove('hidden');
     document.body.classList.add('modal-open');
@@ -353,8 +334,8 @@ async function logout(){
   $('#dashboard').classList.add('hidden');
   $('#loginCard').classList.remove('hidden');
   $('#userBadge').textContent='Not signed in';
-  await loadUsers();
+  $('#loginPassword').value='';
+  setTimeout(()=>$('#loginUsername')?.focus(),0);
 }
 
-loadSystemStatus();
 loadMe();
