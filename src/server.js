@@ -9,7 +9,7 @@ import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import {
   pool,pingDb,listActiveEmployees,getEmployee,listRequestsForEmployee,createExpenseRequest,
-  getRequestDetail,setDocumentPaths,transitionRequest,reviseExpenseRequest
+  getRequestDetail,setDocumentPaths,transitionRequest,recallExpenseRequest,reviseExpenseRequest
 } from './db.js';
 import { buildEvidencePdf,buildFormPdf } from './documents.js';
 import { sendWorkflowMail } from './mailer.js';
@@ -188,6 +188,22 @@ app.post('/api/requests',requireUser,upload.any(),async(req,res,next)=>{
       text:`${detail.request.employee_name} submitted ${detail.request.ref_no} for review.`
     });
     res.status(201).json({ok:true,requestId:request.id,refNo:request.ref_no,status:'PENDING_REVIEW',revision:1});
+  }catch(e){next(e)}
+});
+
+app.post('/api/requests/:id/recall',requireUser,async(req,res,next)=>{
+  try{
+    if(req.employee.role!=='REQUESTOR') return res.status(403).json({error:'Only Requestor can recall a request.'});
+    const request=await recallExpenseRequest(req.params.id,req.employee);
+    const detail=await regenerateForm(request.id);
+    await sendWorkflowMail({
+      event:'RECALLED',
+      request:detail.request,
+      to:detail.request.reviewer_email,
+      subject:`[ERF] ${detail.request.ref_no} recalled by requestor`,
+      text:`${detail.request.ref_no} was recalled by ${req.employee.name} and no longer requires review.`
+    });
+    res.json({ok:true,status:detail.request.status,refNo:detail.request.ref_no});
   }catch(e){next(e)}
 });
 
