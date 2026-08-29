@@ -206,6 +206,36 @@ export async function transitionRequest(id, actor, stage, decision, reason='') {
   }catch(e){await client.query('rollback');throw e}finally{client.release()}
 }
 
+export async function recallExpenseRequest(id, employee) {
+  const client=await pool.connect();
+  try{
+    await client.query('begin');
+    const {rows}=await client.query('select * from requests where id=$1 for update',[id]);
+    const request=rows[0];
+    if(!request) throw Object.assign(new Error('Request not found.'),{status:404});
+    if(employee.role!=='REQUESTOR')
+      throw Object.assign(new Error('Only Requestor can recall a request.'),{status:403});
+    if(String(request.requester_email).toLowerCase()!==String(employee.email).toLowerCase())
+      throw Object.assign(new Error('This is not your request.'),{status:403});
+    if(request.status!=='PENDING_REVIEW')
+      throw Object.assign(new Error('Only requests that are still Pending Review can be recalled.'),{status:409});
+
+    const {rows:updated}=await client.query(
+      `update requests set status='RECALLED',last_rejection_reason='',updated_at=now()
+       where id=$1 returning *`, [id]
+    );
+    const next=updated[0];
+    await insertAction(client,next,employee,'RECALLED','PENDING_REVIEW','RECALLED','Recalled by requestor');
+    await client.query('commit');
+    return next;
+  }catch(e){
+    await client.query('rollback');
+    throw e;
+  }finally{
+    client.release();
+  }
+}
+
 export async function reviseExpenseRequest(id, employee, items) {
   const client=await pool.connect();
   try{
@@ -215,8 +245,8 @@ export async function reviseExpenseRequest(id, employee, items) {
     if(!request) throw Object.assign(new Error('Request not found.'),{status:404});
     if(String(request.requester_email).toLowerCase()!==String(employee.email).toLowerCase())
       throw Object.assign(new Error('This is not your request.'),{status:403});
-    if(!['REVIEW_REJECTED','APPROVAL_REJECTED'].includes(request.status))
-      throw Object.assign(new Error('Only rejected requests can be revised.'),{status:409});
+    if(!['REVIEW_REJECTED','APPROVAL_REJECTED','RECALLED'].includes(request.status))
+      throw Object.assign(new Error('Only rejected or recalled requests can be revised.'),{status:409});
 
     const oldStatus=request.status;
     const newRevision=Number(request.revision)+1;
