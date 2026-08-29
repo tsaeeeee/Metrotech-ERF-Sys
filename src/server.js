@@ -74,7 +74,8 @@ app.get('/api/me',requireUser,async(req,res)=>{
 });
 
 app.use(express.static(path.join(__dirname,'../public')));
-app.get('*',(req,res)=>res.sendFile(path.join(__dirname,'../public/index.html')));
+// Express 5 / path-to-regexp requires a named wildcard instead of app.get('*').
+app.get('/{*splat}',(req,res)=>res.sendFile(path.join(__dirname,'../public/index.html')));
 
 app.use((err,req,res,next)=>{
   console.error(err);
