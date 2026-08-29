@@ -41,51 +41,42 @@ function displayDate(v){
 
 async function ensureParent(filePath){ await fs.mkdir(path.dirname(filePath),{recursive:true}); }
 
-export async function buildEvidencePdf({request,items,files,outPath}) {
+export async function buildEvidencePdf({items,files,outPath}) {
   await ensureParent(outPath);
   const out=await PDFDocument.create();
-  const bold=await out.embedFont(StandardFonts.HelveticaBold);
-  const normal=await out.embedFont(StandardFonts.Helvetica);
 
   for(let i=0;i<items.length;i++){
-    const item=items[i];
-    const cover=out.addPage([595,842]);
-    cover.drawText('EXPENSE EVIDENCE',{x:44,y:790,size:18,font:bold,color:rgb(0.04,0.22,0.41)});
-    cover.drawText(request.ref_no,{x:44,y:765,size:11,font:bold});
-    cover.drawText(`Payment #${i+1}`,{x:44,y:720,size:16,font:bold});
-    const lines=[
-      ['Category',item.category],
-      ['Purpose',item.purpose],
-      ['Payment Date',displayDate(item.paymentDate || item.payment_date)],
-      ['Amount',money(item.amount)]
-    ];
-    let y=680;
-    for(const [a,b] of lines){
-      cover.drawText(a,{x:44,y,size:10,font:bold,color:rgb(.35,.39,.45)});
-      cover.drawText(String(b||''),{x:160,y,size:11,font:normal});
-      y-=28;
-    }
-
     const itemFiles=files.filter(f=>f.fieldname===`evidence_${i}`);
-    cover.drawText(`Attached files: ${itemFiles.length}`,{x:44,y:y-10,size:10,font:bold});
 
     for(const f of itemFiles){
       const type=String(f.mimetype||'').toLowerCase();
+
       if(type==='application/pdf'){
         const src=await PDFDocument.load(f.buffer);
         const copied=await out.copyPages(src,src.getPageIndices());
-        copied.forEach(p=>out.addPage(p));
-      } else if(type==='image/png' || type==='image/jpeg' || type==='image/jpg'){
+        copied.forEach(page=>out.addPage(page));
+        continue;
+      }
+
+      if(type==='image/png' || type==='image/jpeg' || type==='image/jpg'){
         const image=type==='image/png' ? await out.embedPng(f.buffer) : await out.embedJpg(f.buffer);
         const page=out.addPage([595,842]);
-        const maxW=515,maxH=742;
+        const margin=24;
+        const maxW=595-(margin*2);
+        const maxH=842-(margin*2);
         const scale=Math.min(maxW/image.width,maxH/image.height,1);
-        const w=image.width*scale,h=image.height*scale;
-        page.drawText(f.originalname,{x:40,y:805,size:10,font:bold});
-        page.drawImage(image,{x:(595-w)/2,y:(780-h)/2,width:w,height:h});
+        const width=image.width*scale;
+        const height=image.height*scale;
+        page.drawImage(image,{
+          x:(595-width)/2,
+          y:(842-height)/2,
+          width,
+          height
+        });
       }
     }
   }
+
   await fs.writeFile(outPath,await out.save());
   return outPath;
 }
