@@ -292,8 +292,7 @@ app.post('/api/requests/:id/approve',requireUser,async(req,res,next)=>{
     const detail=await regenerateForm(request.id);
     const approved=detail.request.status==='APPROVED';
     const attachments=approved?[
-      {filename:`${detail.request.ref_no}.pdf`,path:detail.request.form_pdf_path},
-      {filename:`${detail.request.ref_no}-EVIDENCE.pdf`,path:detail.request.evidence_pdf_path}
+      {filename:`${detail.request.ref_no}.pdf`,path:detail.request.form_pdf_path}
     ]:[];
     await sendWorkflowMail({
       event:approved?'FINAL_APPROVED':'APPROVAL_REJECTED',request:detail.request,
