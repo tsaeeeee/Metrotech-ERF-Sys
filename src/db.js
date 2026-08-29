@@ -56,9 +56,16 @@ export async function listRequestsForEmployee(employee) {
 }
 
 async function getWorkflowActorTx(client, role) {
+  const preferredName = role==='REVIEWER'
+    ? String(process.env.REVIEWER_NAME || '').trim()
+    : String(process.env.APPROVER_NAME || '').trim();
   const { rows } = await client.query(
     `select email,name,role,signature_file
-     from employees where role=$1 and active=true order by name limit 1`, [role]
+     from employees
+     where role=$1 and active=true
+     order by case when $2<>'' and lower(name)=lower($2) then 0 else 1 end, name
+     limit 1`,
+    [role,preferredName]
   );
   return rows[0] || null;
 }
