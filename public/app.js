@@ -23,13 +23,24 @@ async function api(url,opt={}){
 
 async function loadUsers(){
   try{
-    const {users}=await api('/api/dev/users');
-    $('#users').innerHTML=users.map(u=>`
-      <button class="user-card" onclick="login('${esc(u.email)}')">
-        <strong>${esc(u.name)}</strong>
-        <span>${esc(u.role)}</span>
-        <small>${esc(u.email)}</small>
-      </button>`).join('');
+    const mode=await api('/api/auth-mode');
+    if(mode.devAuth){
+      $('#loginTitle').textContent='Development Login';
+      $('#loginHint').textContent='Choose a dummy employee to preview each workflow layer.';
+      const {users}=await api('/api/dev/users');
+      $('#users').innerHTML=users.map(u=>`
+        <button class="user-card" onclick="login('${esc(u.email)}')">
+          <strong>${esc(u.name)}</strong>
+          <span>${esc(u.role)}</span>
+          <small>${esc(u.email)}</small>
+        </button>`).join('');
+    }else{
+      $('#loginTitle').textContent='Google Workspace Sign In';
+      $('#loginHint').textContent='Use your company Google Workspace account. Your role is loaded automatically from the employee master.';
+      $('#users').innerHTML=mode.googleAuthReady
+        ? '<button class="user-card google-login" onclick="location.href=\'/auth/google\'"><strong>Continue with Google</strong><span>COMPANY WORKSPACE</span><small>Secure organization sign in</small></button>'
+        : '<div class="auth-warning">Google Workspace authentication is not configured yet.</div>';
+    }
   }catch(e){msg(e.message,'err')}
 }
 
