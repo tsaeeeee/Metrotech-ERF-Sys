@@ -63,6 +63,7 @@ async function loadMe(){
     if(employee.role==='REQUESTOR' && !$('#paymentDate').value) $('#paymentDate').value=new Date().toISOString().slice(0,10);
   }catch(e){
     currentEmployee=null;
+    clearMsg();
     $('#loginCard').classList.remove('hidden');
     $('#dashboard').classList.add('hidden');
     $('#userBadge').textContent='Not signed in';
@@ -329,6 +330,7 @@ async function sendDecision(decision){
 
 async function logout(){
   await api('/api/logout',{method:'POST',body:'{}'});
+  clearMsg();
   currentEmployee=null; payments=[]; editingIndex=-1; revisionTarget=null; currentDetailId=null;
   renderPayments();
   $('#dashboard').classList.add('hidden');
