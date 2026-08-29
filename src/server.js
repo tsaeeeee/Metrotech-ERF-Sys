@@ -8,8 +8,11 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import {
-  pool,pingDb,listActiveEmployees,getEmployee,listRequestsForEmployee,createExpenseRequest
+  pool,pingDb,listActiveEmployees,getEmployee,listRequestsForEmployee,createExpenseRequest,
+  getRequestDetail,setDocumentPaths,transitionRequest,reviseExpenseRequest
 } from './db.js';
+import { buildEvidencePdf,buildFormPdf } from './documents.js';
+import { sendWorkflowMail } from './mailer.js';
 
 const __filename=fileURLToPath(import.meta.url);
 const __dirname=path.dirname(__filename);
@@ -19,6 +22,7 @@ const PgStore=connectPgSimple(session);
 const DEV_AUTH=String(process.env.DEV_AUTH || 'true').toLowerCase()==='true';
 const DATA_DIR=process.env.PDF_DIR || '/data/pdfs';
 const MAX_EVIDENCE_MB=Number(process.env.MAX_EVIDENCE_MB || 15);
+const allowedMime=new Set(['application/pdf','image/png','image/jpeg','image/jpg']);
 const upload=multer({
   storage:multer.memoryStorage(),
   limits:{fileSize:MAX_EVIDENCE_MB*1024*1024,files:64}
@@ -71,6 +75,73 @@ async function requireUser(req,res,next){
   }catch(e){next(e)}
 }
 
+function canAccess(employee,request){
+  if(employee.role==='REQUESTOR') return String(request.requester_email).toLowerCase()===String(employee.email).toLowerCase();
+  if(employee.role==='REVIEWER') return String(request.reviewer_email).toLowerCase()===String(employee.email).toLowerCase();
+  if(employee.role==='APPROVER') return String(request.approver_email).toLowerCase()===String(employee.email).toLowerCase();
+  return false;
+}
+
+function parseItemsAndFiles(req){
+  let rawItems;
+  try { rawItems=JSON.parse(String(req.body.items||'[]')); }
+  catch { throw Object.assign(new Error('Invalid payment data.'),{status:400}); }
+  if(!Array.isArray(rawItems)||!rawItems.length) throw Object.assign(new Error('Add at least one payment.'),{status:400});
+  if(rawItems.length>16) throw Object.assign(new Error('Maximum 16 payments per request.'),{status:400});
+
+  const files=req.files||[];
+  if(files.some(f=>!allowedMime.has(String(f.mimetype).toLowerCase())))
+    throw Object.assign(new Error('Evidence must be PDF, JPG, JPEG, or PNG.'),{status:400});
+  const totalBytes=files.reduce((s,f)=>s+f.size,0);
+  if(totalBytes>MAX_EVIDENCE_MB*1024*1024)
+    throw Object.assign(new Error(`Total evidence exceeds ${MAX_EVIDENCE_MB} MB.`),{status:400});
+
+  const items=rawItems.map((x,i)=>{
+    const category=String(x.category||'').trim();
+    const purpose=String(x.purpose||'').trim();
+    const paymentDate=String(x.paymentDate||'').trim();
+    const amount=Math.round(Number(x.amount));
+    const itemFiles=files.filter(f=>f.fieldname===`evidence_${i}`);
+    if(!category||!purpose||!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate)||!Number.isFinite(amount)||amount<=0)
+      throw Object.assign(new Error(`Payment #${i+1} is incomplete.`),{status:400});
+    if(!itemFiles.length) throw Object.assign(new Error(`Payment #${i+1} requires evidence.`),{status:400});
+    return {category,purpose,paymentDate,amount,evidenceNames:itemFiles.map(f=>f.originalname)};
+  });
+  return {items,files};
+}
+
+async function persistOriginals(requestId,revision,files){
+  const dir=path.join(DATA_DIR,String(requestId),`r${revision}`,'evidence-original');
+  await fs.mkdir(dir,{recursive:true});
+  for(let n=0;n<files.length;n++){
+    const f=files[n];
+    const safe=String(f.originalname||'evidence').replace(/[^a-zA-Z0-9._-]+/g,'_');
+    const idx=String(f.fieldname).replace('evidence_','');
+    await fs.writeFile(path.join(dir,`${String(Number(idx)+1).padStart(2,'0')}-${String(n+1).padStart(2,'0')}-${safe}`),f.buffer);
+  }
+}
+
+async function generateSubmissionDocs(requestId,files){
+  const detail=await getRequestDetail(requestId);
+  if(!detail) throw new Error('Request disappeared after creation.');
+  const dir=path.join(DATA_DIR,String(requestId),`r${detail.request.revision}`);
+  const evidencePath=path.join(dir,'evidence.pdf');
+  const formPath=path.join(dir,`form-${detail.request.status.toLowerCase()}.pdf`);
+  await buildEvidencePdf({request:detail.request,items:detail.items,files,outPath:evidencePath});
+  await buildFormPdf({request:detail.request,items:detail.items,outPath:formPath});
+  await setDocumentPaths(requestId,formPath,evidencePath);
+  return {detail:await getRequestDetail(requestId),formPath,evidencePath};
+}
+
+async function regenerateForm(requestId){
+  const detail=await getRequestDetail(requestId);
+  const dir=path.join(DATA_DIR,String(requestId),`r${detail.request.revision}`);
+  const formPath=path.join(dir,`form-${detail.request.status.toLowerCase()}.pdf`);
+  await buildFormPdf({request:detail.request,items:detail.items,outPath:formPath});
+  await setDocumentPaths(requestId,formPath,null);
+  return await getRequestDetail(requestId);
+}
+
 app.get('/api/me',requireUser,async(req,res)=>{
   const requests=await listRequestsForEmployee(req.employee);
   res.json({employee:req.employee,requests});
@@ -79,58 +150,97 @@ app.get('/api/me',requireUser,async(req,res)=>{
 app.post('/api/requests',requireUser,upload.any(),async(req,res,next)=>{
   try{
     if(req.employee.role!=='REQUESTOR') return res.status(403).json({error:'Only Requestor can create an expense request.'});
-
-    let rawItems;
-    try { rawItems=JSON.parse(String(req.body.items||'[]')); }
-    catch { return res.status(400).json({error:'Invalid payment data.'}); }
-
-    if(!Array.isArray(rawItems)||!rawItems.length) return res.status(400).json({error:'Add at least one payment.'});
-    if(rawItems.length>16) return res.status(400).json({error:'Maximum 16 payments per request.'});
-
-    const files=req.files||[];
-    const totalBytes=files.reduce((s,f)=>s+f.size,0);
-    if(totalBytes>MAX_EVIDENCE_MB*1024*1024) {
-      return res.status(400).json({error:`Total evidence exceeds ${MAX_EVIDENCE_MB} MB.`});
-    }
-
-    const items=rawItems.map((x,i)=>{
-      const category=String(x.category||'').trim();
-      const purpose=String(x.purpose||'').trim();
-      const paymentDate=String(x.paymentDate||'').trim();
-      const amount=Math.round(Number(x.amount));
-      const itemFiles=files.filter(f=>f.fieldname===`evidence_${i}`);
-      if(!category||!purpose||!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate)||!Number.isFinite(amount)||amount<=0){
-        throw Object.assign(new Error(`Payment #${i+1} is incomplete.`),{status:400});
-      }
-      if(!itemFiles.length){
-        throw Object.assign(new Error(`Payment #${i+1} requires evidence.`),{status:400});
-      }
-      return {
-        category,purpose,paymentDate,amount,
-        evidenceNames:itemFiles.map(f=>f.originalname)
-      };
-    });
-
+    const {items,files}=parseItemsAndFiles(req);
     const request=await createExpenseRequest(req.employee,items);
-    const requestDir=path.join(DATA_DIR,String(request.id),'evidence-original');
-    await fs.mkdir(requestDir,{recursive:true});
-
-    for(const f of files){
-      const safeName=String(f.originalname||'evidence').replace(/[^a-zA-Z0-9._-]+/g,'_');
-      const idx=String(f.fieldname).replace('evidence_','');
-      const out=path.join(requestDir,`${String(Number(idx)+1).padStart(2,'0')}-${Date.now()}-${safeName}`);
-      await fs.writeFile(out,f.buffer);
-    }
-
-    res.status(201).json({
-      ok:true,
-      requestId:request.id,
-      refNo:request.ref_no,
-      requestDate:request.request_date,
-      total:Number(request.total),
-      status:request.status,
-      revision:request.revision
+    await persistOriginals(request.id,1,files);
+    const {detail}=await generateSubmissionDocs(request.id,files);
+    await sendWorkflowMail({
+      event:'SUBMITTED',request:detail.request,to:detail.request.reviewer_email,
+      subject:`[ERF] ${detail.request.ref_no} pending review`,
+      text:`${detail.request.employee_name} submitted ${detail.request.ref_no} for review.`
     });
+    res.status(201).json({ok:true,requestId:request.id,refNo:request.ref_no,status:'PENDING_REVIEW',revision:1});
+  }catch(e){next(e)}
+});
+
+app.post('/api/requests/:id/revise',requireUser,upload.any(),async(req,res,next)=>{
+  try{
+    if(req.employee.role!=='REQUESTOR') return res.status(403).json({error:'Only Requestor can revise a request.'});
+    const {items,files}=parseItemsAndFiles(req);
+    const request=await reviseExpenseRequest(req.params.id,req.employee,items);
+    await persistOriginals(request.id,request.revision,files);
+    const {detail}=await generateSubmissionDocs(request.id,files);
+    await sendWorkflowMail({
+      event:'REVISED',request:detail.request,to:detail.request.reviewer_email,
+      subject:`[ERF] ${detail.request.ref_no} revised and pending review`,
+      text:`${detail.request.employee_name} submitted revision ${detail.request.revision} of ${detail.request.ref_no}.`
+    });
+    res.json({ok:true,requestId:request.id,refNo:request.ref_no,status:'PENDING_REVIEW',revision:request.revision});
+  }catch(e){next(e)}
+});
+
+app.get('/api/requests/:id',requireUser,async(req,res,next)=>{
+  try{
+    const detail=await getRequestDetail(req.params.id);
+    if(!detail) return res.status(404).json({error:'Request not found'});
+    if(!canAccess(req.employee,detail.request)) return res.status(403).json({error:'Access denied'});
+    const {form_pdf_path,evidence_pdf_path,...safeRequest}=detail.request;
+    res.json({request:safeRequest,items:detail.items,actions:detail.actions,documents:{form:!!form_pdf_path,evidence:!!evidence_pdf_path}});
+  }catch(e){next(e)}
+});
+
+app.get('/api/requests/:id/form',requireUser,async(req,res,next)=>{
+  try{
+    const detail=await getRequestDetail(req.params.id);
+    if(!detail||!canAccess(req.employee,detail.request)) return res.status(404).end();
+    if(!detail.request.form_pdf_path) return res.status(404).json({error:'Form PDF is not available.'});
+    res.sendFile(path.resolve(detail.request.form_pdf_path));
+  }catch(e){next(e)}
+});
+
+app.get('/api/requests/:id/evidence',requireUser,async(req,res,next)=>{
+  try{
+    const detail=await getRequestDetail(req.params.id);
+    if(!detail||!canAccess(req.employee,detail.request)) return res.status(404).end();
+    if(!detail.request.evidence_pdf_path) return res.status(404).json({error:'Evidence PDF is not available.'});
+    res.sendFile(path.resolve(detail.request.evidence_pdf_path));
+  }catch(e){next(e)}
+});
+
+app.post('/api/requests/:id/review',requireUser,async(req,res,next)=>{
+  try{
+    const request=await transitionRequest(req.params.id,req.employee,'REVIEW',req.body.decision,req.body.reason||'');
+    const detail=await regenerateForm(request.id);
+    const approved=detail.request.status==='PENDING_APPROVAL';
+    await sendWorkflowMail({
+      event:approved?'REVIEW_APPROVED':'REVIEW_REJECTED',request:detail.request,
+      to:approved?detail.request.approver_email:detail.request.requester_email,
+      subject:approved?`[ERF] ${detail.request.ref_no} pending final approval`:`[ERF] ${detail.request.ref_no} rejected by reviewer`,
+      text:approved?`${detail.request.ref_no} was reviewed by ${req.employee.name} and is ready for final approval.`
+        :`${detail.request.ref_no} was rejected by ${req.employee.name}. Reason: ${req.body.reason}`
+    });
+    res.json({ok:true,status:detail.request.status});
+  }catch(e){next(e)}
+});
+
+app.post('/api/requests/:id/approve',requireUser,async(req,res,next)=>{
+  try{
+    const request=await transitionRequest(req.params.id,req.employee,'APPROVAL',req.body.decision,req.body.reason||'');
+    const detail=await regenerateForm(request.id);
+    const approved=detail.request.status==='APPROVED';
+    const attachments=approved?[
+      {filename:`${detail.request.ref_no}.pdf`,path:detail.request.form_pdf_path},
+      {filename:`${detail.request.ref_no}-EVIDENCE.pdf`,path:detail.request.evidence_pdf_path}
+    ]:[];
+    await sendWorkflowMail({
+      event:approved?'FINAL_APPROVED':'APPROVAL_REJECTED',request:detail.request,
+      to:detail.request.requester_email,cc:detail.request.reviewer_email,
+      subject:approved?`[ERF] ${detail.request.ref_no} approved`:`[ERF] ${detail.request.ref_no} rejected by approver`,
+      text:approved?`${detail.request.ref_no} has been approved by ${req.employee.name}.`
+        :`${detail.request.ref_no} was rejected by ${req.employee.name}. Reason: ${req.body.reason}`,
+      attachments
+    });
+    res.json({ok:true,status:detail.request.status});
   }catch(e){next(e)}
 });
 
