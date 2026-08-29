@@ -51,7 +51,7 @@ export async function buildEvidencePdf({request,items,files,outPath}) {
         const scale=Math.min(maxW/image.width,maxH/image.height,1);
         const w=image.width*scale,h=image.height*scale;
         page.drawText(f.originalname,{x:40,y:805,size:10,font:bold});
-        page.drawImage(image,{x:(595-w)/2,y:(780-h)/2,w,h});
+        page.drawImage(image,{x:(595-w)/2,y:(780-h)/2,width:w,height:h});
       }
     }
   }
@@ -94,7 +94,7 @@ async function stampSignaturesOnPdf(pdfBytes,request){
     const img=await embedSignature(doc,s.file);
     if(!img) continue;
     const scale=Math.min(maxW/img.width,maxH/img.height);
-    page.drawImage(img,{x:s.x,y:s.y,w:img.width*scale,h:img.height*scale});
+    page.drawImage(img,{x:s.x,y:s.y,width:img.width*scale,height:img.height*scale});
   }
   return await doc.save();
 }
@@ -259,7 +259,7 @@ async function buildMockFormPdf({request,items,outPath}) {
       const img=await embedSignature(doc,s.file);
       if(img){
         const scale=Math.min(85/img.width,38/img.height);
-        page.drawImage(img,{x:s.x,y:sigY+28,w:img.width*scale,h:img.height*scale});
+        page.drawImage(img,{x:s.x,y:sigY+28,width:img.width*scale,height:img.height*scale});
       }
     }
     page.drawText(String(s.name||''),{x:s.x,y:sigY+10,size:8,font:normal});
