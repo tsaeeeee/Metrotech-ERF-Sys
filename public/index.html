@@ -8,7 +8,10 @@
 </head>
 <body>
 <div class="shell">
-<header><div><h1>Expense Request System</h1><p>Metrotech Indonesia · Development Preview</p></div><div id="userBadge" class="badge">Not signed in</div></header>
+<header>
+  <div><h1>Expense Request System</h1><p>Metrotech Indonesia · Development Preview</p></div>
+  <div id="userBadge" class="badge">Not signed in</div>
+</header>
 <div id="msg"></div>
 
 <section id="loginCard" class="card">
@@ -25,7 +28,12 @@
 
 <section id="requestForm" class="card hidden">
 <div class="row">
-  <div><h2>Create Expense Request</h2><p class="muted">Each payment requires at least one evidence file before it can be added.</p></div>
+  <div>
+    <h2 id="requestFormTitle">Create Expense Request</h2>
+    <p class="muted">Each payment requires at least one evidence file before it can be added.</p>
+    <div id="revisionBanner" class="revision-banner hidden"></div>
+  </div>
+  <button id="cancelRevisionBtn" class="btn ghost hidden" onclick="cancelRevision()">Cancel Revision</button>
 </div>
 
 <div class="payment-form">
@@ -51,17 +59,58 @@
 </section>
 
 <div class="card">
-<h2 id="queueTitle">Requests</h2>
+<div class="row"><div><h2 id="queueTitle">Requests</h2><p id="queueHint" class="muted"></p></div><button class="btn ghost" onclick="loadMe()">Refresh</button></div>
 <div id="empty" class="empty">No requests yet.</div>
 <div class="table-wrap">
 <table id="table" class="hidden">
-<thead><tr><th>Ref No</th><th>Requestor</th><th>Date</th><th>Total</th><th>Status</th><th>Revision</th></tr></thead>
+<thead><tr><th>Ref No</th><th>Requestor</th><th>Date</th><th>Total</th><th>Status</th><th>Rev</th><th></th></tr></thead>
 <tbody id="tbody"></tbody>
 </table>
 </div>
 </div>
 </section>
 </div>
+
+<div id="detailModal" class="modal hidden" onclick="modalBackdrop(event)">
+  <div class="modal-panel">
+    <div class="modal-head">
+      <div><h2 id="detailRef">Expense Request</h2><p id="detailMeta" class="muted"></p></div>
+      <button class="btn ghost" onclick="closeDetail()">Close</button>
+    </div>
+
+    <div id="detailSummary" class="detail-summary"></div>
+
+    <div class="detail-section">
+      <h3>Payment Details</h3>
+      <div class="table-wrap">
+        <table><thead><tr><th>#</th><th>Category</th><th>Purpose</th><th>Date</th><th>Evidence</th><th class="money">Amount</th></tr></thead><tbody id="detailItems"></tbody></table>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <h3>Documents</h3>
+      <div class="pdf-split">
+        <div><div class="pdf-label">Expense Request Form</div><iframe id="formPdf"></iframe></div>
+        <div><div class="pdf-label">Evidence</div><iframe id="evidencePdf"></iframe></div>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <h3>Audit Trail</h3>
+      <div id="auditTrail" class="audit"></div>
+    </div>
+
+    <div id="decisionPanel" class="decision-panel hidden">
+      <label>Rejection Reason <span class="muted">(required only for Reject)</span></label>
+      <textarea id="decisionReason" rows="3" placeholder="Explain the rejection reason..." oninput="syncRejectButton()"></textarea>
+      <div class="decision-actions">
+        <button class="btn danger" id="rejectBtn" onclick="sendDecision('REJECT')" disabled>Reject</button>
+        <button class="btn success" id="approveBtn" onclick="sendDecision('APPROVE')">Approve</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="/app.js"></script>
 </body>
 </html>
