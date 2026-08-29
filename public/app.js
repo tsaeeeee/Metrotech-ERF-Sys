@@ -88,7 +88,7 @@ function renderRequests(requests){
   $('#tbody').innerHTML=requests.map(r=>{
     const rejected=['REVIEW_REJECTED','APPROVAL_REJECTED'].includes(r.status);
     const revise=currentEmployee?.role==='REQUESTOR' && rejected
-      ? `<button class="btn tiny warning" onclick="startRevision('${r.id}','${esc(r.ref_no)}','${esc(r.last_rejection_reason||'')}')">Revise</button>`
+      ? `<button class="btn tiny warning" onclick="startRevision('${r.id}')">Revise</button>`
       : '';
     return `<tr>
       <td><strong>${esc(r.ref_no)}</strong>${r.last_rejection_reason?`<div class="reason-mini">${esc(r.last_rejection_reason)}</div>`:''}</td>
@@ -197,15 +197,20 @@ function renderPayments(){
   $('#submitExpenseBtn').disabled=!payments.length;
 }
 
-function startRevision(id,refNo,reason){
-  revisionTarget={id,refNo};
-  payments=[]; editingIndex=-1; renderPayments(); resetPaymentForm();
-  $('#requestFormTitle').textContent=`Revise ${refNo}`;
-  $('#revisionBanner').classList.remove('hidden');
-  $('#revisionBanner').innerHTML=`<strong>Rejected:</strong> ${esc(reason||'Please revise this request.')}. Re-enter the payment data and attach evidence for the new revision.`;
-  $('#cancelRevisionBtn').classList.remove('hidden');
-  $('#submitExpenseBtn').textContent='Submit Revision';
-  $('#requestForm').scrollIntoView({behavior:'smooth'});
+async function startRevision(id){
+  try{
+    const data=await api(`/api/requests/${id}`);
+    const refNo=data.request.ref_no;
+    const reason=data.request.last_rejection_reason||'Please revise this request.';
+    revisionTarget={id,refNo};
+    payments=[]; editingIndex=-1; renderPayments(); resetPaymentForm();
+    $('#requestFormTitle').textContent=`Revise ${refNo}`;
+    $('#revisionBanner').classList.remove('hidden');
+    $('#revisionBanner').innerHTML=`<strong>Rejected:</strong> ${esc(reason)}. Re-enter the payment data and attach evidence for the new revision.`;
+    $('#cancelRevisionBtn').classList.remove('hidden');
+    $('#submitExpenseBtn').textContent='Submit Revision';
+    $('#requestForm').scrollIntoView({behavior:'smooth'});
+  }catch(e){msg(e.message,'err')}
 }
 
 function cancelRevision(){
