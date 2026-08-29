@@ -78,15 +78,18 @@ export async function createExpenseRequest(employee, items) {
     const approver = await getWorkflowActorTx(client,'APPROVER');
     if (!reviewer || !approver) throw new Error('Reviewer / Approver master data is incomplete.');
 
-    const { rows:dateRows } = await client.query("select (now() at time zone 'Asia/Jakarta')::date as request_date");
+    const { rows:dateRows } = await client.query(
+      "select (now() at time zone 'Asia/Jakarta')::date as request_date, " +
+      "to_char(now() at time zone 'Asia/Jakarta','YYYYMMDD') as compact_date"
+    );
     const requestDate = dateRows[0].request_date;
+    const compact = dateRows[0].compact_date;
     const { rows:counterRows } = await client.query(
       `insert into daily_counters(counter_date,last_sequence) values($1,1)
        on conflict(counter_date) do update set last_sequence=daily_counters.last_sequence+1
        returning last_sequence`, [requestDate]
     );
     const seq = Number(counterRows[0].last_sequence);
-    const compact = String(requestDate).slice(0,10).replaceAll('-','');
     const refNo = `ERF-${compact.slice(0,4)}-${compact.slice(4)}-${String(seq).padStart(4,'0')}`;
     const total = items.reduce((s,x)=>s+Number(x.amount),0);
 
