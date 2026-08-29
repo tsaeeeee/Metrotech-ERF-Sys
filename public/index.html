@@ -23,19 +23,42 @@
 <div id="profile" class="grid"></div>
 </div>
 
+<section id="requestForm" class="card hidden">
+<div class="row">
+  <div><h2>Create Expense Request</h2><p class="muted">Each payment requires at least one evidence file before it can be added.</p></div>
+</div>
+
+<div class="payment-form">
+  <div class="field"><label>Category</label><input id="category" placeholder="e.g. Transportation"></div>
+  <div class="field purpose"><label>Purpose of Payment</label><input id="purpose" placeholder="Describe the payment purpose"></div>
+  <div class="field"><label>Payment Date</label><input id="paymentDate" type="date"></div>
+  <div class="field"><label>Amount (IDR)</label><input id="amount" type="number" min="1" step="1" placeholder="0"></div>
+  <div class="field evidence-field"><label>Evidence *</label><input id="evidence" type="file" accept="application/pdf,image/png,image/jpeg" multiple><small id="evidenceInfo" class="muted">No evidence selected</small></div>
+  <button id="addPaymentBtn" class="btn primary" onclick="addPayment()" disabled>+ Add Payment</button>
+</div>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>#</th><th>Category</th><th>Purpose</th><th>Date</th><th>Evidence</th><th class="money">Amount</th><th></th></tr></thead>
+<tbody id="paymentBody"><tr><td colspan="7" class="empty">No payments added yet.</td></tr></tbody>
+</table>
+</div>
+
+<div class="form-footer">
+  <div class="total-box"><span>Total</span><strong id="grandTotal">Rp0</strong></div>
+  <button id="submitExpenseBtn" class="btn primary submit" onclick="submitExpense()" disabled>Submit Expense</button>
+</div>
+</section>
+
 <div class="card">
 <h2 id="queueTitle">Requests</h2>
 <div id="empty" class="empty">No requests yet.</div>
+<div class="table-wrap">
 <table id="table" class="hidden">
 <thead><tr><th>Ref No</th><th>Requestor</th><th>Date</th><th>Total</th><th>Status</th><th>Revision</th></tr></thead>
 <tbody id="tbody"></tbody>
 </table>
 </div>
-
-<div id="nextCard" class="card">
-<h2>Build Status</h2>
-<p>This bootstrap confirms the VM, Node app, PostgreSQL, sessions, employee master, and role routing are connected.</p>
-<p class="muted">Next build: request form + evidence upload + PDF generation + reviewer/approver workflow.</p>
 </div>
 </section>
 </div>
