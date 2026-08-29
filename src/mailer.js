@@ -2,13 +2,13 @@ import nodemailer from 'nodemailer';
 import { logEmail } from './db.js';
 
 function configured() {
-  return process.env.SMTP_HOST && process.env.MAIL_FROM &&
-    String(process.env.MAIL_MODE || '').toLowerCase()!=='console';
+  return String(process.env.MAIL_MODE || 'console').toLowerCase()==='smtp' &&
+    Boolean(process.env.SMTP_HOST && process.env.MAIL_FROM);
 }
 
 export async function sendWorkflowMail({event,request,to,cc='',subject,text,attachments=[]}) {
-  const toText=Array.isArray(to)?to.join(','):String(to||'');
-  const ccText=Array.isArray(cc)?cc.join(','):String(cc||'');
+  const toText=Array.isArray(to)?to.filter(Boolean).join(','):String(to||'');
+  const ccText=Array.isArray(cc)?cc.filter(Boolean).join(','):String(cc||'');
   if(!toText) return;
 
   if(!configured()){
