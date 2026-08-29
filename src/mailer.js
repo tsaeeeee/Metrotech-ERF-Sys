@@ -7,12 +7,23 @@ function configured() {
 }
 
 export async function sendWorkflowMail({event,request,to,cc='',subject,text,attachments=[]}) {
-  const toText=Array.isArray(to)?to.filter(Boolean).join(','):String(to||'');
-  const ccText=Array.isArray(cc)?cc.filter(Boolean).join(','):String(cc||'');
+  const originalTo=Array.isArray(to)?to.filter(Boolean).join(','):String(to||'');
+  const originalCc=Array.isArray(cc)?cc.filter(Boolean).join(','):String(cc||'');
+  const override=String(process.env.MAIL_OVERRIDE_TO||'').trim();
+  const toText=override || originalTo;
+  const ccText=override ? '' : originalCc;
   if(!toText) return;
 
   if(!configured()){
-    console.log('[MAIL:CONSOLE]',{event,to:toText,cc:ccText,subject});
+    console.log('[MAIL:CONSOLE]',{
+      event,
+      to:toText,
+      cc:ccText,
+      originalTo,
+      originalCc,
+      subject,
+      overridden:Boolean(override)
+    });
     await logEmail({
       requestId:request?.id||null,refNo:request?.ref_no||null,event,to:toText,cc:ccText,
       status:'CONSOLE',error:''
