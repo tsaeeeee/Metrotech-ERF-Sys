@@ -150,9 +150,14 @@ async function buildGoogleSheetFormPdf({request,items,outPath}){
 
   let tempId=null;
   try{
+    const workFolderId=String(process.env.TEMPLATE_WORK_FOLDER_ID||'').trim();
     const copied=await drive.files.copy({
       fileId:templateId,
-      requestBody:{name:`TEMP ${request.ref_no} r${request.revision}`}
+      supportsAllDrives:true,
+      requestBody:{
+        name:`TEMP ${request.ref_no} r${request.revision}`,
+        ...(workFolderId?{parents:[workFolderId]}:{})
+      }
     });
     tempId=copied.data.id;
     if(!tempId) throw new Error('Failed to create temporary template copy.');
@@ -226,7 +231,7 @@ async function buildGoogleSheetFormPdf({request,items,outPath}){
     return outPath;
   } finally {
     if(tempId){
-      try{await drive.files.delete({fileId:tempId})}catch{}
+      try{await drive.files.delete({fileId:tempId,supportsAllDrives:true})}catch{}
     }
   }
 }
