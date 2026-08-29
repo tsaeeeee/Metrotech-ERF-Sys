@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS requests (
   location text NOT NULL,
   division text NOT NULL,
   total numeric(18,2) NOT NULL,
-  status text NOT NULL CHECK (status IN ('PENDING_REVIEW','REVIEW_REJECTED','PENDING_APPROVAL','APPROVAL_REJECTED','APPROVED')),
+  status text NOT NULL CHECK (status IN ('PENDING_REVIEW','RECALLED','REVIEW_REJECTED','PENDING_APPROVAL','APPROVAL_REJECTED','APPROVED')),
   revision integer NOT NULL DEFAULT 1,
   form_pdf_path text,
   evidence_pdf_path text,
