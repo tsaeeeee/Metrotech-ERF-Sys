@@ -9,6 +9,28 @@ on:
 jobs:
   syntax:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: metrotech_erf
+          POSTGRES_USER: metrotech_erf
+          POSTGRES_PASSWORD: testpass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U metrotech_erf -d metrotech_erf"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: metrotech_erf
+      POSTGRES_USER: metrotech_erf
+      POSTGRES_PASSWORD: testpass
+      REVIEWER_NAME: Dimas Jenar
+      APPROVER_NAME: Ervan Mardianto
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -23,3 +45,6 @@ jobs:
           node --check src/documents.js
           node --check src/mailer.js
           node --check public/app.js
+          node --check scripts/workflow-smoke.js
+      - name: Test workflow state machine
+        run: npm run test:workflow
