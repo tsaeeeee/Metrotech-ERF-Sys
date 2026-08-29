@@ -9,23 +9,33 @@
 <body>
 <div class="shell">
 <header>
-  <div><h1>Expense Request System</h1><p>Metrotech Indonesia · Development Preview</p></div>
-  <div class="header-badges">
-    <div id="engineBadge" class="badge engine">PDF: checking…</div>
-    <div id="userBadge" class="badge">Not signed in</div>
-  </div>
+  <div><h1>Expense Request System</h1><p>PT Metrotech Indonesia</p></div>
+  <div id="userBadge" class="badge">Not signed in</div>
 </header>
 <div id="msg"></div>
 
-<section id="loginCard" class="card">
-<h2 id="loginTitle">Sign In</h2>
-<p id="loginHint" class="muted">Loading authentication mode…</p>
-<div id="users" class="users">Loading…</div>
+<section id="loginCard" class="login-shell">
+  <div class="login-card">
+    <div class="login-mark">ERF</div>
+    <h2>Sign in to Expense Request</h2>
+    <p class="muted">Enter your account to continue.</p>
+    <form id="loginForm" class="login-form" onsubmit="submitLogin(event)">
+      <div class="field">
+        <label>Username</label>
+        <input id="loginUsername" autocomplete="username" placeholder="Username" required>
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input id="loginPassword" type="password" autocomplete="current-password" placeholder="Password" required>
+      </div>
+      <button id="loginBtn" class="btn primary login-btn" type="submit">Sign In</button>
+    </form>
+  </div>
 </section>
 
 <section id="dashboard" class="hidden">
 <div class="card">
-<div class="row"><div><h2 id="roleTitle">Dashboard</h2><p id="identity" class="muted"></p></div><button class="btn ghost" onclick="logout()">Switch Role</button></div>
+<div class="row"><div><h2 id="roleTitle">Dashboard</h2><p id="identity" class="muted"></p></div><button class="btn ghost" onclick="logout()">Logout</button></div>
 <div id="profile" class="grid"></div>
 </div>
 
