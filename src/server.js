@@ -13,6 +13,7 @@ import {
 } from './db.js';
 import { buildEvidencePdf,buildFormPdf } from './documents.js';
 import { sendWorkflowMail } from './mailer.js';
+import { configureAuth,passport } from './auth.js';
 
 const __filename=fileURLToPath(import.meta.url);
 const __dirname=path.dirname(__filename);
@@ -20,6 +21,8 @@ const app=express();
 const PORT=Number(process.env.PORT || 8080);
 const PgStore=connectPgSimple(session);
 const DEV_AUTH=String(process.env.DEV_AUTH || 'true').toLowerCase()==='true';
+const GOOGLE_AUTH_READY=!DEV_AUTH &&
+  Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_CALLBACK_URL);
 const DATA_DIR=process.env.PDF_DIR || '/data/pdfs';
 const MAX_EVIDENCE_MB=Number(process.env.MAX_EVIDENCE_MB || 15);
 const allowedMime=new Set(['application/pdf','image/png','image/jpeg','image/jpg']);
@@ -40,13 +43,33 @@ app.use(session({
   cookie:{httpOnly:true,sameSite:'lax',secure:false,maxAge:8*60*60*1000}
 }));
 
+if(GOOGLE_AUTH_READY){
+  configureAuth();
+  app.use(passport.initialize());
+  app.use(passport.session());
+}
+
 app.get('/health', async (req,res)=>{
   try {
     const db=await pingDb();
-    res.json({ok:true,app:'Metrotech ERF',db:true,time:db.now,devAuth:DEV_AUTH});
+    res.json({ok:true,app:'Metrotech ERF',db:true,time:db.now,devAuth:DEV_AUTH,googleAuthReady:GOOGLE_AUTH_READY,pdfMode:String(process.env.PDF_MODE||'mock')});
   } catch (e) {
     res.status(503).json({ok:false,error:e.message});
   }
+});
+
+app.get('/api/auth-mode',(req,res)=>{
+  res.json({devAuth:DEV_AUTH,googleAuthReady:GOOGLE_AUTH_READY});
+});
+
+app.get('/auth/google',(req,res,next)=>{
+  if(!GOOGLE_AUTH_READY) return res.status(503).send('Google Workspace authentication is not configured.');
+  return passport.authenticate('google',{scope:['profile','email']})(req,res,next);
+});
+
+app.get('/auth/google/callback',(req,res,next)=>{
+  if(!GOOGLE_AUTH_READY) return res.redirect('/?auth=unavailable');
+  return passport.authenticate('google',{failureRedirect:'/?auth=failed'})(req,res,()=>res.redirect('/'));
 });
 
 app.get('/api/dev/users', async (req,res)=>{
@@ -66,7 +89,7 @@ app.post('/api/logout',(req,res)=>req.session.destroy(()=>res.json({ok:true})));
 
 async function requireUser(req,res,next){
   try{
-    const email=req.session?.user?.email;
+    const email=req.session?.user?.email || req.user?.email;
     if(!email) return res.status(401).json({error:'Authentication required'});
     const employee=await getEmployee(email);
     if(!employee) return res.status(403).json({error:'Employee is inactive or missing'});
@@ -234,7 +257,8 @@ app.post('/api/requests/:id/approve',requireUser,async(req,res,next)=>{
     ]:[];
     await sendWorkflowMail({
       event:approved?'FINAL_APPROVED':'APPROVAL_REJECTED',request:detail.request,
-      to:detail.request.requester_email,cc:detail.request.reviewer_email,
+      to:detail.request.requester_email,
+      cc:approved?[detail.request.reviewer_email,process.env.FINAL_APPROVED_CC]:detail.request.reviewer_email,
       subject:approved?`[ERF] ${detail.request.ref_no} approved`:`[ERF] ${detail.request.ref_no} rejected by approver`,
       text:approved?`${detail.request.ref_no} has been approved by ${req.employee.name}.`
         :`${detail.request.ref_no} was rejected by ${req.employee.name}. Reason: ${req.body.reason}`,
