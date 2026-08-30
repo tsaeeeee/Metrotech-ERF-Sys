@@ -25,4 +25,4 @@ docker compose exec -T db \
 
 echo ""
 echo "Development reset complete."
-echo "Bootstrap login: admin / dev123"
+echo "Bootstrap login: Administrator / Admin@MTR"
