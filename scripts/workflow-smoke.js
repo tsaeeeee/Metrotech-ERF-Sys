@@ -29,13 +29,20 @@ function items(label){
 try{
   const schema=await fs.readFile(new URL('../sql/schema.sql',import.meta.url),'utf8');
   await pool.query(schema);
-  const devSeed=await fs.readFile(new URL('../sql/dev-accounts.sql',import.meta.url),'utf8');
-  await pool.query(devSeed);
+  await pool.query(`
+    insert into employees(
+      email,name,employee_id,department,location,division,role,signature_file,active,username,password_hash
+    ) values
+      ('requestor-test@metrotech.local','Workflow Requestor','TEST-001','Operations','Jakarta','Service Operations','REQUESTOR','',true,'workflow-requestor',crypt('test123',gen_salt('bf',10))),
+      ('reviewer-test@metrotech.local','Dimas Jenar','TEST-002','Operations','Jakarta','Service Operations','REVIEWER','',true,'workflow-reviewer',crypt('test123',gen_salt('bf',10))),
+      ('approver-test@metrotech.local','Ervan Mardianto','TEST-003','Management','Jakarta','Management','APPROVER','',true,'workflow-approver',crypt('test123',gen_salt('bf',10)))
+    on conflict(email) do nothing
+  `);
 
-  const requestor=await getEmployee('requestor-dev@metrotech.local');
-  const reviewer=await getEmployee('reviewer-dev@metrotech.local');
-  const approver=await getEmployee('approver-dev@metrotech.local');
-  assert(requestor&&reviewer&&approver,'Dev actors were not seeded.');
+  const requestor=await getEmployee('requestor-test@metrotech.local');
+  const reviewer=await getEmployee('reviewer-test@metrotech.local');
+  const approver=await getEmployee('approver-test@metrotech.local');
+  assert(requestor&&reviewer&&approver,'Workflow test actors were not seeded.');
 
   const first=await createExpenseRequest(requestor,items('Initial submit'));
   assert(first.status==='PENDING_REVIEW','Submit must enter PENDING_REVIEW.');
