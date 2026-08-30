@@ -215,8 +215,12 @@ function renderAdminUsers(){
   }
   empty.classList.add('hidden');
   table.classList.remove('hidden');
-  $('#adminUsersBody').innerHTML=adminUsers.map(u=>`
-    <tr>
+  $('#adminUsersBody').innerHTML=adminUsers.map(u=>{
+    const stateAction=u.active
+      ? `<button class="btn tiny danger" type="button" onclick="setAdminUserActive('${encodeURIComponent(u.email)}',false)">Remove</button>`
+      : `<button class="btn tiny success" type="button" onclick="setAdminUserActive('${encodeURIComponent(u.email)}',true)">Restore</button>`;
+    return `
+    <tr class="${u.active?'':'inactive-user-row'}">
       <td><strong>${esc(u.name)}</strong><div class="admin-username">@${esc(u.username||'—')}</div></td>
       <td>${esc(u.email)}</td>
       <td>${esc(u.employee_id)}</td>
@@ -224,9 +228,37 @@ function renderAdminUsers(){
       <td><span class="role-chip">${esc(u.role)}</span></td>
       <td>${u.has_signature?'<span class="signature-state ready">Uploaded</span>':'<span class="signature-state">Not uploaded</span>'}</td>
       <td>${u.active?'<span class="user-state active">Active</span>':'<span class="user-state">Inactive</span>'}</td>
-      <td class="actions action-col"><button class="btn tiny ghost" type="button" onclick="openAdminUserModal('${encodeURIComponent(u.email)}')">Edit</button></td>
-    </tr>
-  `).join('');
+      <td class="actions action-col">
+        <button class="btn tiny ghost" type="button" onclick="openAdminUserModal('${encodeURIComponent(u.email)}')">Edit</button>
+        ${stateAction}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function setAdminUserActive(encodedEmail,active){
+  if(currentEmployee?.role!=='ADMIN') return;
+  const email=decodeURIComponent(encodedEmail);
+  const user=adminUsers.find(u=>u.email===email);
+  if(!user) return;
+
+  const verb=active?'restore':'remove';
+  const promptText=active
+    ? `Restore ${user.name}? This user will be able to sign in again.`
+    : `Remove ${user.name}? The account will be deactivated, but request and approval history will be preserved.`;
+
+  if(!window.confirm(promptText)) return;
+
+  try{
+    await api(`/api/admin/users/${encodeURIComponent(email)}/status`,{
+      method:'PATCH',
+      body:JSON.stringify({active})
+    });
+    msg(`${user.name} ${active?'restored':'removed'} successfully.`,'ok');
+    await loadAdminUsers();
+  }catch(e){
+    msg(e.message,'err');
+  }
 }
 
 function toggleAdminRoleMenu(event){
