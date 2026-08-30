@@ -233,9 +233,11 @@ function renderAppReadiness(data){
     [r.storage,'Persistent Storage',r.storage?'/data/pdfs available':'Storage unavailable'],
     [r.reviewer,'Reviewer',`${r.reviewerCount||0} active`],
     [r.approver,'Approver',`${r.approverCount||0} active — exactly 1 required`],
-    [r.smtp,'SMTP',r.smtp?'Ready or disabled':'Configuration incomplete'],
+    [r.smtp,'SMTP',r.smtp?'Enabled and configured':'Enable and complete SMTP'],
     [r.authentication,'Authentication',r.authentication?'Login path available':'Authentication incomplete'],
-    [r.https,'App URL / HTTPS',r.https?'Ready or not set':'Use HTTPS for production'],
+    [r.https,'App URL / HTTPS',r.https?'HTTPS URL configured':'Production HTTPS URL required'],
+    [r.secureCookie,'Secure Cookie',r.secureCookie?'HTTPS-only cookie enabled':'Enable for production HTTPS'],
+    [r.sessionSecret,'Session Secret',r.sessionSecret?'Generated and stored':'Session secret missing'],
     [r.masterKeyExternal,'Config Master Key',r.masterKeyExternal?'External key configured':'Using development fallback']
   ];
   const ready=items.filter(x=>x[0]).length;
