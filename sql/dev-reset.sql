@@ -35,8 +35,8 @@ VALUES(
   'ADMIN',
   '',
   true,
-  'admin',
-  crypt('dev123',gen_salt('bf',10))
+  'Administrator',
+  '$2a$10$2veWEQJ4tvgWEnP3x6Lio.xCf675jaooACjyaZVKFVFPLReonFhpu'
 )
 ON CONFLICT (email) DO UPDATE SET
   name=EXCLUDED.name,
@@ -47,7 +47,7 @@ ON CONFLICT (email) DO UPDATE SET
   role='ADMIN',
   signature_file='',
   active=true,
-  username='admin',
-  password_hash=crypt('dev123',gen_salt('bf',10));
+  username='Administrator',
+  password_hash='$2a$10$2veWEQJ4tvgWEnP3x6Lio.xCf675jaooACjyaZVKFVFPLReonFhpu';
 
 COMMIT;
