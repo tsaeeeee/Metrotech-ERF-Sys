@@ -186,7 +186,11 @@
     <form id="profileForm" class="profile-form signature-only-form" onsubmit="saveProfile(event)">
       <div class="field signature-upload">
         <label>Signature</label>
-        <input id="profileSignature" type="file" accept="image/png,image/jpeg" required>
+        <div class="evidence-picker">
+          <input id="profileSignature" class="file-input-hidden" type="file" accept="image/png,image/jpeg" required>
+          <button type="button" class="btn ghost file-pick-btn" onclick="$('#profileSignature').click()">Choose File</button>
+          <span id="profileSignatureInfo" class="file-pick-info">No file selected</span>
+        </div>
         <small class="muted">PNG/JPG. Uploading a new file replaces your current signature.</small>
       </div>
       <div class="profile-form-actions">
@@ -220,13 +224,20 @@
       <div class="field"><label>Department</label><input id="adminDepartment" required></div>
       <div class="field"><label>Location</label><input id="adminLocation" required></div>
       <div class="field"><label>Division</label><input id="adminDivision" required></div>
-      <div class="field">
+      <div class="field admin-role-field">
         <label>Role</label>
-        <select id="adminRole" required>
-          <option value="REQUESTOR">Requestor</option>
-          <option value="REVIEWER">Reviewer</option>
-          <option value="APPROVER">Approver</option>
-        </select>
+        <input id="adminRole" type="hidden" value="REQUESTOR" required>
+        <div id="adminRoleSelect" class="custom-select">
+          <button id="adminRoleButton" class="custom-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" onclick="toggleAdminRoleMenu(event)">
+            <span id="adminRoleLabel">Requestor</span>
+            <span class="custom-select-chevron">⌄</span>
+          </button>
+          <div id="adminRoleMenu" class="custom-select-menu hidden" role="listbox">
+            <button type="button" data-value="REQUESTOR" onclick="selectAdminRole('REQUESTOR','Requestor')">Requestor</button>
+            <button type="button" data-value="REVIEWER" onclick="selectAdminRole('REVIEWER','Reviewer')">Reviewer</button>
+            <button type="button" data-value="APPROVER" onclick="selectAdminRole('APPROVER','Approver')">Approver</button>
+          </div>
+        </div>
       </div>
       <div id="adminActiveField" class="field admin-active-field hidden">
         <label>Status</label>
