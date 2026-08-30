@@ -84,7 +84,8 @@ export async function buildEvidencePdf({items,files,outPath}) {
 async function embedSignature(doc, filename){
   if(!filename) return null;
   try{
-    const bytes=await fs.readFile(path.join(SIGNATURE_DIR,filename));
+    const signaturePath=path.isAbsolute(filename)?filename:path.join(SIGNATURE_DIR,filename);
+    const bytes=await fs.readFile(signaturePath);
     if(filename.toLowerCase().endsWith('.jpg')||filename.toLowerCase().endsWith('.jpeg')) return await doc.embedJpg(bytes);
     return await doc.embedPng(bytes);
   }catch{return null}
@@ -233,66 +234,121 @@ async function buildMockFormPdf({request,items,outPath}) {
   const page=doc.addPage([595,842]);
   const bold=await doc.embedFont(StandardFonts.HelveticaBold);
   const normal=await doc.embedFont(StandardFonts.Helvetica);
-  const navy=rgb(0.04,0.22,0.41);
-  const grey=rgb(.38,.42,.48);
 
-  page.drawText('PT METROTECH INDONESIA',{x:42,y:795,size:12,font:bold,color:navy});
-  page.drawText('EXPENSE REQUEST FORM',{x:42,y:770,size:20,font:bold,color:navy});
-  page.drawText(`Request Date: ${displayDate(request.request_date)}`,{x:395,y:798,size:9,font:normal});
-  page.drawText(`Ref No: ${request.ref_no}`,{x:395,y:782,size:9,font:bold});
+  const navy=rgb(0.035,0.20,0.39);
+  const blue=rgb(0.12,0.42,0.67);
+  const pale=rgb(0.95,0.97,0.99);
+  const line=rgb(0.72,0.77,0.83);
+  const grey=rgb(0.35,0.39,0.45);
+  const yellow=rgb(0.98,0.73,0.08);
+  const white=rgb(1,1,1);
 
-  const info=[
-    ['Name',request.employee_name],['Employee ID',request.employee_id],['Department',request.department],
-    ['Location',request.location],['Division',request.division]
+  // Header / brand
+  page.drawText('METROTECH',{x:42,y:798,size:14,font:bold,color:navy});
+  page.drawRectangle({x:42,y:790,width:31,height:3,color:yellow});
+  page.drawText('INDONESIA',{x:78,y:790,size:6.5,font:bold,color:grey});
+
+  page.drawText('EXPENSE REQUEST FORM',{x:182,y:793,size:17,font:bold,color:navy});
+  page.drawText('Operations Division',{x:245,y:778,size:8,font:normal,color:grey});
+
+  page.drawText('Request Date',{x:410,y:804,size:7,font:bold,color:grey});
+  page.drawText(displayDate(request.request_date),{x:476,y:804,size:8,font:normal,color:navy});
+  page.drawText('Ref No',{x:410,y:789,size:7,font:bold,color:grey});
+  page.drawText(String(request.ref_no||''),{x:450,y:789,size:8,font:bold,color:navy});
+
+  // Employee information
+  page.drawRectangle({x:42,y:745,width:511,height:20,color:navy});
+  page.drawText('EMPLOYEE INFORMATION',{x:52,y:751,size:8,font:bold,color:white});
+
+  const infoRows=[
+    ['Name',request.employee_name],
+    ['Employee ID',request.employee_id],
+    ['Department',request.department],
+    ['Location',request.location],
+    ['Division',request.division]
   ];
-  let iy=735;
-  for(const [a,b] of info){
-    page.drawText(a,{x:42,y:iy,size:9,font:bold,color:grey});
-    page.drawText(String(b||''),{x:135,y:iy,size:10,font:normal});
-    iy-=20;
+  let infoY=725;
+  for(const [label,value] of infoRows){
+    page.drawRectangle({x:42,y:infoY,width:511,height:20,borderWidth:.55,borderColor:line});
+    page.drawRectangle({x:42,y:infoY,width:120,height:20,color:pale,borderWidth:.55,borderColor:line});
+    page.drawText(label,{x:51,y:infoY+6,size:7.5,font:bold,color:grey});
+    page.drawText(String(value||''),{x:173,y:infoY+6,size:8.5,font:normal,color:navy});
+    infoY-=20;
   }
 
-  const top=620;
-  page.drawRectangle({x:42,y:top,width:511,height:24,borderWidth:1,borderColor:rgb(.8,.84,.88),color:rgb(.96,.97,.98)});
-  const heads=['#','Category','Purpose of Payment','Date','Amount'];
-  const hx=[48,68,175,370,445];
-  heads.forEach((h,i)=>page.drawText(h,{x:hx[i],y:top+8,size:8,font:bold,color:grey}));
+  // Expense table
+  const tableTop=600;
+  const rowH=20;
+  const x0=42;
+  const widths=[28,100,214,75,94];
+  const heads=['No.','Category','Purpose of Payment','Payment Date','Amount (IDR)'];
+  let cx=x0;
+  page.drawRectangle({x:x0,y:tableTop,width:511,height:24,color:navy});
+  for(let i=0;i<heads.length;i++){
+    page.drawText(heads[i],{x:cx+5,y:tableTop+8,size:7,font:bold,color:white});
+    cx+=widths[i];
+  }
 
-  let y=top-22;
-  const rowH=22;
-  items.slice(0,16).forEach((it,i)=>{
-    page.drawRectangle({x:42,y,width:511,height:rowH,borderWidth:.5,borderColor:rgb(.86,.88,.91)});
-    page.drawText(String(i+1),{x:48,y:y+7,size:8,font:normal});
-    page.drawText(String(it.category||'').slice(0,17),{x:68,y:y+7,size:8,font:normal});
-    page.drawText(String(it.purpose||'').slice(0,40),{x:175,y:y+7,size:8,font:normal});
-    page.drawText(displayDate(it.payment_date || it.paymentDate),{x:370,y:y+7,size:8,font:normal});
-    page.drawText(money(it.amount),{x:445,y:y+7,size:8,font:normal});
+  let y=tableTop-rowH;
+  for(let r=0;r<16;r++){
+    let x=x0;
+    for(const w of widths){
+      page.drawRectangle({x,y,width:w,height:rowH,borderWidth:.5,borderColor:line});
+      x+=w;
+    }
+    const it=items[r];
+    if(it){
+      page.drawText(String(r+1),{x:x0+9,y:y+6,size:7.5,font:normal,color:grey});
+      page.drawText(String(it.category||'').slice(0,22),{x:x0+widths[0]+5,y:y+6,size:7.3,font:normal,color:navy});
+      page.drawText(String(it.purpose||'').slice(0,48),{x:x0+widths[0]+widths[1]+5,y:y+6,size:7.3,font:normal,color:navy});
+      page.drawText(displayDate(it.payment_date || it.paymentDate),{x:x0+widths[0]+widths[1]+widths[2]+5,y:y+6,size:7.2,font:normal,color:navy});
+      page.drawText(money(it.amount).replace('Rp ','Rp'),{x:x0+widths[0]+widths[1]+widths[2]+widths[3]+5,y:y+6,size:7.1,font:normal,color:navy});
+    }
     y-=rowH;
-  });
+  }
 
-  page.drawText('TOTAL',{x:365,y:y-4,size:10,font:bold});
-  page.drawText(money(request.total),{x:445,y:y-4,size:10,font:bold,color:navy});
+  // Total
+  page.drawRectangle({x:x0,y:y,width:417,height:23,color:pale,borderWidth:.65,borderColor:line});
+  page.drawRectangle({x:x0+417,y:y,width:94,height:23,borderWidth:.65,borderColor:line});
+  page.drawText('TOTAL',{x:x0+365,y:y+7,size:8,font:bold,color:navy});
+  page.drawText(money(request.total).replace('Rp ','Rp'),{x:x0+423,y:y+7,size:8,font:bold,color:navy});
 
-  const sigY=82;
+  // Signature area
+  const sigY=72;
+  const sigTop=158;
+  const sigW=170.33;
   const visible=signatureVisibility(request);
   const sigCols=[
-    {label:'Prepared By',name:request.employee_name,file:request.requestor_signature,show:visible.requestor,x:68},
-    {label:'Reviewed By',name:request.reviewer_name,file:request.reviewer_signature,show:visible.reviewer,x:252},
-    {label:'Approved By',name:request.approver_name,file:request.approver_signature,show:visible.approver,x:430}
+    {label:'Prepared By',name:request.employee_name,file:request.requestor_signature,show:visible.requestor,x:42},
+    {label:'Reviewed By',name:request.reviewer_name,file:request.reviewer_signature,show:visible.reviewer,x:42+sigW},
+    {label:'Approved By',name:request.approver_name,file:request.approver_signature,show:visible.approver,x:42+(sigW*2)}
   ];
+
   for(const s of sigCols){
-    page.drawText(s.label,{x:s.x,y:sigY+75,size:9,font:bold,color:grey});
+    page.drawRectangle({x:s.x,y:sigY,width:sigW,height:sigTop-sigY,borderWidth:.65,borderColor:line});
+    page.drawRectangle({x:s.x,y:sigTop-20,width:sigW,height:20,color:pale,borderWidth:.65,borderColor:line});
+    page.drawText(s.label,{x:s.x+8,y:sigTop-13,size:7.5,font:bold,color:navy});
+
     if(s.show){
       const img=await embedSignature(doc,s.file);
       if(img){
-        const scale=Math.min(85/img.width,38/img.height);
-        page.drawImage(img,{x:s.x,y:sigY+28,width:img.width*scale,height:img.height*scale});
+        const maxW=82,maxH=38;
+        const scale=Math.min(maxW/img.width,maxH/img.height);
+        const w=img.width*scale,h=img.height*scale;
+        page.drawImage(img,{x:s.x+(sigW-w)/2,y:sigY+32,width:w,height:h});
       }
     }
-    page.drawText(String(s.name||''),{x:s.x,y:sigY+10,size:8,font:normal});
+    const name=String(s.name||'');
+    page.drawLine({start:{x:s.x+24,y:sigY+20},end:{x:s.x+sigW-24,y:sigY+20},thickness:.5,color:line});
+    page.drawText(name.slice(0,28),{x:s.x+8,y:sigY+8,size:7,font:normal,color:navy});
   }
 
-  page.drawText(`Status: ${request.status} · Revision ${request.revision}`,{x:42,y:28,size:8,font:normal,color:grey});
+  // Footer branding
+  page.drawRectangle({x:42,y:42,width:511,height:8,color:navy});
+  page.drawRectangle({x:42,y:42,width:112,height:8,color:yellow});
+  page.drawText('PT Metrotech Indonesia',{x:42,y:27,size:6.5,font:bold,color:navy});
+  page.drawText(`Revision ${request.revision}`,{x:493,y:27,size:6.5,font:normal,color:grey});
+
   await fs.writeFile(outPath,await doc.save());
   return outPath;
 }
