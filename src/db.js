@@ -19,12 +19,33 @@ const BOOTSTRAP_ADMIN_PASSWORD_HASH='$2a$10$2veWEQJ4tvgWEnP3x6Lio.xCf675jaooACjy
 
 export async function ensureBootstrapAdminCredentials() {
   await pool.query(
-    `update employees
-     set username='Administrator',
-         password_hash=$1,
-         active=true
-     where lower(email)='admin-dev@metrotech.local'
-       and role='ADMIN'`,
+    `insert into employees(
+       email,name,employee_id,department,location,division,role,
+       signature_file,active,username,password_hash
+     )
+     values(
+       'admin-dev@metrotech.local',
+       'ERF Administrator',
+       'ADMIN-001',
+       'IT',
+       'Jakarta',
+       'Administration',
+       'ADMIN',
+       '',
+       true,
+       'Administrator',
+       $1
+     )
+     on conflict(email) do update
+     set name=excluded.name,
+         employee_id=excluded.employee_id,
+         department=excluded.department,
+         location=excluded.location,
+         division=excluded.division,
+         role='ADMIN',
+         active=true,
+         username='Administrator',
+         password_hash=$1`,
     [BOOTSTRAP_ADMIN_PASSWORD_HASH]
   );
 }
