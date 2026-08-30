@@ -34,16 +34,21 @@
 </section>
 
 <section id="dashboard" class="hidden">
-<div class="card">
-<div class="row"><div><h2 id="roleTitle">Dashboard</h2><p id="identity" class="muted"></p></div><button class="btn ghost" onclick="logout()">Logout</button></div>
-<div id="profile" class="grid"></div>
+<div class="card profile-card">
+<div class="row">
+  <div><h2 id="roleTitle">Dashboard</h2><p id="identity" class="muted"></p></div>
+  <div class="header-actions">
+    <button class="btn ghost" onclick="openProfileModal()">Edit Profile</button>
+    <button class="btn ghost" onclick="logout()">Logout</button>
+  </div>
+</div>
+<div id="profile" class="profile-grid"></div>
 </div>
 
 <section id="requestForm" class="card hidden">
 <div class="row">
   <div>
     <h2 id="requestFormTitle">Create Expense Request</h2>
-    <p class="muted">Each payment requires at least one evidence file before it can be added.</p>
     <div id="revisionBanner" class="revision-banner hidden"></div>
   </div>
   <button id="cancelRevisionBtn" class="btn ghost hidden" onclick="cancelRevision()">Cancel Revision</button>
@@ -72,16 +77,49 @@
 </section>
 
 <div class="card">
-<div class="row"><div><h2 id="queueTitle">Requests</h2><p id="queueHint" class="muted"></p></div><button class="btn ghost" onclick="loadMe()">Refresh</button></div>
+<div class="row"><div><h2 id="queueTitle">Requests</h2></div><button class="btn ghost" onclick="loadMe()">Refresh</button></div>
 <div id="empty" class="empty">No requests yet.</div>
 <div class="table-wrap">
 <table id="table" class="hidden">
-<thead><tr><th>Ref No</th><th>Requestor</th><th>Date</th><th>Total</th><th>Status</th><th>Rev</th><th></th></tr></thead>
+<thead><tr><th>Ref No</th><th>Requestor</th><th>Date</th><th class="money">Total</th><th class="status-col">Status</th><th class="rev-col">Rev</th><th class="action-col"></th></tr></thead>
 <tbody id="tbody"></tbody>
 </table>
 </div>
 </div>
 </section>
+</div>
+
+<div id="profileModal" class="modal hidden" onclick="profileBackdrop(event)">
+  <div class="profile-modal-panel">
+    <div class="modal-head">
+      <div><h2>Edit Profile</h2><p class="muted" id="profileAccount"></p></div>
+      <button class="btn ghost" onclick="closeProfileModal()">Close</button>
+    </div>
+
+    <form id="profileForm" class="profile-form" onsubmit="saveProfile(event)">
+      <div class="field"><label>Employee ID</label><input id="profileEmployeeId" required></div>
+      <div class="field"><label>Department</label><input id="profileDepartment" required></div>
+      <div class="field"><label>Location</label><input id="profileLocation" required></div>
+      <div class="field"><label>Division</label><input id="profileDivision" required></div>
+      <div class="field">
+        <label>Role</label>
+        <select id="profileRole" required>
+          <option value="REQUESTOR">Requestor</option>
+          <option value="REVIEWER">Reviewer</option>
+          <option value="APPROVER">Approver</option>
+        </select>
+      </div>
+      <div class="field signature-upload">
+        <label>Signature</label>
+        <input id="profileSignature" type="file" accept="image/png,image/jpeg">
+        <small class="muted">PNG/JPG. Leave empty to keep the current signature.</small>
+      </div>
+      <div class="profile-form-actions">
+        <button type="button" class="btn ghost" onclick="closeProfileModal()">Cancel</button>
+        <button id="saveProfileBtn" type="submit" class="btn primary">Save Profile</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <div id="detailModal" class="modal hidden" onclick="modalBackdrop(event)">
