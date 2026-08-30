@@ -44,6 +44,7 @@ jobs:
           node --check src/auth.js
           node --check src/documents.js
           node --check src/mailer.js
+          node --check src/settings.js
           node --check public/app.js
           node --check scripts/workflow-smoke.js
       - name: Test workflow state machine
