@@ -273,6 +273,7 @@ function populateAppSettings(data){
   $('#appMailSenderName').value=s.mailSenderName||'Metrotech Expense Approval System';
   $('#appMailFrom').value=s.mailFrom||'no-reply@metrotech.id';
   $('#appMailOverrideTo').value=s.mailOverrideTo||'';
+  $('#appFinalApprovedCc').value=s.finalApprovedCc||'';
 
   $('#appSessionHours').value=s.sessionHours||8;
   $('#appLoginRateLimit').value=s.loginRateLimit||10;
@@ -314,6 +315,7 @@ function collectAppSettings(){
     mailSenderName:$('#appMailSenderName').value.trim(),
     mailFrom:$('#appMailFrom').value.trim(),
     mailOverrideTo:$('#appMailOverrideTo').value.trim(),
+    finalApprovedCc:$('#appFinalApprovedCc').value.trim(),
     sessionHours:Number($('#appSessionHours').value||8),
     loginRateLimit:Number($('#appLoginRateLimit').value||10),
     cookieSecure:$('#appCookieSecure').checked
