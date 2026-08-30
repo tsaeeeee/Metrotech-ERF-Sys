@@ -33,6 +33,35 @@ export async function getEmployee(email) {
   return rows[0] || null;
 }
 
+export async function updateEmployeeProfile(email,{employeeId,department,location,division,role,signatureFile}) {
+  const allowedRoles=new Set(['REQUESTOR','REVIEWER','APPROVER']);
+  const nextRole=String(role||'').toUpperCase();
+  if(!allowedRoles.has(nextRole)) throw Object.assign(new Error('Invalid role.'),{status:400});
+
+  const {rows}=await pool.query(
+    `update employees
+     set employee_id=$2,
+         department=$3,
+         location=$4,
+         division=$5,
+         role=$6,
+         signature_file=coalesce($7,signature_file)
+     where lower(email)=lower($1) and active=true
+     returning email,name,employee_id,department,location,division,role,signature_file`,
+    [
+      email,
+      String(employeeId||'').trim(),
+      String(department||'').trim(),
+      String(location||'').trim(),
+      String(division||'').trim(),
+      nextRole,
+      signatureFile||null
+    ]
+  );
+  if(!rows[0]) throw Object.assign(new Error('Employee not found.'),{status:404});
+  return rows[0];
+}
+
 export async function listRequestsForEmployee(employee) {
   let q, params;
   if (employee.role === 'REQUESTOR') {
