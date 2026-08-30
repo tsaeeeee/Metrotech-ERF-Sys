@@ -147,6 +147,20 @@ export async function updateManagedEmployee(email,data) {
 }
 
 
+export async function setManagedEmployeeActive(email,active) {
+  const {rows}=await pool.query(
+    `update employees
+     set active=$2
+     where lower(email)=lower($1) and role<>'ADMIN'
+     returning email,name,employee_id,department,location,division,role,active,username,
+       (coalesce(signature_file,'')<>'') as has_signature`,
+    [email,Boolean(active)]
+  );
+  if(!rows[0]) throw Object.assign(new Error('Managed user not found.'),{status:404});
+  return rows[0];
+}
+
+
 export async function listRequestsForEmployee(employee) {
   let q, params;
   if (employee.role === 'REQUESTOR') {
