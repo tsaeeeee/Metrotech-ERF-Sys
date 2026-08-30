@@ -376,9 +376,9 @@ async function buildMockFormPdf({request,items,outPath}) {
     });
   }
 
-  // Footer accent: blue on the left, small diagonal gap, yellow on the right.
+  // Footer accent: blue and yellow share the same 45-degree diagonal direction.
   page.drawSvgPath('M 0 0 L 397 0 L 405 8 L 0 8 Z',{x:42,y:42,color:navy});
-  page.drawSvgPath('M 8 0 L 96 0 L 96 8 L 0 8 Z',{x:457,y:42,color:yellow});
+  page.drawSvgPath('M 0 0 L 96 0 L 96 8 L 8 8 Z',{x:457,y:42,color:yellow});
 
   await fs.writeFile(outPath,await doc.save());
   return outPath;
