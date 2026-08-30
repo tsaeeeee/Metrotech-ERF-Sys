@@ -6,3 +6,5 @@ signatures/*
 data/
 *.log
 .DS_Store
+
+public/assets/metrotech-logo.png
