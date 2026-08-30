@@ -7,9 +7,11 @@ CREATE TABLE IF NOT EXISTS employees (
   department text NOT NULL,
   location text NOT NULL,
   division text NOT NULL,
-  role text NOT NULL CHECK (role IN ('REQUESTOR','REVIEWER','APPROVER')),
-  signature_file text NOT NULL,
-  active boolean NOT NULL DEFAULT true
+  role text NOT NULL CHECK (role IN ('REQUESTOR','REVIEWER','APPROVER','ADMIN')),
+  signature_file text NOT NULL DEFAULT '',
+  active boolean NOT NULL DEFAULT true,
+  username text,
+  password_hash text
 );
 
 CREATE TABLE IF NOT EXISTS requests (
@@ -83,3 +85,8 @@ CREATE TABLE IF NOT EXISTS email_log (
   error text NOT NULL DEFAULT '',
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+
+CREATE UNIQUE INDEX IF NOT EXISTS employees_username_lower_uidx
+  ON employees(lower(username))
+  WHERE username IS NOT NULL;
