@@ -72,22 +72,28 @@
 </div>
 
 <div class="payment-form">
-  <div class="field">
+  <div class="field category-field">
     <label>Category</label>
-    <select id="category">
-      <option value="">Select category</option>
-      <option value="Transportation">Transportation</option>
-      <option value="Accommodation">Accommodation</option>
-      <option value="Meals">Meals</option>
-      <option value="Office Supplies">Office Supplies</option>
-      <option value="Communication">Communication</option>
-      <option value="Project / Operational">Project / Operational</option>
-      <option value="Maintenance & Repair">Maintenance & Repair</option>
-      <option value="Software / Subscription">Software / Subscription</option>
-      <option value="Training / Certification">Training / Certification</option>
-      <option value="Courier / Delivery">Courier / Delivery</option>
-      <option value="Others">Others</option>
-    </select>
+    <input id="category" type="hidden" value="">
+    <div id="categorySelect" class="custom-select">
+      <button id="categoryButton" class="custom-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" onclick="toggleCategoryMenu(event)">
+        <span id="categoryLabel" class="custom-select-placeholder">Select category</span>
+        <span class="custom-select-chevron">⌄</span>
+      </button>
+      <div id="categoryMenu" class="custom-select-menu hidden" role="listbox">
+        <button type="button" data-value="Transportation" onclick="selectCategory('Transportation')">Transportation</button>
+        <button type="button" data-value="Accommodation" onclick="selectCategory('Accommodation')">Accommodation</button>
+        <button type="button" data-value="Meals" onclick="selectCategory('Meals')">Meals</button>
+        <button type="button" data-value="Office Supplies" onclick="selectCategory('Office Supplies')">Office Supplies</button>
+        <button type="button" data-value="Communication" onclick="selectCategory('Communication')">Communication</button>
+        <button type="button" data-value="Project / Operational" onclick="selectCategory('Project / Operational')">Project / Operational</button>
+        <button type="button" data-value="Maintenance & Repair" onclick="selectCategory('Maintenance & Repair')">Maintenance & Repair</button>
+        <button type="button" data-value="Software / Subscription" onclick="selectCategory('Software / Subscription')">Software / Subscription</button>
+        <button type="button" data-value="Training / Certification" onclick="selectCategory('Training / Certification')">Training / Certification</button>
+        <button type="button" data-value="Courier / Delivery" onclick="selectCategory('Courier / Delivery')">Courier / Delivery</button>
+        <button type="button" data-value="Others" onclick="selectCategory('Others')">Others</button>
+      </div>
+    </div>
   </div>
   <div class="field purpose"><label>Purpose</label><input id="purpose" placeholder="Describe"></div>
   <div class="field"><label>Payment Date</label><input id="paymentDate" type="date"></div>
@@ -96,7 +102,7 @@
     <label>Evidence *</label>
     <div class="evidence-picker">
       <input id="evidence" class="file-input-hidden" type="file" accept="application/pdf,image/png,image/jpeg" multiple>
-      <label for="evidence" class="btn ghost file-pick-btn">Choose Files</label>
+      <button type="button" class="btn ghost file-pick-btn" onclick="$('#evidence').click()">Choose Files</button>
       <span id="evidenceInfo" class="file-pick-info">No file selected</span>
     </div>
   </div>
