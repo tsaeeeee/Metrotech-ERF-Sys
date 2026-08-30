@@ -21,11 +21,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS employees_username_lower_uidx
 UPDATE employees
 SET username='tsabit',
     password_hash=crypt('dev123',gen_salt('bf',10))
-WHERE (
-    lower(email) IN (lower('requestor-dev@metrotech.local'),lower('tsabit@metrotech.id'))
-    OR lower(name)=lower('Tsabit Imanadi')
-  )
-  AND (username IS NULL OR password_hash IS NULL);
+WHERE email = (
+  SELECT email
+  FROM employees
+  WHERE (
+      lower(email) IN (lower('requestor-dev@metrotech.local'),lower('tsabit@metrotech.id'))
+      OR lower(name)=lower('Tsabit Imanadi')
+    )
+    AND (username IS NULL OR password_hash IS NULL)
+  ORDER BY CASE WHEN lower(email)=lower('tsabit@metrotech.id') THEN 0 ELSE 1 END, email
+  LIMIT 1
+);
 
 UPDATE employees
 SET username='dimas',
