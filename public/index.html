@@ -28,7 +28,7 @@
         <strong id="userMenuFullName">User</strong>
         <span id="userMenuEmail"></span>
       </div>
-      <button type="button" onclick="openProfileModal(); closeUserMenu()">Edit Profile</button>
+      <button id="userProfileMenuItem" type="button" onclick="openProfileModal(); closeUserMenu()">My Profile</button>
       <button type="button" onclick="logout()">Logout</button>
     </div>
   </div>
@@ -57,6 +57,7 @@
 </section>
 
 <section id="dashboard" class="hidden">
+<div id="workflowDashboard">
 <div class="card profile-card">
   <div class="row"><div><h2 id="roleTitle">Dashboard</h2></div></div>
   <div id="profile" class="profile-grid"></div>
@@ -122,7 +123,7 @@
 </div>
 </section>
 
-<div class="card">
+<div id="requestQueueCard" class="card">
 <div class="row"><div><h2 id="queueTitle">Requests</h2></div><button class="btn ghost" onclick="loadMe()">Refresh</button></div>
 <div id="empty" class="empty">No requests yet.</div>
 <div class="table-wrap">
@@ -132,37 +133,109 @@
 </table>
 </div>
 </div>
+</div>
+
+<section id="adminDashboard" class="hidden">
+  <div class="card admin-head-card">
+    <div class="row">
+      <div>
+        <h2>User Management</h2>
+        <p class="muted">Create and manage Expense Request System users.</p>
+      </div>
+      <button class="btn primary" type="button" onclick="openAdminUserModal()">+ Create User</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div><h2>Users</h2></div>
+      <button class="btn ghost" type="button" onclick="loadAdminUsers()">Refresh</button>
+    </div>
+    <div id="adminUsersEmpty" class="empty">No users yet.</div>
+    <div class="table-wrap">
+      <table id="adminUsersTable" class="hidden">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Employee ID</th>
+            <th>Department</th>
+            <th>Role</th>
+            <th>Signature</th>
+            <th>Status</th>
+            <th class="action-col"></th>
+          </tr>
+        </thead>
+        <tbody id="adminUsersBody"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
 </section>
 </div>
 
 <div id="profileModal" class="modal hidden" onclick="profileBackdrop(event)">
   <div class="profile-modal-panel">
     <div class="modal-head">
-      <div><h2>Edit Profile</h2><p class="muted" id="profileAccount"></p></div>
+      <div><h2>My Profile</h2><p class="muted">Profile information is managed by Administrator.</p></div>
       <button class="btn ghost" onclick="closeProfileModal()">Close</button>
     </div>
 
-    <form id="profileForm" class="profile-form" onsubmit="saveProfile(event)">
-      <div class="field"><label>Employee ID</label><input id="profileEmployeeId" required></div>
-      <div class="field"><label>Department</label><input id="profileDepartment" required></div>
-      <div class="field"><label>Location</label><input id="profileLocation" required></div>
-      <div class="field"><label>Division</label><input id="profileDivision" required></div>
+    <div id="lockedProfileGrid" class="locked-profile-grid"></div>
+
+    <form id="profileForm" class="profile-form signature-only-form" onsubmit="saveProfile(event)">
+      <div class="field signature-upload">
+        <label>Signature</label>
+        <input id="profileSignature" type="file" accept="image/png,image/jpeg" required>
+        <small class="muted">PNG/JPG. Uploading a new file replaces your current signature.</small>
+      </div>
+      <div class="profile-form-actions">
+        <button type="button" class="btn ghost" onclick="closeProfileModal()">Cancel</button>
+        <button id="saveProfileBtn" type="submit" class="btn primary">Save Signature</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="adminUserModal" class="modal hidden" onclick="adminUserBackdrop(event)">
+  <div class="profile-modal-panel admin-user-modal-panel">
+    <div class="modal-head">
+      <div>
+        <h2 id="adminUserModalTitle">Create User</h2>
+        <p class="muted" id="adminUserModalHint">Create a new Expense Request System account.</p>
+      </div>
+      <button class="btn ghost" type="button" onclick="closeAdminUserModal()">Close</button>
+    </div>
+
+    <form id="adminUserForm" class="admin-user-form" onsubmit="saveAdminUser(event)">
+      <div class="field"><label>Name</label><input id="adminName" required></div>
+      <div class="field"><label>Email</label><input id="adminEmail" type="email" required></div>
+      <div class="field"><label>Username</label><input id="adminUsername" required></div>
+      <div class="field">
+        <label id="adminPasswordLabel">Temporary Password</label>
+        <input id="adminPassword" type="password" autocomplete="new-password">
+        <small id="adminPasswordHint" class="muted">Required when creating a user.</small>
+      </div>
+      <div class="field"><label>Employee ID</label><input id="adminEmployeeId" required></div>
+      <div class="field"><label>Department</label><input id="adminDepartment" required></div>
+      <div class="field"><label>Location</label><input id="adminLocation" required></div>
+      <div class="field"><label>Division</label><input id="adminDivision" required></div>
       <div class="field">
         <label>Role</label>
-        <select id="profileRole" required>
+        <select id="adminRole" required>
           <option value="REQUESTOR">Requestor</option>
           <option value="REVIEWER">Reviewer</option>
           <option value="APPROVER">Approver</option>
         </select>
       </div>
-      <div class="field signature-upload">
-        <label>Signature</label>
-        <input id="profileSignature" type="file" accept="image/png,image/jpeg">
-        <small class="muted">PNG/JPG. Leave empty to keep the current signature.</small>
+      <div id="adminActiveField" class="field admin-active-field hidden">
+        <label>Status</label>
+        <label class="toggle-row"><input id="adminActive" type="checkbox" checked> Active user</label>
       </div>
+
       <div class="profile-form-actions">
-        <button type="button" class="btn ghost" onclick="closeProfileModal()">Cancel</button>
-        <button id="saveProfileBtn" type="submit" class="btn primary">Save Profile</button>
+        <button type="button" class="btn ghost" onclick="closeAdminUserModal()">Cancel</button>
+        <button id="saveAdminUserBtn" type="submit" class="btn primary">Create User</button>
       </div>
     </form>
   </div>
@@ -172,7 +245,10 @@
   <div class="modal-panel">
     <div class="modal-head">
       <div><h2 id="detailRef">Expense Request</h2><p id="detailMeta" class="muted"></p></div>
-      <button class="btn ghost" onclick="closeDetail()">Close</button>
+      <div class="modal-head-actions">
+        <button id="detailSavePdfBtn" class="btn primary hidden" type="button" onclick="downloadFinalPdf(currentDetailId)">Save PDF</button>
+        <button class="btn ghost" onclick="closeDetail()">Close</button>
+      </div>
     </div>
 
     <div id="detailSummary" class="detail-summary"></div>
