@@ -292,8 +292,8 @@ export async function getAppReadiness(){
     settings.googleClientSecret &&
     settings.googleCallbackUrl
   );
-  const smtpReady=!settings.smtpEnabled || Boolean(settings.smtpHost && settings.mailFrom);
-  const httpsReady=!settings.appBaseUrl || settings.appBaseUrl.startsWith('https://');
+  const smtpReady=Boolean(settings.smtpEnabled && settings.smtpHost && settings.mailFrom);
+  const httpsReady=Boolean(settings.appBaseUrl && settings.appBaseUrl.startsWith('https://'));
 
   return {
     database:true,
@@ -302,6 +302,7 @@ export async function getAppReadiness(){
     smtp:smtpReady,
     authentication:settings.localLoginEnabled || (settings.googleEnabled && googleReady),
     https:httpsReady,
+    secureCookie:Boolean(settings.cookieSecure),
     sessionSecret:Boolean(settings.sessionSecret),
     masterKeyExternal:Boolean(process.env.APP_CONFIG_MASTER_KEY),
     reviewerCount:Number(counts.reviewers),
