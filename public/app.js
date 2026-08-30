@@ -181,7 +181,7 @@ function syncEvidenceInfo(){
   const files=selectedFiles();
   $('#evidenceInfo').textContent=files.length
     ? `${files.length} file(s): ${files.map(f=>f.name).join(', ')}`
-    : (editingIndex>=0?'Re-attach evidence to update this payment':'No evidence selected');
+    : (editingIndex>=0?'Re-attach evidence to update this payment':'No file selected');
   syncAddButton();
 }
 
@@ -222,7 +222,7 @@ function resetPaymentForm(){
   $('#purpose').value='';
   $('#amount').value='';
   $('#evidence').value='';
-  $('#evidenceInfo').textContent='No evidence selected';
+  $('#evidenceInfo').textContent='No file selected';
   if(!$('#paymentDate').value) $('#paymentDate').value=new Date().toISOString().slice(0,10);
   syncAddButton();
 }
