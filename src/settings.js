@@ -18,6 +18,7 @@ const defaults={
   mail_sender_name:'Metrotech Expense Approval System',
   mail_from:'no-reply@metrotech.id',
   mail_override_to:'',
+  final_approved_cc:'',
   session_hours:'8',
   cookie_secure:'false',
   login_rate_limit:'10'
@@ -103,6 +104,7 @@ export async function getRuntimeAppSettings(){
     mailSenderName:String(raw.mail_sender_name||'Metrotech Expense Approval System').trim(),
     mailFrom:String(raw.mail_from||'').trim(),
     mailOverrideTo:String(raw.mail_override_to||'').trim(),
+    finalApprovedCc:String(raw.final_approved_cc||'').trim(),
     sessionHours:Math.min(168,Math.max(1,int(raw.session_hours,8))),
     cookieSecure:bool(raw.cookie_secure),
     loginRateLimit:Math.min(100,Math.max(1,int(raw.login_rate_limit,10))),
@@ -137,6 +139,7 @@ export async function getPublicAppSettings(){
     mailSenderName:runtime.mailSenderName,
     mailFrom:runtime.mailFrom,
     mailOverrideTo:runtime.mailOverrideTo,
+    finalApprovedCc:runtime.finalApprovedCc,
     sessionHours:runtime.sessionHours,
     cookieSecure:runtime.cookieSecure,
     loginRateLimit:runtime.loginRateLimit,
@@ -176,6 +179,7 @@ function validateInput(input){
   if(input.mailSenderName!==undefined) clean.mail_sender_name=String(input.mailSenderName||'').trim();
   if(input.mailFrom!==undefined) clean.mail_from=String(input.mailFrom||'').trim().toLowerCase();
   if(input.mailOverrideTo!==undefined) clean.mail_override_to=String(input.mailOverrideTo||'').trim().toLowerCase();
+  if(input.finalApprovedCc!==undefined) clean.final_approved_cc=String(input.finalApprovedCc||'').trim().toLowerCase();
 
   if(input.sessionHours!==undefined){
     const hours=Number(input.sessionHours);
