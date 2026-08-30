@@ -7,6 +7,7 @@ let revisionTarget=null;
 let currentDetailId=null;
 let adminUsers=[];
 let editingAdminEmail=null;
+let appSettingsLoaded=false;
 
 function msg(text,type='ok'){
   $('#msg').innerHTML=`<div class="notice ${type}">${esc(text)}</div>`;
@@ -21,6 +22,17 @@ async function api(url,opt={}){
   const body=await r.json().catch(()=>({}));
   if(!r.ok) throw new Error(body.error||`HTTP ${r.status}`);
   return body;
+}
+
+async function loadAuthMode(){
+  try{
+    const mode=await api('/api/auth-mode');
+    $('#loginForm').classList.toggle('hidden',!mode.localLoginEnabled);
+    $('#googleLoginWrap').classList.toggle('hidden',!mode.googleAuthReady);
+  }catch{
+    $('#loginForm').classList.remove('hidden');
+    $('#googleLoginWrap').classList.add('hidden');
+  }
 }
 
 async function submitLogin(event){
@@ -67,6 +79,7 @@ async function loadMe(){
     $('#userProfileMenuItem').classList.toggle('hidden',isAdmin);
 
     if(isAdmin){
+      showAdminSection('users',false);
       await loadAdminUsers();
       return;
     }
@@ -193,6 +206,170 @@ async function saveProfile(event){
   }finally{
     btn.disabled=false;
     btn.textContent='Save Signature';
+  }
+}
+
+function showAdminSection(section,load=true){
+  if(currentEmployee?.role!=='ADMIN') return;
+  const app=section==='app';
+  $('#adminUserManagementView').classList.toggle('hidden',app);
+  $('#adminAppManagementView').classList.toggle('hidden',!app);
+  $('#adminUsersTab').classList.toggle('active',!app);
+  $('#adminAppTab').classList.toggle('active',app);
+  if(app && load && !appSettingsLoaded) loadAppSettings();
+}
+
+function readinessItem(ok,label,detail=''){
+  return `<div class="readiness-item ${ok?'ready':'pending'}">
+    <span class="readiness-dot">${ok?'✓':'!'}</span>
+    <div><strong>${esc(label)}</strong>${detail?`<small>${esc(detail)}</small>`:''}</div>
+  </div>`;
+}
+
+function renderAppReadiness(data){
+  const r=data.readiness||{};
+  const items=[
+    [r.database,'Database','Connected'],
+    [r.storage,'Persistent Storage',r.storage?'/data/pdfs available':'Storage unavailable'],
+    [r.reviewer,'Reviewer',`${r.reviewerCount||0} active`],
+    [r.approver,'Approver',`${r.approverCount||0} active — exactly 1 required`],
+    [r.smtp,'SMTP',r.smtp?'Ready or disabled':'Configuration incomplete'],
+    [r.authentication,'Authentication',r.authentication?'Login path available':'Authentication incomplete'],
+    [r.https,'App URL / HTTPS',r.https?'Ready or not set':'Use HTTPS for production'],
+    [r.masterKeyExternal,'Config Master Key',r.masterKeyExternal?'External key configured':'Using development fallback']
+  ];
+  const ready=items.filter(x=>x[0]).length;
+  $('#appReadinessScore').textContent=`${ready} / ${items.length} Ready`;
+  $('#appReadinessScore').classList.toggle('ready',ready===items.length);
+  $('#appReadinessGrid').innerHTML=items.map(x=>readinessItem(...x)).join('');
+  $('#appRestartNotice').classList.toggle('hidden',!data.restartRequired);
+}
+
+function populateAppSettings(data){
+  const s=data.settings||{};
+  $('#appBaseUrl').value=s.appBaseUrl||'';
+  $('#appTimezone').value=s.timezone||'Asia/Jakarta';
+  $('#appLocalLogin').checked=Boolean(s.localLoginEnabled);
+  $('#appGoogleEnabled').checked=Boolean(s.googleEnabled);
+  $('#appGoogleDomain').value=s.allowedGoogleDomain||'metrotech.id';
+  $('#appGoogleClientId').value=s.googleClientId||'';
+  $('#appGoogleClientSecret').value='';
+  $('#appGoogleCallbackUrl').value=s.googleCallbackUrl||'';
+  $('#appGoogleSecretState').textContent=s.googleClientSecretConfigured
+    ? 'Configured — leave blank to keep current secret.'
+    : 'Not configured';
+
+  $('#appSmtpEnabled').checked=Boolean(s.smtpEnabled);
+  $('#appSmtpSecure').checked=Boolean(s.smtpSecure);
+  $('#appSmtpHost').value=s.smtpHost||'';
+  $('#appSmtpPort').value=s.smtpPort||587;
+  $('#appSmtpUser').value=s.smtpUser||'';
+  $('#appSmtpPassword').value='';
+  $('#appSmtpPasswordState').textContent=s.smtpPasswordConfigured
+    ? 'Configured — leave blank to keep current password.'
+    : 'Not configured';
+  $('#appMailSenderName').value=s.mailSenderName||'Metrotech Expense Approval System';
+  $('#appMailFrom').value=s.mailFrom||'no-reply@metrotech.id';
+  $('#appMailOverrideTo').value=s.mailOverrideTo||'';
+
+  $('#appSessionHours').value=s.sessionHours||8;
+  $('#appLoginRateLimit').value=s.loginRateLimit||10;
+  $('#appCookieSecure').checked=Boolean(s.cookieSecure);
+  $('#appSessionSecretState').textContent=s.sessionSecretConfigured
+    ? 'Managed automatically'
+    : 'Not configured';
+
+  renderAppReadiness(data);
+}
+
+async function loadAppSettings(){
+  if(currentEmployee?.role!=='ADMIN') return;
+  try{
+    const data=await api('/api/admin/app-settings');
+    populateAppSettings(data);
+    appSettingsLoaded=true;
+  }catch(e){
+    msg(e.message,'err');
+  }
+}
+
+function collectAppSettings(){
+  return {
+    appBaseUrl:$('#appBaseUrl').value.trim(),
+    timezone:$('#appTimezone').value.trim(),
+    localLoginEnabled:$('#appLocalLogin').checked,
+    googleEnabled:$('#appGoogleEnabled').checked,
+    allowedGoogleDomain:$('#appGoogleDomain').value.trim(),
+    googleClientId:$('#appGoogleClientId').value.trim(),
+    googleClientSecret:$('#appGoogleClientSecret').value,
+    googleCallbackUrl:$('#appGoogleCallbackUrl').value.trim(),
+    smtpEnabled:$('#appSmtpEnabled').checked,
+    smtpSecure:$('#appSmtpSecure').checked,
+    smtpHost:$('#appSmtpHost').value.trim(),
+    smtpPort:Number($('#appSmtpPort').value||587),
+    smtpUser:$('#appSmtpUser').value.trim(),
+    smtpPassword:$('#appSmtpPassword').value,
+    mailSenderName:$('#appMailSenderName').value.trim(),
+    mailFrom:$('#appMailFrom').value.trim(),
+    mailOverrideTo:$('#appMailOverrideTo').value.trim(),
+    sessionHours:Number($('#appSessionHours').value||8),
+    loginRateLimit:Number($('#appLoginRateLimit').value||10),
+    cookieSecure:$('#appCookieSecure').checked
+  };
+}
+
+async function saveAppManagement(event,{silent=false}={}){
+  event?.preventDefault();
+  if(currentEmployee?.role!=='ADMIN') return false;
+  const btn=$('#saveAppSettingsBtn');
+  btn.disabled=true;
+  btn.textContent='Saving…';
+  try{
+    const data=await api('/api/admin/app-settings',{
+      method:'PUT',
+      body:JSON.stringify(collectAppSettings())
+    });
+    populateAppSettings(data);
+    appSettingsLoaded=true;
+    await loadAuthMode();
+    if(!silent) msg('Application settings saved successfully.','ok');
+    return true;
+  }catch(e){
+    msg(e.message,'err');
+    return false;
+  }finally{
+    btn.disabled=false;
+    btn.textContent='Save Settings';
+  }
+}
+
+async function testAppSmtp(){
+  if(currentEmployee?.role!=='ADMIN') return;
+  const saved=await saveAppManagement(null,{silent:true});
+  if(!saved) return;
+  const suggested=$('#appMailOverrideTo').value.trim()||currentEmployee.email||'';
+  const to=window.prompt('Send SMTP test email to:',suggested);
+  if(!to) return;
+  try{
+    const result=await api('/api/admin/app-settings/test-smtp',{
+      method:'POST',
+      body:JSON.stringify({to:to.trim()})
+    });
+    msg(result.message||'SMTP test email sent.','ok');
+  }catch(e){
+    msg(e.message,'err');
+  }
+}
+
+async function rotateAppSessionSecret(){
+  if(currentEmployee?.role!=='ADMIN') return;
+  if(!window.confirm('Rotate the session secret? All users will be signed out after the application restarts.')) return;
+  try{
+    const data=await api('/api/admin/app-settings/rotate-session',{method:'POST',body:'{}'});
+    populateAppSettings(data);
+    msg('Session secret rotated. Restart the app container to apply it.','ok');
+  }catch(e){
+    msg(e.message,'err');
   }
 }
 
@@ -722,7 +899,7 @@ async function logout(){
   await api('/api/logout',{method:'POST',body:'{}'});
   clearMsg();
   currentEmployee=null; payments=[]; editingIndex=-1; revisionTarget=null; currentDetailId=null;
-  adminUsers=[]; editingAdminEmail=null;
+  adminUsers=[]; editingAdminEmail=null; appSettingsLoaded=false;
   $('#profileModal').classList.add('hidden');
   renderPayments();
   $('#dashboard').classList.add('hidden');
@@ -730,7 +907,9 @@ async function logout(){
   $('#userMenuWrap').classList.add('hidden');
   closeUserMenu();
   $('#loginPassword').value='';
+  await loadAuthMode();
   setTimeout(()=>$('#loginUsername')?.focus(),0);
 }
 
+loadAuthMode();
 loadMe();
