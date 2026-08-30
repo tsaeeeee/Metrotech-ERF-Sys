@@ -155,14 +155,15 @@ function openProfileModal(){
     <div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>
   `).join('');
   $('#profileSignature').value='';
+  $('#profileSignatureInfo').textContent='No file selected';
   $('#profileModal').classList.remove('hidden');
   document.body.classList.add('modal-open');
 }
 
 function closeProfileModal(){
   $('#profileModal').classList.add('hidden');
-  $('#adminUserModal').classList.add('hidden');
   $('#profileSignature').value='';
+  $('#profileSignatureInfo').textContent='No file selected';
   if($('#detailModal').classList.contains('hidden') && $('#adminUserModal').classList.contains('hidden'))
     document.body.classList.remove('modal-open');
 }
@@ -228,6 +229,36 @@ function renderAdminUsers(){
   `).join('');
 }
 
+function toggleAdminRoleMenu(event){
+  event?.stopPropagation();
+  const menu=$('#adminRoleMenu');
+  const trigger=$('#adminRoleButton');
+  const willOpen=menu.classList.contains('hidden');
+  menu.classList.toggle('hidden');
+  $('#adminRoleSelect').classList.toggle('open',willOpen);
+  trigger.setAttribute('aria-expanded',willOpen?'true':'false');
+}
+
+function closeAdminRoleMenu(){
+  $('#adminRoleMenu')?.classList.add('hidden');
+  $('#adminRoleSelect')?.classList.remove('open');
+  $('#adminRoleButton')?.setAttribute('aria-expanded','false');
+}
+
+function selectAdminRole(value,label){
+  $('#adminRole').value=value;
+  $('#adminRoleLabel').textContent=label;
+  document.querySelectorAll('#adminRoleMenu button').forEach(btn=>{
+    btn.classList.toggle('selected',btn.dataset.value===value);
+  });
+  closeAdminRoleMenu();
+}
+
+document.addEventListener('click',e=>{
+  const custom=$('#adminRoleSelect');
+  if(custom && !custom.contains(e.target)) closeAdminRoleMenu();
+});
+
 function openAdminUserModal(encodedEmail=''){
   if(currentEmployee?.role!=='ADMIN') return;
   editingAdminEmail=encodedEmail?decodeURIComponent(encodedEmail):null;
@@ -249,7 +280,9 @@ function openAdminUserModal(encodedEmail=''){
   $('#adminDepartment').value=user?.department||'';
   $('#adminLocation').value=user?.location||'';
   $('#adminDivision').value=user?.division||'';
-  $('#adminRole').value=user?.role||'REQUESTOR';
+  const roleValue=user?.role||'REQUESTOR';
+  const roleLabel=roleValue==='REVIEWER'?'Reviewer':roleValue==='APPROVER'?'Approver':'Requestor';
+  selectAdminRole(roleValue,roleLabel);
   $('#adminActive').checked=user?.active!==false;
   $('#adminActiveField').classList.toggle('hidden',!user);
 
@@ -259,6 +292,7 @@ function openAdminUserModal(encodedEmail=''){
 
 function closeAdminUserModal(){
   $('#adminUserModal').classList.add('hidden');
+  closeAdminRoleMenu();
   editingAdminEmail=null;
   $('#adminUserForm').reset();
   $('#adminEmail').disabled=false;
@@ -376,6 +410,10 @@ document.addEventListener('input',e=>{
 });
 document.addEventListener('change',e=>{
   if(e.target.id==='evidence') syncEvidenceInfo();
+  if(e.target.id==='profileSignature'){
+    const file=e.target.files?.[0];
+    $('#profileSignatureInfo').textContent=file?file.name:'No file selected';
+  }
 });
 
 function addPayment(){
