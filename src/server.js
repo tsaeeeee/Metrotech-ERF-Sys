@@ -219,6 +219,118 @@ async function persistOriginals(requestId,revision,files){
   }
 }
 
+function evidenceMimeFromName(filename){
+  const ext=path.extname(String(filename||'')).toLowerCase();
+  if(ext==='.pdf') return 'application/pdf';
+  if(ext==='.png') return 'image/png';
+  if(ext==='.jpg'||ext==='.jpeg') return 'image/jpeg';
+  return '';
+}
+
+async function loadExistingEvidenceFiles(requestId,revision,lineNo,targetIndex,evidenceNames=[]){
+  const dir=path.join(DATA_DIR,String(requestId),`r${revision}`,'evidence-original');
+  let names=[];
+  try{
+    names=(await fs.readdir(dir))
+      .filter(name=>name.startsWith(`${String(Number(lineNo)).padStart(2,'0')}-`))
+      .sort();
+  }catch{
+    return [];
+  }
+
+  const files=[];
+  for(let i=0;i<names.length;i++){
+    const storedName=names[i];
+    const buffer=await fs.readFile(path.join(dir,storedName));
+    const fallbackName=storedName.replace(/^\d+-\d+-/,'')||'evidence';
+    const originalname=String(evidenceNames[i]||fallbackName);
+    const mimetype=evidenceMimeFromName(originalname)||evidenceMimeFromName(storedName);
+    if(!allowedMime.has(mimetype)) continue;
+    files.push({
+      fieldname:`evidence_${targetIndex}`,
+      originalname,
+      mimetype,
+      size:buffer.length,
+      buffer
+    });
+  }
+  return files;
+}
+
+async function parseRevisionItemsAndFiles(req,detail){
+  let rawItems;
+  try { rawItems=JSON.parse(String(req.body.items||'[]')); }
+  catch { throw Object.assign(new Error('Invalid payment data.'),{status:400}); }
+
+  if(!Array.isArray(rawItems)||!rawItems.length)
+    throw Object.assign(new Error('Add at least one payment.'),{status:400});
+  if(rawItems.length>16)
+    throw Object.assign(new Error('Maximum 16 payments per request.'),{status:400});
+
+  const uploaded=req.files||[];
+  if(uploaded.some(f=>!allowedMime.has(String(f.mimetype).toLowerCase())))
+    throw Object.assign(new Error('Evidence must be PDF, JPG, JPEG, or PNG.'),{status:400});
+
+  const uploadedBytes=uploaded.reduce((s,f)=>s+f.size,0);
+  if(uploadedBytes>MAX_EVIDENCE_MB*1024*1024)
+    throw Object.assign(new Error(`Total uploaded evidence exceeds ${MAX_EVIDENCE_MB} MB.`),{status:400});
+
+  const currentItems=new Map((detail.items||[]).map(item=>[Number(item.line_no),item]));
+  const items=[];
+  const files=[];
+
+  for(let i=0;i<rawItems.length;i++){
+    const x=rawItems[i]||{};
+    const category=String(x.category||'').trim();
+    const purpose=String(x.purpose||'').trim();
+    const paymentDate=String(x.paymentDate||'').trim();
+    const amount=Math.round(Number(x.amount));
+
+    if(!category||!purpose||!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate)||!Number.isFinite(amount)||amount<=0)
+      throw Object.assign(new Error(`Payment #${i+1} is incomplete.`),{status:400});
+
+    let itemFiles=uploaded.filter(f=>f.fieldname===`evidence_${i}`);
+    let evidenceNames=itemFiles.map(f=>f.originalname);
+
+    // No new upload means "keep the evidence from this payment's current revision".
+    if(!itemFiles.length){
+      const sourceLineNo=Number(x.sourceLineNo);
+      const sourceItem=Number.isInteger(sourceLineNo)&&sourceLineNo>0
+        ? currentItems.get(sourceLineNo)
+        : null;
+
+      if(!sourceItem)
+        throw Object.assign(new Error(`Payment #${i+1} requires evidence.`),{status:400});
+
+      itemFiles=await loadExistingEvidenceFiles(
+        detail.request.id,
+        detail.request.revision,
+        sourceLineNo,
+        i,
+        sourceItem.evidence_names||[]
+      );
+
+      if(!itemFiles.length)
+        throw Object.assign(new Error(
+          `Existing evidence for Payment #${i+1} is unavailable. Please attach evidence again.`
+        ),{status:400});
+
+      evidenceNames=(sourceItem.evidence_names||[]).length
+        ? sourceItem.evidence_names
+        : itemFiles.map(f=>f.originalname);
+    }
+
+    files.push(...itemFiles);
+    items.push({category,purpose,paymentDate,amount,evidenceNames});
+  }
+
+  const totalBytes=files.reduce((s,f)=>s+Number(f.size||f.buffer?.length||0),0);
+  if(totalBytes>MAX_EVIDENCE_MB*1024*1024)
+    throw Object.assign(new Error(`Total evidence exceeds ${MAX_EVIDENCE_MB} MB.`),{status:400});
+
+  return {items,files};
+}
+
 async function generateSubmissionDocs(requestId,files){
   const detail=await getRequestDetail(requestId);
   if(!detail) throw new Error('Request disappeared after creation.');
@@ -382,7 +494,12 @@ app.post('/api/requests/:id/recall',requireUser,async(req,res,next)=>{
 app.post('/api/requests/:id/revise',requireUser,upload.any(),async(req,res,next)=>{
   try{
     if(req.employee.role!=='REQUESTOR') return res.status(403).json({error:'Only Requestor can revise a request.'});
-    const {items,files}=parseItemsAndFiles(req);
+
+    const currentDetail=await getRequestDetail(req.params.id);
+    if(!currentDetail) return res.status(404).json({error:'Request not found'});
+    if(!canAccess(req.employee,currentDetail.request)) return res.status(403).json({error:'Access denied'});
+
+    const {items,files}=await parseRevisionItemsAndFiles(req,currentDetail);
     const request=await reviseExpenseRequest(req.params.id,req.employee,items);
     await persistOriginals(request.id,request.revision,files);
     const {detail}=await generateSubmissionDocs(request.id,files);
