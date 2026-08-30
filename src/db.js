@@ -219,7 +219,7 @@ export async function updateManagedEmployee(email,data) {
     const leavingReviewer=current.role==='REVIEWER' && (!nextActive || role!=='REVIEWER');
     const leavingApprover=current.role==='APPROVER' && (!nextActive || role!=='APPROVER');
 
-    if(role==='APPROVER' && nextActive && current.role!=='APPROVER')
+    if(role==='APPROVER' && nextActive && (current.role!=='APPROVER' || !current.active))
       await assertSingleActiveApproverTx(client,{excludeEmail:email});
 
     if(leavingApprover){
