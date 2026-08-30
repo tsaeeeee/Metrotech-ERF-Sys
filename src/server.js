@@ -9,21 +9,23 @@ import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import {
   pool,pingDb,getEmployee,authenticateLocalUser,updateEmployeeSignature,listManagedEmployees,
-  createManagedEmployee,updateManagedEmployee,setManagedEmployeeActive,listRequestsForEmployee,createExpenseRequest,
+  createManagedEmployee,updateManagedEmployee,setManagedEmployeeActive,ensureBootstrapAdminCredentials,
+  listRequestsForEmployee,createExpenseRequest,
   getRequestDetail,setDocumentPaths,transitionRequest,recallExpenseRequest,reviseExpenseRequest
 } from './db.js';
 import { buildEvidencePdf,buildFormPdf } from './documents.js';
-import { sendWorkflowMail } from './mailer.js';
-import { configureAuth,passport } from './auth.js';
+import { sendWorkflowMail,testSmtp } from './mailer.js';
+import { configureAuth,googleAuthReady,passport } from './auth.js';
+import {
+  ensureAppSettings,getRuntimeAppSettings,getPublicAppSettings,saveAppSettings,
+  rotateSessionSecret,getAppReadiness
+} from './settings.js';
 
 const __filename=fileURLToPath(import.meta.url);
 const __dirname=path.dirname(__filename);
 const app=express();
 const PORT=Number(process.env.PORT || 8080);
 const PgStore=connectPgSimple(session);
-const DEV_AUTH=String(process.env.DEV_AUTH || 'true').toLowerCase()==='true';
-const GOOGLE_AUTH_READY=!DEV_AUTH &&
-  Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_CALLBACK_URL);
 const DATA_DIR=process.env.PDF_DIR || '/data/pdfs';
 const PROFILE_SIGNATURE_DIR=process.env.PROFILE_SIGNATURE_DIR || path.join(DATA_DIR,'profile-signatures');
 const MAX_EVIDENCE_MB=Number(process.env.MAX_EVIDENCE_MB || 15);
@@ -37,60 +39,117 @@ const signatureUpload=multer({
   limits:{fileSize:5*1024*1024,files:1}
 });
 
+await ensureBootstrapAdminCredentials();
+await ensureAppSettings();
+const bootSettings=await getRuntimeAppSettings();
+configureAuth(bootSettings);
+
 app.set('trust proxy',1);
 app.use(helmet({contentSecurityPolicy:false}));
 app.use(express.json({limit:'2mb'}));
 app.use(express.urlencoded({extended:false}));
 app.use(session({
   store:new PgStore({pool,createTableIfMissing:true}),
-  secret:process.env.SESSION_SECRET || 'dev-only-change-me',
+  secret:bootSettings.sessionSecret || process.env.SESSION_SECRET || 'dev-only-change-me',
   resave:false,
   saveUninitialized:false,
   cookie:{
     httpOnly:true,
     sameSite:'lax',
-    secure:String(process.env.COOKIE_SECURE || 'false').toLowerCase()==='true',
-    maxAge:8*60*60*1000
+    secure:Boolean(bootSettings.cookieSecure),
+    maxAge:Number(bootSettings.sessionHours||8)*60*60*1000
   }
 }));
+app.use(passport.initialize());
+app.use(passport.session());
 
-if(GOOGLE_AUTH_READY){
-  configureAuth();
-  app.use(passport.initialize());
-  app.use(passport.session());
+const loginAttempts=new Map();
+function loginAttemptKey(req){
+  return String(req.ip||req.socket?.remoteAddress||'unknown');
+}
+function clearExpiredLoginAttempts(){
+  const now=Date.now();
+  for(const [key,state] of loginAttempts.entries()){
+    if(state.resetAt<=now) loginAttempts.delete(key);
+  }
 }
 
 app.get('/health', async (req,res)=>{
-  try {
+  try{
     const db=await pingDb();
-    res.json({ok:true,app:'Metrotech ERF',db:true,time:db.now,devAuth:DEV_AUTH,googleAuthReady:GOOGLE_AUTH_READY,pdfMode:String(process.env.PDF_MODE||'mock')});
-  } catch (e) {
+    const settings=await getRuntimeAppSettings();
+    res.json({
+      ok:true,
+      app:'Metrotech ERF',
+      db:true,
+      time:db.now,
+      localLoginEnabled:settings.localLoginEnabled,
+      googleAuthReady:googleAuthReady(settings),
+      smtpEnabled:settings.smtpEnabled,
+      pdfMode:'local'
+    });
+  }catch(e){
     res.status(503).json({ok:false,error:e.message});
   }
 });
 
-app.get('/api/auth-mode',(req,res)=>{
-  res.json({devAuth:DEV_AUTH,googleAuthReady:GOOGLE_AUTH_READY});
-});
-
-app.get('/auth/google',(req,res,next)=>{
-  if(!GOOGLE_AUTH_READY) return res.status(503).send('Google Workspace authentication is not configured.');
-  return passport.authenticate('google',{scope:['profile','email']})(req,res,next);
-});
-
-app.get('/auth/google/callback',(req,res,next)=>{
-  if(!GOOGLE_AUTH_READY) return res.redirect('/?auth=unavailable');
-  return passport.authenticate('google',{failureRedirect:'/?auth=failed'})(req,res,()=>res.redirect('/'));
-});
-
-app.post('/api/login', async (req,res,next)=>{
+app.get('/api/auth-mode',async(req,res,next)=>{
   try{
-    if(!DEV_AUTH) return res.status(404).json({error:'Local login is disabled.'});
+    const settings=await getRuntimeAppSettings();
+    res.json({
+      devAuth:settings.localLoginEnabled,
+      localLoginEnabled:settings.localLoginEnabled,
+      googleAuthReady:googleAuthReady(settings)
+    });
+  }catch(e){next(e)}
+});
+
+app.get('/auth/google',async(req,res,next)=>{
+  try{
+    const settings=await getRuntimeAppSettings();
+    if(!googleAuthReady(settings))
+      return res.status(503).send('Google Workspace authentication is not configured.');
+    configureAuth(settings);
+    return passport.authenticate('google',{scope:['profile','email']})(req,res,next);
+  }catch(e){next(e)}
+});
+
+app.get('/auth/google/callback',async(req,res,next)=>{
+  try{
+    const settings=await getRuntimeAppSettings();
+    if(!googleAuthReady(settings)) return res.redirect('/?auth=unavailable');
+    configureAuth(settings);
+    return passport.authenticate('google',{failureRedirect:'/?auth=failed'})(req,res,()=>res.redirect('/'));
+  }catch(e){next(e)}
+});
+
+app.post('/api/login',async(req,res,next)=>{
+  try{
+    const settings=await getRuntimeAppSettings();
+    if(!settings.localLoginEnabled)
+      return res.status(404).json({error:'Local login is disabled.'});
+
+    clearExpiredLoginAttempts();
+    const key=loginAttemptKey(req);
+    const current=loginAttempts.get(key);
+    const limit=Number(settings.loginRateLimit||10);
+    if(current && current.count>=limit)
+      return res.status(429).json({error:'Too many failed login attempts. Try again later.'});
+
     const username=String(req.body.username||'').trim();
     const password=String(req.body.password||'');
     const employee=await authenticateLocalUser(username,password);
-    if(!employee) return res.status(401).json({error:'Invalid username or password.'});
 
+    if(!employee){
+      const state=current && current.resetAt>Date.now()
+        ? current
+        : {count:0,resetAt:Date.now()+15*60*1000};
+      state.count+=1;
+      loginAttempts.set(key,state);
+      return res.status(401).json({error:'Invalid username or password.'});
+    }
+
+    loginAttempts.delete(key);
     req.session.user={email:employee.email};
     res.json({ok:true,employee});
   }catch(e){next(e)}
@@ -235,6 +294,58 @@ app.patch('/api/admin/users/:email/status',requireUser,requireAdmin,async(req,re
   }catch(e){next(e)}
 });
 
+async function buildAppManagementPayload(){
+  const settings=await getPublicAppSettings();
+  const readiness=await getAppReadiness();
+  let storage=true;
+  try{
+    await fs.mkdir(DATA_DIR,{recursive:true});
+    await fs.access(DATA_DIR);
+  }catch{
+    storage=false;
+  }
+  const runtime=await getRuntimeAppSettings();
+  const restartRequired=
+    runtime.sessionHours!==bootSettings.sessionHours ||
+    runtime.cookieSecure!==bootSettings.cookieSecure ||
+    runtime.sessionSecret!==bootSettings.sessionSecret;
+  return {
+    settings,
+    readiness:{...readiness,storage},
+    restartRequired
+  };
+}
+
+app.get('/api/admin/app-settings',requireUser,requireAdmin,async(req,res,next)=>{
+  try{
+    res.json(await buildAppManagementPayload());
+  }catch(e){next(e)}
+});
+
+app.put('/api/admin/app-settings',requireUser,requireAdmin,async(req,res,next)=>{
+  try{
+    await saveAppSettings(req.body||{},req.employee.email);
+    const runtime=await getRuntimeAppSettings();
+    configureAuth(runtime);
+    res.json({ok:true,...await buildAppManagementPayload()});
+  }catch(e){next(e)}
+});
+
+app.post('/api/admin/app-settings/rotate-session',requireUser,requireAdmin,async(req,res,next)=>{
+  try{
+    await rotateSessionSecret(req.employee.email);
+    res.json({ok:true,...await buildAppManagementPayload()});
+  }catch(e){next(e)}
+});
+
+app.post('/api/admin/app-settings/test-smtp',requireUser,requireAdmin,async(req,res,next)=>{
+  try{
+    const to=String(req.body?.to||'').trim();
+    await testSmtp(to);
+    res.json({ok:true,message:`Test email sent to ${to}.`});
+  }catch(e){next(e)}
+});
+
 app.post('/api/requests',requireUser,upload.any(),async(req,res,next)=>{
   try{
     if(req.employee.role!=='REQUESTOR') return res.status(403).json({error:'Only Requestor can create an expense request.'});
@@ -371,5 +482,5 @@ app.use((err,req,res,next)=>{
 });
 
 app.listen(PORT,'0.0.0.0',()=>{
-  console.log(`Metrotech ERF listening on :${PORT} | DEV_AUTH=${DEV_AUTH}`);
+  console.log(`Metrotech ERF listening on :${PORT} | Local Login=${bootSettings.localLoginEnabled}`);
 });
