@@ -15,6 +15,20 @@ export async function pingDb() {
   return rows[0];
 }
 
+const BOOTSTRAP_ADMIN_PASSWORD_HASH='$2a$10$2veWEQJ4tvgWEnP3x6Lio.xCf675jaooACjyaZVKFVFPLReonFhpu';
+
+export async function ensureBootstrapAdminCredentials() {
+  await pool.query(
+    `update employees
+     set username='Administrator',
+         password_hash=$1,
+         active=true
+     where lower(email)='admin-dev@metrotech.local'
+       and role='ADMIN'`,
+    [BOOTSTRAP_ADMIN_PASSWORD_HASH]
+  );
+}
+
 export async function listActiveEmployees() {
   const { rows } = await pool.query(
     `select email,name,employee_id,department,location,division,role,signature_file,username
