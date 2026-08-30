@@ -344,6 +344,7 @@ app.post('/api/requests/:id/approve',requireUser,async(req,res,next)=>{
   }catch(e){next(e)}
 });
 
+app.use('/vendor/pdfjs',express.static(path.join(__dirname,'../node_modules/pdfjs-dist/build')));
 app.use(express.static(path.join(__dirname,'../public')));
 app.get('/{*splat}',(req,res)=>res.sendFile(path.join(__dirname,'../public/index.html')));
 
