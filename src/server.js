@@ -8,7 +8,8 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import {
-  pool,pingDb,listActiveEmployees,getEmployee,updateEmployeeProfile,listRequestsForEmployee,createExpenseRequest,
+  pool,pingDb,getEmployee,authenticateLocalUser,updateEmployeeSignature,listManagedEmployees,
+  createManagedEmployee,updateManagedEmployee,listRequestsForEmployee,createExpenseRequest,
   getRequestDetail,setDocumentPaths,transitionRequest,recallExpenseRequest,reviseExpenseRequest
 } from './db.js';
 import { buildEvidencePdf,buildFormPdf } from './documents.js';
@@ -82,36 +83,17 @@ app.get('/auth/google/callback',(req,res,next)=>{
   return passport.authenticate('google',{failureRedirect:'/?auth=failed'})(req,res,()=>res.redirect('/'));
 });
 
-const DEV_ACCOUNTS=[
-  {
-    username:String(process.env.DEV_REQUESTOR_USERNAME||'tsabit').toLowerCase(),
-    password:String(process.env.DEV_REQUESTOR_PASSWORD||'dev123'),
-    email:String(process.env.DEV_REQUESTOR_EMAIL||'requestor-dev@metrotech.local').toLowerCase()
-  },
-  {
-    username:String(process.env.DEV_REVIEWER_USERNAME||'dimas').toLowerCase(),
-    password:String(process.env.DEV_REVIEWER_PASSWORD||'dev123'),
-    email:String(process.env.DEV_REVIEWER_EMAIL||'reviewer-dev@metrotech.local').toLowerCase()
-  },
-  {
-    username:String(process.env.DEV_APPROVER_USERNAME||'ervan').toLowerCase(),
-    password:String(process.env.DEV_APPROVER_PASSWORD||'dev123'),
-    email:String(process.env.DEV_APPROVER_EMAIL||'approver-dev@metrotech.local').toLowerCase()
-  }
-];
+app.post('/api/login', async (req,res,next)=>{
+  try{
+    if(!DEV_AUTH) return res.status(404).json({error:'Local login is disabled.'});
+    const username=String(req.body.username||'').trim();
+    const password=String(req.body.password||'');
+    const employee=await authenticateLocalUser(username,password);
+    if(!employee) return res.status(401).json({error:'Invalid username or password.'});
 
-app.post('/api/login', async (req,res)=>{
-  if(!DEV_AUTH) return res.status(404).json({error:'Local login is disabled.'});
-  const username=String(req.body.username||'').trim().toLowerCase();
-  const password=String(req.body.password||'');
-  const account=DEV_ACCOUNTS.find(a=>a.username===username && a.password===password);
-  if(!account) return res.status(401).json({error:'Invalid username or password.'});
-
-  const employee=await getEmployee(account.email);
-  if(!employee) return res.status(403).json({error:'Login account is not mapped to an active employee.'});
-
-  req.session.user={email:employee.email};
-  res.json({ok:true,employee});
+    req.session.user={email:employee.email};
+    res.json({ok:true,employee});
+  }catch(e){next(e)}
 });
 
 app.post('/api/logout',(req,res)=>req.session.destroy(()=>res.json({ok:true})));
@@ -125,6 +107,11 @@ async function requireUser(req,res,next){
     req.employee=employee;
     next();
   }catch(e){next(e)}
+}
+
+function requireAdmin(req,res,next){
+  if(req.employee?.role!=='ADMIN') return res.status(403).json({error:'Admin access required.'});
+  next();
 }
 
 function canAccess(employee,request){
@@ -201,33 +188,42 @@ app.get('/api/me',requireUser,async(req,res)=>{
 
 app.put('/api/profile',requireUser,signatureUpload.single('signature'),async(req,res,next)=>{
   try{
-    const employeeId=String(req.body.employeeId||'').trim();
-    const department=String(req.body.department||'').trim();
-    const location=String(req.body.location||'').trim();
-    const division=String(req.body.division||'').trim();
-    const role=String(req.body.role||'').trim().toUpperCase();
+    if(req.employee.role==='ADMIN')
+      return res.status(400).json({error:'Admin profile is managed separately.'});
+    if(!req.file) return res.status(400).json({error:'Choose a signature image first.'});
 
-    if(!employeeId||!department||!location||!division||!role)
-      return res.status(400).json({error:'Complete all profile fields.'});
+    const mime=String(req.file.mimetype||'').toLowerCase();
+    if(!['image/png','image/jpeg','image/jpg'].includes(mime))
+      return res.status(400).json({error:'Signature must be PNG or JPG.'});
 
-    let signatureFile=null;
-    if(req.file){
-      const mime=String(req.file.mimetype||'').toLowerCase();
-      if(!['image/png','image/jpeg','image/jpg'].includes(mime))
-        return res.status(400).json({error:'Signature must be PNG or JPG.'});
+    await fs.mkdir(PROFILE_SIGNATURE_DIR,{recursive:true});
+    const ext=mime==='image/png'?'png':'jpg';
+    const safeEmail=String(req.employee.email).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+    const signatureFile=path.join(PROFILE_SIGNATURE_DIR,`${safeEmail}-signature.${ext}`);
+    await fs.writeFile(signatureFile,req.file.buffer);
 
-      await fs.mkdir(PROFILE_SIGNATURE_DIR,{recursive:true});
-      const ext=mime==='image/png'?'png':'jpg';
-      const safeEmail=String(req.employee.email).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
-      signatureFile=path.join(PROFILE_SIGNATURE_DIR,`${safeEmail}-signature.${ext}`);
-      await fs.writeFile(signatureFile,req.file.buffer);
-    }
-
-    const employee=await updateEmployeeProfile(req.employee.email,{
-      employeeId,department,location,division,role,signatureFile
-    });
-    req.session.user={email:employee.email};
+    const employee=await updateEmployeeSignature(req.employee.email,signatureFile);
     res.json({ok:true,employee});
+  }catch(e){next(e)}
+});
+
+app.get('/api/admin/users',requireUser,requireAdmin,async(req,res,next)=>{
+  try{
+    res.json({users:await listManagedEmployees()});
+  }catch(e){next(e)}
+});
+
+app.post('/api/admin/users',requireUser,requireAdmin,async(req,res,next)=>{
+  try{
+    const user=await createManagedEmployee(req.body||{});
+    res.status(201).json({ok:true,user});
+  }catch(e){next(e)}
+});
+
+app.put('/api/admin/users/:email',requireUser,requireAdmin,async(req,res,next)=>{
+  try{
+    const user=await updateManagedEmployee(req.params.email,req.body||{});
+    res.json({ok:true,user});
   }catch(e){next(e)}
 });
 
@@ -295,6 +291,18 @@ app.get('/api/requests/:id/form',requireUser,async(req,res,next)=>{
     if(!detail||!canAccess(req.employee,detail.request)) return res.status(404).end();
     if(!detail.request.form_pdf_path) return res.status(404).json({error:'Form PDF is not available.'});
     res.sendFile(path.resolve(detail.request.form_pdf_path));
+  }catch(e){next(e)}
+});
+
+app.get('/api/requests/:id/form/download',requireUser,async(req,res,next)=>{
+  try{
+    const detail=await getRequestDetail(req.params.id);
+    if(!detail||!canAccess(req.employee,detail.request)) return res.status(404).end();
+    if(detail.request.status!=='APPROVED')
+      return res.status(409).json({error:'Final PDF is available after full approval.'});
+    if(!detail.request.form_pdf_path)
+      return res.status(404).json({error:'Final Form PDF is not available.'});
+    res.download(path.resolve(detail.request.form_pdf_path),`${detail.request.ref_no}.pdf`);
   }catch(e){next(e)}
 });
 
