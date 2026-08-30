@@ -350,7 +350,8 @@ app.post('/api/requests',requireUser,upload.any(),async(req,res,next)=>{
   try{
     if(req.employee.role!=='REQUESTOR') return res.status(403).json({error:'Only Requestor can create an expense request.'});
     const {items,files}=parseItemsAndFiles(req);
-    const request=await createExpenseRequest(req.employee,items);
+    const runtimeSettings=await getRuntimeAppSettings();
+    const request=await createExpenseRequest(req.employee,items,runtimeSettings.timezone);
     await persistOriginals(request.id,1,files);
     const {detail}=await generateSubmissionDocs(request.id,files);
     await sendWorkflowMail({
@@ -461,7 +462,7 @@ app.post('/api/requests/:id/approve',requireUser,async(req,res,next)=>{
     await sendWorkflowMail({
       event:approved?'FINAL_APPROVED':'APPROVAL_REJECTED',request:detail.request,
       to:detail.request.requester_email,
-      cc:approved?[detail.request.reviewer_email,process.env.FINAL_APPROVED_CC]:detail.request.reviewer_email,
+      cc:approved?[detail.request.reviewer_email,(await getRuntimeAppSettings()).finalApprovedCc]:detail.request.reviewer_email,
       subject:approved?`[ERF] ${detail.request.ref_no} approved`:`[ERF] ${detail.request.ref_no} rejected by approver`,
       text:approved?`${detail.request.ref_no} has been approved by ${req.employee.name}.`
         :`${detail.request.ref_no} was rejected by ${req.employee.name}. Reason: ${req.body.reason}`,
