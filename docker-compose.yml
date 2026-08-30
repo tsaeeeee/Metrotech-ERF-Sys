@@ -27,7 +27,6 @@ services:
     volumes:
       - erf_pdfs:/data/pdfs
       - ./signatures:/data/signatures:ro
-      - ./secrets/gcp-service-account.json:/run/secrets/gcp-service-account.json:ro
 
 volumes:
   postgres_data:
