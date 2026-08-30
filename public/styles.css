@@ -324,3 +324,45 @@ h1{margin:0;color:var(--navy);font-size:26px}h2{margin:0 0 12px;color:var(--navy
   color:var(--muted);
   font-size:12px
 }
+
+
+/* Metrotech navbar brand update */
+.topbar{
+  background:var(--navy);
+  border-bottom-color:rgba(255,255,255,.08);
+  box-shadow:0 2px 12px rgba(11,55,104,.18)
+}
+.metro-logo{
+  display:block;
+  width:150px;
+  height:auto;
+  max-height:30px;
+  object-fit:contain
+}
+.topbar-divider{
+  background:rgba(255,255,255,.24)
+}
+.topbar-title{
+  color:#fff
+}
+.user-menu-btn{
+  color:#fff
+}
+.user-menu-btn:hover{
+  background:rgba(255,255,255,.09)
+}
+.user-avatar{
+  background:rgba(255,255,255,.16);
+  border:1px solid rgba(255,255,255,.28);
+  color:#fff
+}
+.user-menu-copy strong{
+  color:#fff
+}
+.user-menu-copy small,
+.user-menu-chevron{
+  color:rgba(255,255,255,.72)
+}
+@media(max-width:760px){
+  .metro-logo{width:128px;max-height:26px}
+}
