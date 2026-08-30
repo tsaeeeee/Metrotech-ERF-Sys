@@ -604,17 +604,29 @@ document.addEventListener('click',e=>{
 
 function selectedFiles(){ return Array.from($('#evidence').files||[]); }
 
+function editingPaymentEvidence(){
+  return editingIndex>=0 ? (payments[editingIndex]?.evidence||[]) : [];
+}
+
 function syncAddButton(){
+  const hasEvidence=selectedFiles().length>0 || editingPaymentEvidence().length>0;
   const valid=$('#category').value.trim() && $('#purpose').value.trim() && $('#paymentDate').value &&
-    Number($('#amount').value)>0 && selectedFiles().length>0;
+    Number($('#amount').value)>0 && hasEvidence;
   $('#addPaymentBtn').disabled=!valid;
 }
 
 function syncEvidenceInfo(){
   const files=selectedFiles();
-  $('#evidenceInfo').textContent=files.length
-    ? `${files.length} file(s): ${files.map(f=>f.name).join(', ')}`
-    : (editingIndex>=0?'Re-attach evidence to update this payment':'No file selected');
+  if(files.length){
+    $('#evidenceInfo').textContent=editingIndex>=0
+      ? `New evidence: ${files.map(f=>f.name).join(', ')} — replaces the current evidence.`
+      : `${files.length} file(s): ${files.map(f=>f.name).join(', ')}`;
+  }else if(editingIndex>=0 && editingPaymentEvidence().length){
+    $('#evidenceInfo').textContent=
+      `Keeping current evidence: ${editingPaymentEvidence().map(f=>f.name).join(', ')}. Choose new file(s) only to replace it.`;
+  }else{
+    $('#evidenceInfo').textContent='No file selected';
+  }
   syncAddButton();
 }
 
@@ -632,14 +644,17 @@ document.addEventListener('change',e=>{
 function addPayment(){
   clearMsg();
   const files=selectedFiles();
+  const previous=editingIndex>=0 ? payments[editingIndex] : null;
+  const evidence=files.length ? files : (previous?.evidence||[]);
   const x={
     category:$('#category').value.trim(),
     purpose:$('#purpose').value.trim(),
     paymentDate:$('#paymentDate').value,
     amount:Math.round(Number($('#amount').value)),
-    evidence:files
+    evidence,
+    sourceLineNo:previous?.sourceLineNo||null
   };
-  if(!x.category||!x.purpose||!x.paymentDate||!x.amount||!files.length)
+  if(!x.category||!x.purpose||!x.paymentDate||!x.amount||!x.evidence.length)
     return msg('Complete all payment fields and attach evidence first.','err');
 
   if(editingIndex>=0){
@@ -672,9 +687,8 @@ function editPayment(i){
   $('#amount').value=x.amount;
   $('#evidence').value='';
   editingIndex=i;
-  $('#evidenceInfo').textContent='Re-attach evidence to update this payment';
   $('#addPaymentBtn').textContent='Update Payment';
-  syncAddButton();
+  syncEvidenceInfo();
   $('#requestForm').scrollIntoView({behavior:'smooth'});
 }
 
@@ -707,13 +721,25 @@ async function startRevision(id){
     const refNo=data.request.ref_no;
     const recalled=data.request.status==='RECALLED';
     const reason=data.request.last_rejection_reason||'Please revise this request.';
+
     revisionTarget={id,refNo};
-    payments=[]; editingIndex=-1; renderPayments(); resetPaymentForm();
+    payments=(data.items||[]).map(item=>({
+      category:String(item.category||''),
+      purpose:String(item.purpose||''),
+      paymentDate:String(item.payment_date||'').slice(0,10),
+      amount:Number(item.amount||0),
+      evidence:(item.evidence_names||[]).map(name=>({name:String(name),existing:true})),
+      sourceLineNo:Number(item.line_no)
+    }));
+    editingIndex=-1;
+    renderPayments();
+    resetPaymentForm();
+
     $('#requestFormTitle').textContent=`${recalled?'Edit & Resubmit':'Revise'} ${refNo}`;
     $('#revisionBanner').classList.remove('hidden');
     $('#revisionBanner').innerHTML=recalled
-      ? `<strong>Recalled:</strong> This request has been pulled back from Reviewer. Re-enter the payment data and attach evidence, then submit it again.`
-      : `<strong>Rejected:</strong> ${esc(reason)}. Re-enter the payment data and attach evidence for the new revision.`;
+      ? `<strong>Recalled:</strong> Edit the existing payment data below and resubmit. Existing evidence is kept unless you replace it.`
+      : `<strong>Rejected:</strong> ${esc(reason)} <span>Edit the existing payment data below and resubmit. Existing evidence is kept unless you replace it.</span>`;
     $('#cancelRevisionBtn').classList.remove('hidden');
     $('#submitExpenseBtn').textContent='Submit Revision';
     $('#requestForm').scrollIntoView({behavior:'smooth'});
@@ -745,9 +771,19 @@ async function submitExpense(){
   try{
     const fd=new FormData();
     fd.append('items',JSON.stringify(payments.map(x=>({
-      category:x.category,purpose:x.purpose,paymentDate:x.paymentDate,amount:x.amount
+      category:x.category,
+      purpose:x.purpose,
+      paymentDate:x.paymentDate,
+      amount:x.amount,
+      ...(x.sourceLineNo?{sourceLineNo:x.sourceLineNo}:{})
     }))));
-    payments.forEach((x,i)=>x.evidence.forEach(file=>fd.append(`evidence_${i}`,file,file.name)));
+
+    payments.forEach((x,i)=>{
+      x.evidence
+        .filter(file=>typeof File!=='undefined' && file instanceof File)
+        .forEach(file=>fd.append(`evidence_${i}`,file,file.name));
+    });
+
     const url=revisionTarget?`/api/requests/${revisionTarget.id}/revise`:'/api/requests';
     const r=await api(url,{method:'POST',body:fd});
     msg(`${r.refNo} ${revisionTarget?'revision submitted':'submitted'} successfully. Status: PENDING_REVIEW.`,'ok');
