@@ -2,9 +2,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { google } from 'googleapis';
+import sharp from 'sharp';
 
 const SIGNATURE_DIR=process.env.SIGNATURE_DIR || '/data/signatures';
 const PDF_MODE=String(process.env.PDF_MODE || 'mock').toLowerCase();
+const BRAND_LOGO_PATH=path.resolve(process.cwd(),'public/assets/metrotech-logo.webp');
 
 function money(n){ return 'Rp ' + Number(n||0).toLocaleString('id-ID'); }
 
@@ -40,6 +42,24 @@ function displayDate(v){
 }
 
 async function ensureParent(filePath){ await fs.mkdir(path.dirname(filePath),{recursive:true}); }
+
+function rightAlignedX(font,text,size,rightX){
+  return rightX-font.widthOfTextAtSize(String(text||''),size);
+}
+
+function centeredX(font,text,size,left,width){
+  return left+(width-font.widthOfTextAtSize(String(text||''),size))/2;
+}
+
+async function embedBrandLogo(doc){
+  try{
+    const webp=await fs.readFile(BRAND_LOGO_PATH);
+    const png=await sharp(webp).png().toBuffer();
+    return await doc.embedPng(png);
+  }catch{
+    return null;
+  }
+}
 
 export async function buildEvidencePdf({items,files,outPath}) {
   await ensureParent(outPath);
@@ -237,9 +257,12 @@ async function buildMockFormPdf({request,items,outPath}) {
   const white=rgb(1,1,1);
 
   // Header / brand
-  page.drawText('METROTECH',{x:42,y:798,size:14,font:bold,color:navy});
-  page.drawRectangle({x:42,y:790,width:31,height:3,color:yellow});
-  page.drawText('INDONESIA',{x:78,y:790,size:6.5,font:bold,color:grey});
+  const brandLogo=await embedBrandLogo(doc);
+  if(brandLogo){
+    const logoW=112;
+    const logoH=logoW*(brandLogo.height/brandLogo.width);
+    page.drawImage(brandLogo,{x:42,y:786,width:logoW,height:logoH});
+  }
 
   page.drawText('EXPENSE REQUEST FORM',{x:173,y:795,size:16.5,font:bold,color:navy});
   page.drawText('Operations Division',{x:238,y:779,size:7.8,font:normal,color:grey});
@@ -251,9 +274,17 @@ async function buildMockFormPdf({request,items,outPath}) {
   page.drawRectangle({x:metaX,y:metaY,width:metaW,height:metaH,borderWidth:.55,borderColor:line,color:pale});
   page.drawLine({start:{x:metaX,y:metaY+19},end:{x:metaX+metaW,y:metaY+19},thickness:.45,color:line});
   page.drawText('Request Date',{x:metaX+7,y:metaY+26,size:6.3,font:bold,color:grey});
-  page.drawText(displayDate(request.request_date),{x:metaX+75,y:metaY+26,size:7.2,font:normal,color:navy});
+  const requestDateText=displayDate(request.request_date);
+  page.drawText(requestDateText,{
+    x:rightAlignedX(normal,requestDateText,7.2,metaX+metaW-7),
+    y:metaY+26,size:7.2,font:normal,color:navy
+  });
   page.drawText('Ref No',{x:metaX+7,y:metaY+7,size:6.3,font:bold,color:grey});
-  page.drawText(String(request.ref_no||''),{x:metaX+43,y:metaY+7,size:6.3,font:bold,color:navy});
+  const refText=String(request.ref_no||'');
+  page.drawText(refText,{
+    x:rightAlignedX(bold,refText,6.3,metaX+metaW-7),
+    y:metaY+7,size:6.3,font:bold,color:navy
+  });
 
   // Employee information
   page.drawRectangle({x:42,y:745,width:511,height:20,color:navy});
@@ -331,15 +362,18 @@ async function buildMockFormPdf({request,items,outPath}) {
     if(s.show){
       const img=await embedSignature(doc,s.file);
       if(img){
-        const maxW=82,maxH=38;
+        const maxW=118,maxH=52;
         const scale=Math.min(maxW/img.width,maxH/img.height);
         const w=img.width*scale,h=img.height*scale;
-        page.drawImage(img,{x:s.x+(sigW-w)/2,y:sigY+32,width:w,height:h});
+        page.drawImage(img,{x:s.x+(sigW-w)/2,y:sigY+18,width:w,height:h});
       }
     }
-    const name=String(s.name||'');
+    const name=String(s.name||'').slice(0,28);
     page.drawLine({start:{x:s.x+24,y:sigY+20},end:{x:s.x+sigW-24,y:sigY+20},thickness:.5,color:line});
-    page.drawText(name.slice(0,28),{x:s.x+8,y:sigY+8,size:7,font:normal,color:navy});
+    page.drawText(name,{
+      x:centeredX(normal,name,7,s.x,sigW),
+      y:sigY+7,size:7,font:normal,color:navy
+    });
   }
 
   // Footer accent: blue on the left, small diagonal gap, yellow on the right.
