@@ -190,6 +190,7 @@ document.addEventListener('input',e=>{
 });
 document.addEventListener('change',e=>{
   if(e.target.id==='evidence') syncEvidenceInfo();
+  if(e.target.id==='category') syncAddButton();
 });
 
 function addPayment(){
