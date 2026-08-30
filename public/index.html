@@ -53,6 +53,10 @@
       </div>
       <button id="loginBtn" class="btn primary login-btn" type="submit">Sign In</button>
     </form>
+    <div id="googleLoginWrap" class="google-login-wrap hidden">
+      <div class="login-divider"><span>or</span></div>
+      <a class="btn ghost google-login-btn" href="/auth/google">Sign in with Google Workspace</a>
+    </div>
   </div>
 </section>
 
@@ -136,40 +140,183 @@
 </div>
 
 <section id="adminDashboard" class="hidden">
-  <div class="card admin-head-card">
-    <div class="row">
-      <div>
-        <h2>User Management</h2>
-        <p class="muted">Create and manage Expense Request System users.</p>
-        <p class="admin-routing-note">Multiple active Reviewers are load-balanced automatically. Only one active Approver is allowed.</p>
+  <div class="admin-tabs">
+    <button id="adminUsersTab" class="admin-tab active" type="button" onclick="showAdminSection('users')">User Management</button>
+    <button id="adminAppTab" class="admin-tab" type="button" onclick="showAdminSection('app')">App Management</button>
+  </div>
+
+  <div id="adminUserManagementView">
+    <div class="card admin-head-card">
+      <div class="row">
+        <div>
+          <h2>User Management</h2>
+          <p class="muted">Create and manage Expense Request System users.</p>
+          <p class="admin-routing-note">Multiple active Reviewers are load-balanced automatically. Only one active Approver is allowed.</p>
+        </div>
+        <button class="btn primary" type="button" onclick="openAdminUserModal()">+ Create User</button>
       </div>
-      <button class="btn primary" type="button" onclick="openAdminUserModal()">+ Create User</button>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <div><h2>Users</h2></div>
+        <button class="btn ghost" type="button" onclick="loadAdminUsers()">Refresh</button>
+      </div>
+      <div id="adminUsersEmpty" class="empty">No users yet.</div>
+      <div class="table-wrap">
+        <table id="adminUsersTable" class="hidden">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Employee ID</th>
+              <th>Department</th>
+              <th>Role</th>
+              <th>Signature</th>
+              <th>Status</th>
+              <th class="action-col"></th>
+            </tr>
+          </thead>
+          <tbody id="adminUsersBody"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
-  <div class="card">
-    <div class="row">
-      <div><h2>Users</h2></div>
-      <button class="btn ghost" type="button" onclick="loadAdminUsers()">Refresh</button>
+  <div id="adminAppManagementView" class="hidden">
+    <div class="card admin-head-card">
+      <div class="row">
+        <div>
+          <h2>App Management</h2>
+          <p class="muted">Configure production settings without editing application code.</p>
+        </div>
+        <button class="btn ghost" type="button" onclick="loadAppSettings()">Refresh</button>
+      </div>
     </div>
-    <div id="adminUsersEmpty" class="empty">No users yet.</div>
-    <div class="table-wrap">
-      <table id="adminUsersTable" class="hidden">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Email</th>
-            <th>Employee ID</th>
-            <th>Department</th>
-            <th>Role</th>
-            <th>Signature</th>
-            <th>Status</th>
-            <th class="action-col"></th>
-          </tr>
-        </thead>
-        <tbody id="adminUsersBody"></tbody>
-      </table>
+
+    <div class="card">
+      <div class="row">
+        <div>
+          <h2>Production Readiness</h2>
+          <p class="muted">Quick health check for this deployment.</p>
+        </div>
+        <span id="appReadinessScore" class="readiness-score">Checking…</span>
+      </div>
+      <div id="appRestartNotice" class="revision-banner hidden">Session settings changed. Restart the app container to apply them.</div>
+      <div id="appReadinessGrid" class="readiness-grid"></div>
     </div>
+
+    <form id="appSettingsForm" onsubmit="saveAppManagement(event)">
+      <div class="card app-settings-card">
+        <div class="app-section-head"><h2>General</h2><p class="muted">Application URL and regional defaults.</p></div>
+        <div class="app-settings-grid">
+          <div class="field">
+            <label>App Base URL</label>
+            <input id="appBaseUrl" placeholder="https://expense.metrotech.id">
+            <small class="muted">DNS and SSL are still configured on the infrastructure side.</small>
+          </div>
+          <div class="field">
+            <label>Timezone</label>
+            <input id="appTimezone" value="Asia/Jakarta">
+          </div>
+        </div>
+      </div>
+
+      <div class="card app-settings-card">
+        <div class="app-section-head"><h2>Authentication</h2><p class="muted">Choose how employees sign in.</p></div>
+        <div class="app-settings-grid">
+          <div class="field">
+            <label>Local Login</label>
+            <label class="toggle-row"><input id="appLocalLogin" type="checkbox" checked> Allow username & password login</label>
+          </div>
+          <div class="field">
+            <label>Google Workspace</label>
+            <label class="toggle-row"><input id="appGoogleEnabled" type="checkbox"> Enable Google Workspace login</label>
+          </div>
+          <div class="field">
+            <label>Allowed Google Domain</label>
+            <input id="appGoogleDomain" placeholder="metrotech.id">
+          </div>
+          <div class="field">
+            <label>Google Client ID</label>
+            <input id="appGoogleClientId" autocomplete="off">
+          </div>
+          <div class="field">
+            <label>Google Client Secret</label>
+            <input id="appGoogleClientSecret" type="password" autocomplete="new-password" placeholder="Leave blank to keep current secret">
+            <small id="appGoogleSecretState" class="muted">Not configured</small>
+          </div>
+          <div class="field">
+            <label>Google Callback URL</label>
+            <input id="appGoogleCallbackUrl" placeholder="Auto from App Base URL">
+          </div>
+        </div>
+      </div>
+
+      <div class="card app-settings-card">
+        <div class="app-section-head"><h2>SMTP / Email</h2><p class="muted">Workflow notifications and no-reply sender.</p></div>
+        <div class="app-settings-grid">
+          <div class="field">
+            <label>SMTP</label>
+            <label class="toggle-row"><input id="appSmtpEnabled" type="checkbox"> Enable SMTP delivery</label>
+          </div>
+          <div class="field">
+            <label>SMTP Secure</label>
+            <label class="toggle-row"><input id="appSmtpSecure" type="checkbox"> Use TLS/SSL on connection</label>
+          </div>
+          <div class="field"><label>SMTP Host</label><input id="appSmtpHost" placeholder="smtp.example.com"></div>
+          <div class="field"><label>SMTP Port</label><input id="appSmtpPort" type="number" min="1" max="65535" value="587"></div>
+          <div class="field"><label>SMTP Username</label><input id="appSmtpUser" autocomplete="off"></div>
+          <div class="field">
+            <label>SMTP Password</label>
+            <input id="appSmtpPassword" type="password" autocomplete="new-password" placeholder="Leave blank to keep current password">
+            <small id="appSmtpPasswordState" class="muted">Not configured</small>
+          </div>
+          <div class="field"><label>Sender Name</label><input id="appMailSenderName" value="Metrotech Expense Approval System"></div>
+          <div class="field"><label>Sender Email</label><input id="appMailFrom" type="email" value="no-reply@metrotech.id"></div>
+          <div class="field app-wide-field">
+            <label>Override Recipient <span class="muted">(development only)</span></label>
+            <input id="appMailOverrideTo" type="email" placeholder="Leave empty in production">
+          </div>
+        </div>
+        <div class="app-inline-actions">
+          <button class="btn ghost" type="button" onclick="testAppSmtp()">Test SMTP</button>
+        </div>
+      </div>
+
+      <div class="card app-settings-card">
+        <div class="app-section-head"><h2>Security / Session</h2><p class="muted">Session and login protection settings.</p></div>
+        <div class="app-settings-grid">
+          <div class="field">
+            <label>Session Lifetime (hours)</label>
+            <input id="appSessionHours" type="number" min="1" max="168" value="8">
+          </div>
+          <div class="field">
+            <label>Failed Login Limit / 15 min</label>
+            <input id="appLoginRateLimit" type="number" min="1" max="100" value="10">
+          </div>
+          <div class="field">
+            <label>Secure Cookie</label>
+            <label class="toggle-row"><input id="appCookieSecure" type="checkbox"> HTTPS-only session cookie</label>
+          </div>
+          <div class="field">
+            <label>Session Secret</label>
+            <div class="secret-status-row">
+              <span id="appSessionSecretState" class="signature-state ready">Managed automatically</span>
+              <button class="btn tiny ghost" type="button" onclick="rotateAppSessionSecret()">Rotate</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card app-save-card">
+        <div>
+          <strong>Application Configuration</strong>
+          <p class="muted">Secret fields are encrypted before being stored in PostgreSQL.</p>
+        </div>
+        <button id="saveAppSettingsBtn" class="btn primary" type="submit">Save Settings</button>
+      </div>
+    </form>
   </div>
 </section>
 </section>
