@@ -52,12 +52,9 @@ async function loadMe(){
     $('#userBadge').textContent=`${employee.name} · ${employee.role}`;
     $('#roleTitle').textContent=employee.role==='REQUESTOR'?'Requestor Dashboard':employee.role==='REVIEWER'?'Reviewer Dashboard':'Approver Dashboard';
     $('#queueTitle').textContent=employee.role==='REQUESTOR'?'My Requests':employee.role==='REVIEWER'?'Pending Review':'Pending Approval';
-    $('#queueHint').textContent=employee.role==='REQUESTOR'?'Track submitted requests and revise rejected items.':
-      employee.role==='REVIEWER'?'Open a request to compare the form and evidence, then approve or reject.':
-      'Open a reviewed request for final approval.';
     $('#identity').textContent=employee.email;
     $('#requestForm').classList.toggle('hidden',employee.role!=='REQUESTOR');
-    const fields=[['Employee ID',employee.employee_id],['Department',employee.department],['Location',employee.location],['Division',employee.division],['Role',employee.role]];
+    const fields=[['Employee ID',employee.employee_id],['Department',employee.department],['Location',employee.location],['Division',employee.division]];
     $('#profile').innerHTML=fields.map(([a,b])=>`<div><label>${a}</label><strong>${esc(b)}</strong></div>`).join('');
     renderRequests(requests);
     if(employee.role==='REQUESTOR' && !$('#paymentDate').value) $('#paymentDate').value=new Date().toISOString().slice(0,10);
@@ -92,11 +89,62 @@ function renderRequests(requests){
       <td>${esc(r.employee_name)}</td>
       <td>${String(r.request_date).slice(0,10)}</td>
       <td class="money">${rupiah(r.total)}</td>
-      <td><span class="status ${esc(r.status)}">${esc(r.status)}</span></td>
-      <td>${r.revision}</td>
-      <td class="actions"><button class="btn tiny ghost" onclick="openRequest('${r.id}')">Open</button> ${recall} ${revise}</td>
+      <td class="status-col"><span class="status ${esc(r.status)}">${esc(r.status)}</span></td>
+      <td class="rev-col">${r.revision}</td>
+      <td class="actions action-col"><button class="btn tiny ghost" onclick="openRequest('${r.id}')">Open</button> ${recall} ${revise}</td>
     </tr>`;
   }).join('');
+}
+
+function openProfileModal(){
+  if(!currentEmployee) return;
+  $('#profileAccount').textContent=`${currentEmployee.name} · ${currentEmployee.email}`;
+  $('#profileEmployeeId').value=currentEmployee.employee_id||'';
+  $('#profileDepartment').value=currentEmployee.department||'';
+  $('#profileLocation').value=currentEmployee.location||'';
+  $('#profileDivision').value=currentEmployee.division||'';
+  $('#profileRole').value=currentEmployee.role||'REQUESTOR';
+  $('#profileSignature').value='';
+  $('#profileModal').classList.remove('hidden');
+  document.body.classList.add('modal-open');
+}
+
+function closeProfileModal(){
+  $('#profileModal').classList.add('hidden');
+  $('#profileSignature').value='';
+  if($('#detailModal').classList.contains('hidden')) document.body.classList.remove('modal-open');
+}
+
+function profileBackdrop(e){
+  if(e.target.id==='profileModal') closeProfileModal();
+}
+
+async function saveProfile(event){
+  event.preventDefault();
+  if(!currentEmployee) return;
+  const btn=$('#saveProfileBtn');
+  btn.disabled=true;
+  btn.textContent='Saving…';
+  try{
+    const fd=new FormData();
+    fd.append('employeeId',$('#profileEmployeeId').value.trim());
+    fd.append('department',$('#profileDepartment').value.trim());
+    fd.append('location',$('#profileLocation').value.trim());
+    fd.append('division',$('#profileDivision').value.trim());
+    fd.append('role',$('#profileRole').value);
+    const sig=$('#profileSignature').files?.[0];
+    if(sig) fd.append('signature',sig,sig.name);
+
+    await api('/api/profile',{method:'PUT',body:fd});
+    closeProfileModal();
+    msg('Profile updated successfully.','ok');
+    await loadMe();
+  }catch(e){
+    msg(e.message,'err');
+  }finally{
+    btn.disabled=false;
+    btn.textContent='Save Profile';
+  }
 }
 
 function selectedFiles(){ return Array.from($('#evidence').files||[]); }
@@ -332,6 +380,7 @@ async function logout(){
   await api('/api/logout',{method:'POST',body:'{}'});
   clearMsg();
   currentEmployee=null; payments=[]; editingIndex=-1; revisionTarget=null; currentDetailId=null;
+  $('#profileModal').classList.add('hidden');
   renderPayments();
   $('#dashboard').classList.add('hidden');
   $('#loginCard').classList.remove('hidden');
