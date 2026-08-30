@@ -11,12 +11,15 @@ TRUNCATE TABLE
   daily_counters
 RESTART IDENTITY CASCADE;
 
-DO $$
+DO $
 BEGIN
   IF to_regclass('public.session') IS NOT NULL THEN
     EXECUTE 'TRUNCATE TABLE session';
   END IF;
-END $$;
+  IF to_regclass('public.app_settings') IS NOT NULL THEN
+    EXECUTE 'TRUNCATE TABLE app_settings';
+  END IF;
+END $;
 
 DELETE FROM employees
 WHERE role <> 'ADMIN';
