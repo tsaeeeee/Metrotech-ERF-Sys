@@ -72,11 +72,34 @@
 </div>
 
 <div class="payment-form">
-  <div class="field"><label>Category</label><input id="category" placeholder="e.g. Transportation"></div>
+  <div class="field">
+    <label>Category</label>
+    <select id="category">
+      <option value="">Select category</option>
+      <option value="Transportation">Transportation</option>
+      <option value="Accommodation">Accommodation</option>
+      <option value="Meals">Meals</option>
+      <option value="Office Supplies">Office Supplies</option>
+      <option value="Communication">Communication</option>
+      <option value="Project / Operational">Project / Operational</option>
+      <option value="Maintenance & Repair">Maintenance & Repair</option>
+      <option value="Software / Subscription">Software / Subscription</option>
+      <option value="Training / Certification">Training / Certification</option>
+      <option value="Courier / Delivery">Courier / Delivery</option>
+      <option value="Others">Others</option>
+    </select>
+  </div>
   <div class="field purpose"><label>Purpose</label><input id="purpose" placeholder="Describe"></div>
   <div class="field"><label>Payment Date</label><input id="paymentDate" type="date"></div>
   <div class="field"><label>Amount (IDR)</label><input id="amount" type="number" min="1" step="1" placeholder="0"></div>
-  <div class="field evidence-field"><label>Evidence *</label><input id="evidence" type="file" accept="application/pdf,image/png,image/jpeg" multiple><small id="evidenceInfo" class="muted">No evidence selected</small></div>
+  <div class="field evidence-field">
+    <label>Evidence *</label>
+    <div class="evidence-picker">
+      <input id="evidence" class="file-input-hidden" type="file" accept="application/pdf,image/png,image/jpeg" multiple>
+      <label for="evidence" class="btn ghost file-pick-btn">Choose Files</label>
+      <span id="evidenceInfo" class="file-pick-info">No file selected</span>
+    </div>
+  </div>
   <button id="addPaymentBtn" class="btn primary" onclick="addPayment()" disabled>+ Add Payment</button>
 </div>
 
