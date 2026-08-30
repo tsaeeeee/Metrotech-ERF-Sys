@@ -323,6 +323,66 @@ async function submitExpense(){
   }
 }
 
+let pdfJsModulePromise=null;
+
+async function getPdfJs(){
+  if(!pdfJsModulePromise){
+    pdfJsModulePromise=import('/vendor/pdfjs/pdf.mjs').then(pdfjs=>{
+      pdfjs.GlobalWorkerOptions.workerSrc='/vendor/pdfjs/pdf.worker.mjs';
+      return pdfjs;
+    });
+  }
+  return pdfJsModulePromise;
+}
+
+async function renderPdfDocument(url,targetSelector){
+  const target=$(targetSelector);
+  if(!target) return;
+
+  if(!url){
+    target.innerHTML='<div class="pdf-empty">Document unavailable.</div>';
+    return;
+  }
+
+  target.innerHTML='<div class="pdf-loading">Loading document…</div>';
+
+  try{
+    const pdfjs=await getPdfJs();
+    const task=pdfjs.getDocument({url,withCredentials:true});
+    const pdf=await task.promise;
+    target.innerHTML='';
+
+    for(let pageNumber=1;pageNumber<=pdf.numPages;pageNumber++){
+      const page=await pdf.getPage(pageNumber);
+      const baseViewport=page.getViewport({scale:1});
+      const availableWidth=Math.max(260,target.clientWidth-24);
+      const cssScale=Math.min(1.35,availableWidth/baseViewport.width);
+      const pixelRatio=Math.min(window.devicePixelRatio||1,2);
+      const renderViewport=page.getViewport({scale:cssScale*pixelRatio});
+
+      const pageWrap=document.createElement('div');
+      pageWrap.className='pdf-page';
+
+      const canvas=document.createElement('canvas');
+      canvas.width=Math.ceil(renderViewport.width);
+      canvas.height=Math.ceil(renderViewport.height);
+      canvas.style.width=`${Math.ceil(renderViewport.width/pixelRatio)}px`;
+      canvas.style.height=`${Math.ceil(renderViewport.height/pixelRatio)}px`;
+
+      pageWrap.appendChild(canvas);
+      target.appendChild(pageWrap);
+
+      await page.render({
+        canvasContext:canvas.getContext('2d',{alpha:false}),
+        viewport:renderViewport
+      }).promise;
+    }
+  }catch(e){
+    console.error('PDF preview failed:',e);
+    target.innerHTML='<div class="pdf-empty">Unable to preview this document.</div>';
+  }
+}
+
 async function openRequest(id){
   clearMsg();
   try{
@@ -354,9 +414,9 @@ async function openRequest(id){
         ${a.reason?`<p>${esc(a.reason)}</p>`:''}<small>${new Date(a.created_at).toLocaleString('id-ID')}</small></div>
       </div>`).join(''):'<div class="muted">No audit entries.</div>';
 
-    const pdfPreview='#toolbar=0&navpanes=0&scrollbar=0&view=FitH';
-    $('#formPdf').src=data.documents.form?`/api/requests/${id}/form?t=${Date.now()}${pdfPreview}`:'about:blank';
-    $('#evidencePdf').src=data.documents.evidence?`/api/requests/${id}/evidence?t=${Date.now()}${pdfPreview}`:'about:blank';
+    const stamp=Date.now();
+    const formUrl=data.documents.form?`/api/requests/${id}/form?t=${stamp}`:null;
+    const evidenceUrl=data.documents.evidence?`/api/requests/${id}/evidence?t=${stamp}`:null;
 
     const actionable=(currentEmployee.role==='REVIEWER'&&r.status==='PENDING_REVIEW') ||
       (currentEmployee.role==='APPROVER'&&r.status==='PENDING_APPROVAL');
@@ -366,13 +426,15 @@ async function openRequest(id){
     $('#rejectBtn').disabled=true;
     $('#detailModal').classList.remove('hidden');
     document.body.classList.add('modal-open');
+    renderPdfDocument(formUrl,'#formPdfViewer');
+    renderPdfDocument(evidenceUrl,'#evidencePdfViewer');
   }catch(e){msg(e.message,'err')}
 }
 
 function closeDetail(){
   $('#detailModal').classList.add('hidden');
-  $('#formPdf').src='about:blank';
-  $('#evidencePdf').src='about:blank';
+  $('#formPdfViewer').innerHTML='';
+  $('#evidencePdfViewer').innerHTML='';
   currentDetailId=null;
   document.body.classList.remove('modal-open');
 }
