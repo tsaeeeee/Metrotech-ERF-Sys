@@ -9,7 +9,7 @@ import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import {
   pool,pingDb,getEmployee,authenticateLocalUser,updateEmployeeSignature,listManagedEmployees,
-  createManagedEmployee,updateManagedEmployee,listRequestsForEmployee,createExpenseRequest,
+  createManagedEmployee,updateManagedEmployee,setManagedEmployeeActive,listRequestsForEmployee,createExpenseRequest,
   getRequestDetail,setDocumentPaths,transitionRequest,recallExpenseRequest,reviseExpenseRequest
 } from './db.js';
 import { buildEvidencePdf,buildFormPdf } from './documents.js';
@@ -223,6 +223,14 @@ app.post('/api/admin/users',requireUser,requireAdmin,async(req,res,next)=>{
 app.put('/api/admin/users/:email',requireUser,requireAdmin,async(req,res,next)=>{
   try{
     const user=await updateManagedEmployee(req.params.email,req.body||{});
+    res.json({ok:true,user});
+  }catch(e){next(e)}
+});
+
+app.patch('/api/admin/users/:email/status',requireUser,requireAdmin,async(req,res,next)=>{
+  try{
+    const active=req.body?.active===true;
+    const user=await setManagedEmployeeActive(req.params.email,active);
     res.json({ok:true,user});
   }catch(e){next(e)}
 });
