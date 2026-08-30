@@ -356,7 +356,7 @@ export async function listRequestsForEmployee(employee) {
 }
 
 
-export async function createExpenseRequest(employee, items) {
+export async function createExpenseRequest(employee, items, timezone='Asia/Jakarta') {
   const client = await pool.connect();
   try {
     await client.query('begin');
@@ -367,8 +367,9 @@ export async function createExpenseRequest(employee, items) {
     const approver = await getSingleApproverTx(client);
 
     const { rows:dateRows } = await client.query(
-      "select (now() at time zone 'Asia/Jakarta')::date as request_date, " +
-      "to_char(now() at time zone 'Asia/Jakarta','YYYYMMDD') as compact_date"
+      "select timezone($1,now())::date as request_date, " +
+      "to_char(timezone($1,now()),'YYYYMMDD') as compact_date",
+      [String(timezone||'Asia/Jakarta')]
     );
     const requestDate = dateRows[0].request_date;
     const compact = dateRows[0].compact_date;
