@@ -8,7 +8,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import {
-  pool,pingDb,listActiveEmployees,getEmployee,listRequestsForEmployee,createExpenseRequest,
+  pool,pingDb,listActiveEmployees,getEmployee,updateEmployeeProfile,listRequestsForEmployee,createExpenseRequest,
   getRequestDetail,setDocumentPaths,transitionRequest,recallExpenseRequest,reviseExpenseRequest
 } from './db.js';
 import { buildEvidencePdf,buildFormPdf } from './documents.js';
@@ -24,11 +24,16 @@ const DEV_AUTH=String(process.env.DEV_AUTH || 'true').toLowerCase()==='true';
 const GOOGLE_AUTH_READY=!DEV_AUTH &&
   Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_CALLBACK_URL);
 const DATA_DIR=process.env.PDF_DIR || '/data/pdfs';
+const PROFILE_SIGNATURE_DIR=process.env.PROFILE_SIGNATURE_DIR || path.join(DATA_DIR,'profile-signatures');
 const MAX_EVIDENCE_MB=Number(process.env.MAX_EVIDENCE_MB || 15);
 const allowedMime=new Set(['application/pdf','image/png','image/jpeg','image/jpg']);
 const upload=multer({
   storage:multer.memoryStorage(),
   limits:{fileSize:MAX_EVIDENCE_MB*1024*1024,files:64}
+});
+const signatureUpload=multer({
+  storage:multer.memoryStorage(),
+  limits:{fileSize:5*1024*1024,files:1}
 });
 
 app.set('trust proxy',1);
@@ -192,6 +197,38 @@ async function regenerateForm(requestId){
 app.get('/api/me',requireUser,async(req,res)=>{
   const requests=await listRequestsForEmployee(req.employee);
   res.json({employee:req.employee,requests});
+});
+
+app.put('/api/profile',requireUser,signatureUpload.single('signature'),async(req,res,next)=>{
+  try{
+    const employeeId=String(req.body.employeeId||'').trim();
+    const department=String(req.body.department||'').trim();
+    const location=String(req.body.location||'').trim();
+    const division=String(req.body.division||'').trim();
+    const role=String(req.body.role||'').trim().toUpperCase();
+
+    if(!employeeId||!department||!location||!division||!role)
+      return res.status(400).json({error:'Complete all profile fields.'});
+
+    let signatureFile=null;
+    if(req.file){
+      const mime=String(req.file.mimetype||'').toLowerCase();
+      if(!['image/png','image/jpeg','image/jpg'].includes(mime))
+        return res.status(400).json({error:'Signature must be PNG or JPG.'});
+
+      await fs.mkdir(PROFILE_SIGNATURE_DIR,{recursive:true});
+      const ext=mime==='image/png'?'png':'jpg';
+      const safeEmail=String(req.employee.email).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+      signatureFile=path.join(PROFILE_SIGNATURE_DIR,`${safeEmail}-signature.${ext}`);
+      await fs.writeFile(signatureFile,req.file.buffer);
+    }
+
+    const employee=await updateEmployeeProfile(req.employee.email,{
+      employeeId,department,location,division,role,signatureFile
+    });
+    req.session.user={email:employee.email};
+    res.json({ok:true,employee});
+  }catch(e){next(e)}
 });
 
 app.post('/api/requests',requireUser,upload.any(),async(req,res,next)=>{
