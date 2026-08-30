@@ -169,6 +169,46 @@ async function saveProfile(event){
   }
 }
 
+function toggleCategoryMenu(event){
+  event?.stopPropagation();
+  const menu=$('#categoryMenu');
+  const trigger=$('#categoryButton');
+  const willOpen=menu.classList.contains('hidden');
+  menu.classList.toggle('hidden');
+  $('#categorySelect').classList.toggle('open',willOpen);
+  trigger.setAttribute('aria-expanded',willOpen?'true':'false');
+}
+
+function closeCategoryMenu(){
+  $('#categoryMenu')?.classList.add('hidden');
+  $('#categorySelect')?.classList.remove('open');
+  $('#categoryButton')?.setAttribute('aria-expanded','false');
+}
+
+function selectCategory(value){
+  $('#category').value=value;
+  $('#categoryLabel').textContent=value;
+  $('#categoryLabel').classList.remove('custom-select-placeholder');
+  document.querySelectorAll('#categoryMenu button').forEach(btn=>{
+    btn.classList.toggle('selected',btn.dataset.value===value);
+  });
+  closeCategoryMenu();
+  syncAddButton();
+}
+
+function resetCategory(){
+  $('#category').value='';
+  $('#categoryLabel').textContent='Select category';
+  $('#categoryLabel').classList.add('custom-select-placeholder');
+  document.querySelectorAll('#categoryMenu button').forEach(btn=>btn.classList.remove('selected'));
+  closeCategoryMenu();
+}
+
+document.addEventListener('click',e=>{
+  const custom=$('#categorySelect');
+  if(custom && !custom.contains(e.target)) closeCategoryMenu();
+});
+
 function selectedFiles(){ return Array.from($('#evidence').files||[]); }
 
 function syncAddButton(){
@@ -190,7 +230,6 @@ document.addEventListener('input',e=>{
 });
 document.addEventListener('change',e=>{
   if(e.target.id==='evidence') syncEvidenceInfo();
-  if(e.target.id==='category') syncAddButton();
 });
 
 function addPayment(){
@@ -219,7 +258,7 @@ function addPayment(){
 }
 
 function resetPaymentForm(){
-  $('#category').value='';
+  resetCategory();
   $('#purpose').value='';
   $('#amount').value='';
   $('#evidence').value='';
@@ -230,7 +269,7 @@ function resetPaymentForm(){
 
 function editPayment(i){
   const x=payments[i];
-  $('#category').value=x.category;
+  selectCategory(x.category);
   $('#purpose').value=x.purpose;
   $('#paymentDate').value=x.paymentDate;
   $('#amount').value=x.amount;
