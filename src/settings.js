@@ -196,7 +196,34 @@ function validateInput(input){
 
 export async function saveAppSettings(input,actorEmail=''){
   await ensureAppSettings();
+  const current=await getRuntimeAppSettings();
   const clean=validateInput(input||{});
+
+  const nextLocal=input.localLoginEnabled===undefined
+    ? current.localLoginEnabled
+    : Boolean(input.localLoginEnabled);
+  const nextGoogle=input.googleEnabled===undefined
+    ? current.googleEnabled
+    : Boolean(input.googleEnabled);
+  const nextClientId=input.googleClientId===undefined
+    ? current.googleClientId
+    : String(input.googleClientId||'').trim();
+  const nextClientSecret=String(input.googleClientSecret||'') || current.googleClientSecret;
+  const nextBaseUrl=input.appBaseUrl===undefined
+    ? current.appBaseUrl
+    : String(input.appBaseUrl||'').trim().replace(/\/$/,'');
+  const nextCallback=input.googleCallbackUrl===undefined
+    ? current.googleCallbackUrl
+    : String(input.googleCallbackUrl||'').trim();
+  const effectiveCallback=nextCallback || (nextBaseUrl?`${nextBaseUrl}/auth/google/callback`:'');
+  const nextGoogleReady=Boolean(nextGoogle && nextClientId && nextClientSecret && effectiveCallback);
+
+  if(!nextLocal && !nextGoogleReady)
+    throw Object.assign(
+      new Error('Local Login cannot be disabled until Google Workspace authentication is fully configured.'),
+      {status:409}
+    );
+
   const client=await pool.connect();
   try{
     await client.query('begin');
