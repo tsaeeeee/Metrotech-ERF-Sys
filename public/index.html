@@ -7,11 +7,37 @@
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+<nav class="topbar">
+  <div class="topbar-brand">
+    <div class="metro-wordmark">
+      <strong>METROTECH</strong>
+      <span>INDONESIA</span>
+    </div>
+    <div class="topbar-divider"></div>
+    <div class="topbar-title">Expense Request System</div>
+  </div>
+
+  <div id="userMenuWrap" class="user-menu-wrap hidden">
+    <button id="userMenuBtn" class="user-menu-btn" type="button" onclick="toggleUserMenu(event)">
+      <span id="userAvatar" class="user-avatar">U</span>
+      <span class="user-menu-copy">
+        <strong id="userMenuName">User</strong>
+        <small id="userMenuRole">ROLE</small>
+      </span>
+      <span class="user-menu-chevron">⌄</span>
+    </button>
+    <div id="userMenu" class="user-menu hidden">
+      <div class="user-menu-meta">
+        <strong id="userMenuFullName">User</strong>
+        <span id="userMenuEmail"></span>
+      </div>
+      <button type="button" onclick="openProfileModal(); closeUserMenu()">Edit Profile</button>
+      <button type="button" onclick="logout()">Logout</button>
+    </div>
+  </div>
+</nav>
+
 <div class="shell">
-<header>
-  <div><h1>Expense Request System</h1><p>PT Metrotech Indonesia</p></div>
-  <div id="userBadge" class="badge">Not signed in</div>
-</header>
 <div id="msg"></div>
 
 <section id="loginCard" class="login-shell">
@@ -35,14 +61,8 @@
 
 <section id="dashboard" class="hidden">
 <div class="card profile-card">
-<div class="row">
-  <div><h2 id="roleTitle">Dashboard</h2><p id="identity" class="muted"></p></div>
-  <div class="header-actions">
-    <button class="btn ghost" onclick="openProfileModal()">Edit Profile</button>
-    <button class="btn ghost" onclick="logout()">Logout</button>
-  </div>
-</div>
-<div id="profile" class="profile-grid"></div>
+  <div class="row"><div><h2 id="roleTitle">Dashboard</h2></div></div>
+  <div id="profile" class="profile-grid"></div>
 </div>
 
 <section id="requestForm" class="card hidden">
@@ -56,7 +76,7 @@
 
 <div class="payment-form">
   <div class="field"><label>Category</label><input id="category" placeholder="e.g. Transportation"></div>
-  <div class="field purpose"><label>Purpose of Payment</label><input id="purpose" placeholder="Describe the payment purpose"></div>
+  <div class="field purpose"><label>Purpose</label><input id="purpose" placeholder="Describe"></div>
   <div class="field"><label>Payment Date</label><input id="paymentDate" type="date"></div>
   <div class="field"><label>Amount (IDR)</label><input id="amount" type="number" min="1" step="1" placeholder="0"></div>
   <div class="field evidence-field"><label>Evidence *</label><input id="evidence" type="file" accept="application/pdf,image/png,image/jpeg" multiple><small id="evidenceInfo" class="muted">No evidence selected</small></div>
