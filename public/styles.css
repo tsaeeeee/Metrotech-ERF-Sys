@@ -721,3 +721,17 @@ h1{margin:0;color:var(--navy);font-size:26px}h2{margin:0 0 12px;color:var(--navy
 .signature-only-form .file-pick-info{
   line-height:42px
 }
+
+
+/* Admin remove / restore polish */
+.inactive-user-row{
+  opacity:.62
+}
+.inactive-user-row:hover{
+  opacity:.82
+}
+#adminUsersTable .actions{
+  display:flex;
+  justify-content:flex-end;
+  gap:6px
+}
