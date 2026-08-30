@@ -37,3 +37,104 @@ h1{margin:0;color:var(--navy);font-size:26px}h2{margin:0 0 12px;color:var(--navy
 .login-form .field{gap:0}
 .login-form .field input{height:44px}
 .login-btn{width:100%;height:44px;margin-top:4px}
+
+
+/* 2026-08 UI cleanup */
+.profile-card{padding:18px 20px}
+.header-actions{display:flex;align-items:center;gap:8px}
+.profile-grid{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  margin-top:14px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  overflow:hidden;
+  background:#fafcff
+}
+.profile-grid>div{
+  min-width:0;
+  padding:12px 14px;
+  border-right:1px solid var(--line)
+}
+.profile-grid>div:last-child{border-right:0}
+.profile-grid label{
+  display:block;
+  margin-bottom:3px;
+  font-size:10px;
+  font-weight:700;
+  color:var(--muted);
+  text-transform:uppercase;
+  letter-spacing:.025em
+}
+.profile-grid strong{
+  display:block;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  color:var(--text);
+  font-size:13px
+}
+
+#requestForm .row,#dashboard>.card>.row,#dashboard>.card:last-child>.row{align-items:center}
+#requestFormTitle,#queueTitle,#roleTitle{margin-bottom:0}
+
+#table th,#table td{vertical-align:middle}
+#table .money{text-align:right}
+#table .status-col{text-align:center;width:150px}
+#table .rev-col{text-align:center;width:64px}
+#table .action-col{text-align:right;width:190px}
+#table tbody tr{height:52px}
+#table .actions .btn{margin-left:4px}
+#table .actions .btn:first-child{margin-left:0}
+
+.payment-form{margin-top:14px}
+.table-wrap{margin-top:14px}
+.form-footer{margin-top:14px}
+
+.profile-modal-panel{
+  width:min(620px,94vw);
+  max-height:90vh;
+  overflow:auto;
+  background:#fff;
+  border-radius:14px;
+  padding:20px;
+  box-shadow:0 20px 70px rgba(0,0,0,.24)
+}
+.profile-form{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:14px;
+  margin-top:18px
+}
+.profile-form .field input,
+.profile-form .field select{
+  width:100%;
+  height:42px;
+  border:1px solid #cbd5e1;
+  border-radius:9px;
+  padding:9px 11px;
+  font:inherit;
+  background:#fff;
+  color:var(--text)
+}
+.profile-form .signature-upload{grid-column:1/-1}
+.profile-form .signature-upload input{height:auto;min-height:42px;padding:7px 9px}
+.profile-form .signature-upload small{margin-top:5px}
+.profile-form-actions{
+  grid-column:1/-1;
+  display:flex;
+  justify-content:flex-end;
+  gap:8px;
+  padding-top:4px
+}
+
+@media(max-width:760px){
+  .header-actions{width:100%}
+  .header-actions .btn{flex:1}
+  .profile-grid{grid-template-columns:1fr 1fr}
+  .profile-grid>div{border-bottom:1px solid var(--line)}
+  .profile-grid>div:nth-child(2n){border-right:0}
+  .profile-grid>div:nth-last-child(-n+2){border-bottom:0}
+  .profile-form{grid-template-columns:1fr}
+  .profile-form .signature-upload,.profile-form-actions{grid-column:1}
+}
