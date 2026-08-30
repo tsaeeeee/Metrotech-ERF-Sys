@@ -9,7 +9,7 @@ process.env.REVIEWER_NAME ||= 'Dimas Jenar';
 process.env.APPROVER_NAME ||= 'Ervan Mardianto';
 
 const {
-  pool,getEmployee,createExpenseRequest,transitionRequest,
+  pool,getEmployee,authenticateLocalUser,createExpenseRequest,transitionRequest,
   reviseExpenseRequest,recallExpenseRequest,createManagedEmployee,setManagedEmployeeActive
 }=await import('../src/db.js');
 
@@ -29,6 +29,32 @@ function items(label){
 try{
   const schema=await fs.readFile(new URL('../sql/schema.sql',import.meta.url),'utf8');
   await pool.query(schema);
+  const adminSeed=await fs.readFile(new URL('../sql/dev-accounts.sql',import.meta.url),'utf8');
+  await pool.query(adminSeed);
+
+  const bootstrapAdmin=await authenticateLocalUser('Administrator','Admin@MTR');
+  assert(bootstrapAdmin?.role==='ADMIN','Fixed bootstrap Administrator login must work.');
+
+  const {saveAppSettings,getPublicAppSettings,getRuntimeAppSettings}=await import('../src/settings.js');
+  await saveAppSettings({
+    appBaseUrl:'https://expense.metrotech.id',
+    smtpEnabled:false,
+    smtpPassword:'ci-secret-value'
+  },bootstrapAdmin.email);
+  const publicSettings=await getPublicAppSettings();
+  const runtimeSettings=await getRuntimeAppSettings();
+  assert(publicSettings.smtpPasswordConfigured===true,'SMTP secret should report as configured.');
+  assert(!Object.prototype.hasOwnProperty.call(publicSettings,'smtpPass'),'Public settings must not expose SMTP password.');
+  assert(runtimeSettings.smtpPass==='ci-secret-value','Encrypted SMTP secret must decrypt for runtime use.');
+
+  let authLockoutBlocked=false;
+  try{
+    await saveAppSettings({localLoginEnabled:false,googleEnabled:false},bootstrapAdmin.email);
+  }catch(e){
+    authLockoutBlocked=e.status===409;
+  }
+  assert(authLockoutBlocked,'App settings must prevent disabling every authentication path.');
+
   await pool.query(`
     insert into employees(
       email,name,employee_id,department,location,division,role,signature_file,active,username,password_hash
