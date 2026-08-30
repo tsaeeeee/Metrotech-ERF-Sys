@@ -60,19 +60,12 @@ export async function buildEvidencePdf({items,files,outPath}) {
 
       if(type==='image/png' || type==='image/jpeg' || type==='image/jpg'){
         const image=type==='image/png' ? await out.embedPng(f.buffer) : await out.embedJpg(f.buffer);
-        const page=out.addPage([595,842]);
-        const margin=24;
-        const maxW=595-(margin*2);
-        const maxH=842-(margin*2);
-        const scale=Math.min(maxW/image.width,maxH/image.height,1);
-        const width=image.width*scale;
-        const height=image.height*scale;
-        page.drawImage(image,{
-          x:(595-width)/2,
-          y:(842-height)/2,
-          width,
-          height
-        });
+        const maxPageDimension=842;
+        const scale=Math.min(maxPageDimension/image.width,maxPageDimension/image.height,1);
+        const width=Math.max(1,image.width*scale);
+        const height=Math.max(1,image.height*scale);
+        const page=out.addPage([width,height]);
+        page.drawImage(image,{x:0,y:0,width,height});
       }
     }
   }
@@ -248,13 +241,19 @@ async function buildMockFormPdf({request,items,outPath}) {
   page.drawRectangle({x:42,y:790,width:31,height:3,color:yellow});
   page.drawText('INDONESIA',{x:78,y:790,size:6.5,font:bold,color:grey});
 
-  page.drawText('EXPENSE REQUEST FORM',{x:182,y:793,size:17,font:bold,color:navy});
-  page.drawText('Operations Division',{x:245,y:778,size:8,font:normal,color:grey});
+  page.drawText('EXPENSE REQUEST FORM',{x:173,y:795,size:16.5,font:bold,color:navy});
+  page.drawText('Operations Division',{x:238,y:779,size:7.8,font:normal,color:grey});
 
-  page.drawText('Request Date',{x:410,y:804,size:7,font:bold,color:grey});
-  page.drawText(displayDate(request.request_date),{x:476,y:804,size:8,font:normal,color:navy});
-  page.drawText('Ref No',{x:410,y:789,size:7,font:bold,color:grey});
-  page.drawText(String(request.ref_no||''),{x:450,y:789,size:8,font:bold,color:navy});
+  const metaX=414;
+  const metaY=775;
+  const metaW=139;
+  const metaH=38;
+  page.drawRectangle({x:metaX,y:metaY,width:metaW,height:metaH,borderWidth:.55,borderColor:line,color:pale});
+  page.drawLine({start:{x:metaX,y:metaY+19},end:{x:metaX+metaW,y:metaY+19},thickness:.45,color:line});
+  page.drawText('Request Date',{x:metaX+7,y:metaY+26,size:6.3,font:bold,color:grey});
+  page.drawText(displayDate(request.request_date),{x:metaX+75,y:metaY+26,size:7.2,font:normal,color:navy});
+  page.drawText('Ref No',{x:metaX+7,y:metaY+7,size:6.3,font:bold,color:grey});
+  page.drawText(String(request.ref_no||''),{x:metaX+43,y:metaY+7,size:6.3,font:bold,color:navy});
 
   // Employee information
   page.drawRectangle({x:42,y:745,width:511,height:20,color:navy});
@@ -343,11 +342,9 @@ async function buildMockFormPdf({request,items,outPath}) {
     page.drawText(name.slice(0,28),{x:s.x+8,y:sigY+8,size:7,font:normal,color:navy});
   }
 
-  // Footer branding
-  page.drawRectangle({x:42,y:42,width:511,height:8,color:navy});
-  page.drawRectangle({x:42,y:42,width:112,height:8,color:yellow});
-  page.drawText('PT Metrotech Indonesia',{x:42,y:27,size:6.5,font:bold,color:navy});
-  page.drawText(`Revision ${request.revision}`,{x:493,y:27,size:6.5,font:normal,color:grey});
+  // Footer accent: blue on the left, small diagonal gap, yellow on the right.
+  page.drawSvgPath('M 0 0 L 397 0 L 405 8 L 0 8 Z',{x:42,y:42,color:navy});
+  page.drawSvgPath('M 8 0 L 96 0 L 96 8 L 0 8 Z',{x:457,y:42,color:yellow});
 
   await fs.writeFile(outPath,await doc.save());
   return outPath;
