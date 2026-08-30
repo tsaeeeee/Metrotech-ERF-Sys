@@ -79,6 +79,82 @@ function validateManagedRole(role){
   return next;
 }
 
+async function assertSingleActiveApproverTx(client,{excludeEmail=null}={}) {
+  const params=[];
+  let exclude='';
+  if(excludeEmail){
+    params.push(excludeEmail);
+    exclude=' and lower(email)<>lower($1)';
+  }
+  const {rows}=await client.query(
+    `select email,name
+     from employees
+     where role='APPROVER' and active=true${exclude}
+     order by name`,
+    params
+  );
+  if(rows.length)
+    throw Object.assign(new Error(`Only one active Approver is allowed. Current active Approver: ${rows[0].name}.`),{status:409});
+}
+
+async function chooseReviewerTx(client,{excludeEmail=null}={}) {
+  const params=[];
+  let exclude='';
+  if(excludeEmail){
+    params.push(excludeEmail);
+    exclude=' and lower(e.email)<>lower($1)';
+  }
+  const {rows}=await client.query(
+    `select e.email,e.name,e.role,e.signature_file,
+       count(r.id) filter (where r.status='PENDING_REVIEW')::int as pending_count
+     from employees e
+     left join requests r on lower(r.reviewer_email)=lower(e.email)
+     where e.role='REVIEWER' and e.active=true${exclude}
+     group by e.email,e.name,e.role,e.signature_file
+     order by pending_count asc, lower(e.name) asc, lower(e.email) asc
+     limit 1`,
+    params
+  );
+  return rows[0] || null;
+}
+
+async function getSingleApproverTx(client) {
+  const {rows}=await client.query(
+    `select email,name,role,signature_file
+     from employees
+     where role='APPROVER' and active=true
+     order by name`
+  );
+  if(rows.length!==1){
+    const message=rows.length===0
+      ? 'Exactly one active Approver is required before requests can be submitted.'
+      : 'Multiple active Approvers found. Keep only one active Approver.';
+    throw Object.assign(new Error(message),{status:409});
+  }
+  return rows[0];
+}
+
+async function reassignPendingReviewerTx(client,email) {
+  const replacement=await chooseReviewerTx(client,{excludeEmail:email});
+  const {rows:pending}=await client.query(
+    `select id from requests
+     where lower(reviewer_email)=lower($1) and status='PENDING_REVIEW'
+     for update`,
+    [email]
+  );
+  if(!pending.length) return {count:0,replacement:null};
+  if(!replacement)
+    throw Object.assign(new Error('Cannot remove this Reviewer while they still have pending reviews and no other active Reviewer is available.'),{status:409});
+
+  const {rowCount}=await client.query(
+    `update requests
+     set reviewer_email=$2,updated_at=now()
+     where lower(reviewer_email)=lower($1) and status='PENDING_REVIEW'`,
+    [email,replacement.email]
+  );
+  return {count:rowCount,replacement};
+}
+
 export async function createManagedEmployee(data) {
   const role=validateManagedRole(data.role);
   const required=['name','email','username','password','employeeId','department','location','division'];
@@ -87,8 +163,13 @@ export async function createManagedEmployee(data) {
       throw Object.assign(new Error(`${key} is required.`),{status:400});
   }
 
+  const client=await pool.connect();
   try{
-    const {rows}=await pool.query(
+    await client.query('begin');
+    await client.query("select pg_advisory_xact_lock(77123001)");
+    if(role==='APPROVER') await assertSingleActiveApproverTx(client);
+
+    const {rows}=await client.query(
       `insert into employees(
         email,name,employee_id,department,location,division,role,signature_file,active,username,password_hash
        ) values(
@@ -102,10 +183,14 @@ export async function createManagedEmployee(data) {
         role,String(data.username).trim(),String(data.password)
       ]
     );
+    await client.query('commit');
     return rows[0];
   }catch(e){
+    await client.query('rollback');
     if(e.code==='23505') throw Object.assign(new Error('Email or username already exists.'),{status:409});
     throw e;
+  }finally{
+    client.release();
   }
 }
 
@@ -117,8 +202,40 @@ export async function updateManagedEmployee(email,data) {
       throw Object.assign(new Error(`${key} is required.`),{status:400});
   }
 
+  const client=await pool.connect();
   try{
-    const {rows}=await pool.query(
+    await client.query('begin');
+    await client.query("select pg_advisory_xact_lock(77123001)");
+    const {rows:currentRows}=await client.query(
+      `select email,role,active from employees
+       where lower(email)=lower($1) and role<>'ADMIN'
+       for update`,
+      [email]
+    );
+    const current=currentRows[0];
+    if(!current) throw Object.assign(new Error('Managed user not found.'),{status:404});
+
+    const nextActive=data.active!==false;
+    const leavingReviewer=current.role==='REVIEWER' && (!nextActive || role!=='REVIEWER');
+    const leavingApprover=current.role==='APPROVER' && (!nextActive || role!=='APPROVER');
+
+    if(role==='APPROVER' && nextActive && current.role!=='APPROVER')
+      await assertSingleActiveApproverTx(client,{excludeEmail:email});
+
+    if(leavingApprover){
+      const {rows:pending}=await client.query(
+        `select count(*)::int as count
+         from requests
+         where lower(approver_email)=lower($1) and status='PENDING_APPROVAL'`,
+        [email]
+      );
+      if(Number(pending[0]?.count||0)>0)
+        throw Object.assign(new Error('Cannot remove or change this Approver while final approvals are still pending.'),{status:409});
+    }
+
+    if(leavingReviewer) await reassignPendingReviewerTx(client,email);
+
+    const {rows}=await client.query(
       `update employees
        set name=$2,
            employee_id=$3,
@@ -135,29 +252,68 @@ export async function updateManagedEmployee(email,data) {
       [
         email,String(data.name).trim(),String(data.employeeId).trim(),String(data.department).trim(),
         String(data.location).trim(),String(data.division).trim(),role,String(data.username).trim(),
-        data.active!==false,String(data.password||'')
+        nextActive,String(data.password||'')
       ]
     );
-    if(!rows[0]) throw Object.assign(new Error('Managed user not found.'),{status:404});
+    await client.query('commit');
     return rows[0];
   }catch(e){
+    await client.query('rollback');
     if(e.code==='23505') throw Object.assign(new Error('Username already exists.'),{status:409});
     throw e;
+  }finally{
+    client.release();
   }
 }
 
-
 export async function setManagedEmployeeActive(email,active) {
-  const {rows}=await pool.query(
-    `update employees
-     set active=$2
-     where lower(email)=lower($1) and role<>'ADMIN'
-     returning email,name,employee_id,department,location,division,role,active,username,
-       (coalesce(signature_file,'')<>'') as has_signature`,
-    [email,Boolean(active)]
-  );
-  if(!rows[0]) throw Object.assign(new Error('Managed user not found.'),{status:404});
-  return rows[0];
+  const client=await pool.connect();
+  try{
+    await client.query('begin');
+    await client.query("select pg_advisory_xact_lock(77123001)");
+    const {rows:currentRows}=await client.query(
+      `select email,role,active from employees
+       where lower(email)=lower($1) and role<>'ADMIN'
+       for update`,
+      [email]
+    );
+    const current=currentRows[0];
+    if(!current) throw Object.assign(new Error('Managed user not found.'),{status:404});
+
+    const nextActive=Boolean(active);
+    if(current.role==='APPROVER' && nextActive && !current.active)
+      await assertSingleActiveApproverTx(client,{excludeEmail:email});
+
+    if(current.role==='APPROVER' && !nextActive && current.active){
+      const {rows:pending}=await client.query(
+        `select count(*)::int as count
+         from requests
+         where lower(approver_email)=lower($1) and status='PENDING_APPROVAL'`,
+        [email]
+      );
+      if(Number(pending[0]?.count||0)>0)
+        throw Object.assign(new Error('Cannot remove this Approver while final approvals are still pending.'),{status:409});
+    }
+
+    if(current.role==='REVIEWER' && !nextActive && current.active)
+      await reassignPendingReviewerTx(client,email);
+
+    const {rows}=await client.query(
+      `update employees
+       set active=$2
+       where lower(email)=lower($1) and role<>'ADMIN'
+       returning email,name,employee_id,department,location,division,role,active,username,
+         (coalesce(signature_file,'')<>'') as has_signature`,
+      [email,nextActive]
+    );
+    await client.query('commit');
+    return rows[0];
+  }catch(e){
+    await client.query('rollback');
+    throw e;
+  }finally{
+    client.release();
+  }
 }
 
 
@@ -185,28 +341,16 @@ export async function listRequestsForEmployee(employee) {
   return rows;
 }
 
-async function getWorkflowActorTx(client, role) {
-  const preferredName = role==='REVIEWER'
-    ? String(process.env.REVIEWER_NAME || '').trim()
-    : String(process.env.APPROVER_NAME || '').trim();
-  const { rows } = await client.query(
-    `select email,name,role,signature_file
-     from employees
-     where role=$1 and active=true
-     order by case when $2<>'' and lower(name)=lower($2) then 0 else 1 end, name
-     limit 1`,
-    [role,preferredName]
-  );
-  return rows[0] || null;
-}
 
 export async function createExpenseRequest(employee, items) {
   const client = await pool.connect();
   try {
     await client.query('begin');
-    const reviewer = await getWorkflowActorTx(client,'REVIEWER');
-    const approver = await getWorkflowActorTx(client,'APPROVER');
-    if (!reviewer || !approver) throw new Error('Reviewer / Approver master data is incomplete.');
+    await client.query("select pg_advisory_xact_lock(77123002)");
+    const reviewer = await chooseReviewerTx(client);
+    if(!reviewer)
+      throw Object.assign(new Error('At least one active Reviewer is required before requests can be submitted.'),{status:409});
+    const approver = await getSingleApproverTx(client);
 
     const { rows:dateRows } = await client.query(
       "select (now() at time zone 'Asia/Jakarta')::date as request_date, " +
@@ -381,10 +525,26 @@ export async function reviseExpenseRequest(id, employee, items) {
     const oldStatus=request.status;
     const newRevision=Number(request.revision)+1;
     const total=items.reduce((s,x)=>s+Number(x.amount),0);
+
+    const {rows:reviewerRows}=await client.query(
+      `select email from employees
+       where lower(email)=lower($1) and role='REVIEWER' and active=true
+       limit 1`,
+      [request.reviewer_email]
+    );
+    let reviewerEmail=request.reviewer_email;
+    if(!reviewerRows[0]){
+      await client.query("select pg_advisory_xact_lock(77123002)");
+      const replacement=await chooseReviewerTx(client);
+      if(!replacement)
+        throw Object.assign(new Error('No active Reviewer is available for this revision.'),{status:409});
+      reviewerEmail=replacement.email;
+    }
+
     const {rows:updated}=await client.query(
       `update requests set revision=$2,total=$3,status='PENDING_REVIEW',
-       last_rejection_reason='',form_pdf_path=null,evidence_pdf_path=null,updated_at=now()
-       where id=$1 returning *`, [id,newRevision,total]
+       reviewer_email=$4,last_rejection_reason='',form_pdf_path=null,evidence_pdf_path=null,updated_at=now()
+       where id=$1 returning *`, [id,newRevision,total,reviewerEmail]
     );
     const next=updated[0];
     await insertItems(client,id,newRevision,items);
