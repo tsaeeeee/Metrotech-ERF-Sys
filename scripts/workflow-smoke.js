@@ -10,7 +10,7 @@ process.env.APPROVER_NAME ||= 'Ervan Mardianto';
 
 const {
   pool,getEmployee,createExpenseRequest,transitionRequest,
-  reviseExpenseRequest,recallExpenseRequest
+  reviseExpenseRequest,recallExpenseRequest,createManagedEmployee,setManagedEmployeeActive
 }=await import('../src/db.js');
 
 function assert(condition,message){
@@ -35,14 +35,16 @@ try{
     ) values
       ('requestor-test@metrotech.local','Workflow Requestor','TEST-001','Operations','Jakarta','Service Operations','REQUESTOR','',true,'workflow-requestor',crypt('test123',gen_salt('bf',10))),
       ('reviewer-test@metrotech.local','Dimas Jenar','TEST-002','Operations','Jakarta','Service Operations','REVIEWER','',true,'workflow-reviewer',crypt('test123',gen_salt('bf',10))),
+      ('reviewer2-test@metrotech.local','Reviewer Dua','TEST-004','Operations','Jakarta','Service Operations','REVIEWER','',true,'workflow-reviewer2',crypt('test123',gen_salt('bf',10))),
       ('approver-test@metrotech.local','Ervan Mardianto','TEST-003','Management','Jakarta','Management','APPROVER','',true,'workflow-approver',crypt('test123',gen_salt('bf',10)))
     on conflict(email) do nothing
   `);
 
   const requestor=await getEmployee('requestor-test@metrotech.local');
   const reviewer=await getEmployee('reviewer-test@metrotech.local');
+  const reviewer2=await getEmployee('reviewer2-test@metrotech.local');
   const approver=await getEmployee('approver-test@metrotech.local');
-  assert(requestor&&reviewer&&approver,'Workflow test actors were not seeded.');
+  assert(requestor&&reviewer&&reviewer2&&approver,'Workflow test actors were not seeded.');
 
   const first=await createExpenseRequest(requestor,items('Initial submit'));
   assert(first.status==='PENDING_REVIEW','Submit must enter PENDING_REVIEW.');
@@ -78,6 +80,42 @@ try{
   assert(resubmitted.status==='PENDING_REVIEW','Recalled request must return to PENDING_REVIEW on resubmit.');
   const recallReviewed=await transitionRequest(recalledRequest.id,reviewer,'REVIEW','APPROVE','');
   assert(recallReviewed.status==='PENDING_APPROVAL','Reviewer must approve a recalled/resubmitted request.');
+
+  // Reviewer routing: with two active reviewers, new pending work should spread by current load.
+  const routedA=await createExpenseRequest(requestor,items('Routing A'));
+  const routedB=await createExpenseRequest(requestor,items('Routing B'));
+  assert(
+    String(routedA.reviewer_email).toLowerCase()!==String(routedB.reviewer_email).toLowerCase(),
+    'Two equally available reviewers should receive separate pending requests.'
+  );
+
+  // Removing an assigned reviewer should reassign pending work to the other active reviewer.
+  const removedEmail=routedA.reviewer_email;
+  await setManagedEmployeeActive(removedEmail,false);
+  const {rows:reassignedRows}=await pool.query('select reviewer_email from requests where id=$1',[routedA.id]);
+  assert(
+    String(reassignedRows[0].reviewer_email).toLowerCase()!==String(removedEmail).toLowerCase(),
+    'Pending review must be reassigned when its reviewer is removed.'
+  );
+
+  // A second active Approver must be rejected.
+  let duplicateApproverBlocked=false;
+  try{
+    await createManagedEmployee({
+      name:'Second Approver',
+      email:'approver2-test@metrotech.local',
+      username:'workflow-approver2',
+      password:'test123',
+      employeeId:'TEST-005',
+      department:'Management',
+      location:'Jakarta',
+      division:'Management',
+      role:'APPROVER'
+    });
+  }catch(e){
+    duplicateApproverBlocked=e.status===409;
+  }
+  assert(duplicateApproverBlocked,'A second active Approver must be blocked.');
 
   console.log('WORKFLOW_SMOKE_OK');
 } finally {
