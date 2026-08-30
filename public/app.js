@@ -49,10 +49,17 @@ async function loadMe(){
     currentEmployee=employee;
     $('#loginCard').classList.add('hidden');
     $('#dashboard').classList.remove('hidden');
-    $('#userBadge').textContent=`${employee.name} · ${employee.role}`;
     $('#roleTitle').textContent=employee.role==='REQUESTOR'?'Requestor Dashboard':employee.role==='REVIEWER'?'Reviewer Dashboard':'Approver Dashboard';
     $('#queueTitle').textContent=employee.role==='REQUESTOR'?'My Requests':employee.role==='REVIEWER'?'Pending Review':'Pending Approval';
-    $('#identity').textContent=employee.email;
+
+    const initials=String(employee.name||employee.email||'U')
+      .split(/\s+/).filter(Boolean).slice(0,2).map(x=>x[0]).join('').toUpperCase();
+    $('#userAvatar').textContent=initials||'U';
+    $('#userMenuName').textContent=employee.name||employee.email;
+    $('#userMenuRole').textContent=employee.role;
+    $('#userMenuFullName').textContent=employee.name||employee.email;
+    $('#userMenuEmail').textContent=employee.email;
+    $('#userMenuWrap').classList.remove('hidden');
     $('#requestForm').classList.toggle('hidden',employee.role!=='REQUESTOR');
     const fields=[['Employee ID',employee.employee_id],['Department',employee.department],['Location',employee.location],['Division',employee.division]];
     $('#profile').innerHTML=fields.map(([a,b])=>`<div><label>${a}</label><strong>${esc(b)}</strong></div>`).join('');
@@ -63,7 +70,8 @@ async function loadMe(){
     clearMsg();
     $('#loginCard').classList.remove('hidden');
     $('#dashboard').classList.add('hidden');
-    $('#userBadge').textContent='Not signed in';
+    $('#userMenuWrap').classList.add('hidden');
+    closeUserMenu();
     setTimeout(()=>$('#loginUsername')?.focus(),0);
   }
 }
@@ -95,6 +103,20 @@ function renderRequests(requests){
     </tr>`;
   }).join('');
 }
+
+function toggleUserMenu(event){
+  event?.stopPropagation();
+  $('#userMenu').classList.toggle('hidden');
+}
+
+function closeUserMenu(){
+  $('#userMenu')?.classList.add('hidden');
+}
+
+document.addEventListener('click',e=>{
+  const wrap=$('#userMenuWrap');
+  if(wrap && !wrap.contains(e.target)) closeUserMenu();
+});
 
 function openProfileModal(){
   if(!currentEmployee) return;
@@ -332,8 +354,9 @@ async function openRequest(id){
         ${a.reason?`<p>${esc(a.reason)}</p>`:''}<small>${new Date(a.created_at).toLocaleString('id-ID')}</small></div>
       </div>`).join(''):'<div class="muted">No audit entries.</div>';
 
-    $('#formPdf').src=data.documents.form?`/api/requests/${id}/form?t=${Date.now()}`:'about:blank';
-    $('#evidencePdf').src=data.documents.evidence?`/api/requests/${id}/evidence?t=${Date.now()}`:'about:blank';
+    const pdfPreview='#toolbar=0&navpanes=0&scrollbar=0&view=FitH';
+    $('#formPdf').src=data.documents.form?`/api/requests/${id}/form?t=${Date.now()}${pdfPreview}`:'about:blank';
+    $('#evidencePdf').src=data.documents.evidence?`/api/requests/${id}/evidence?t=${Date.now()}${pdfPreview}`:'about:blank';
 
     const actionable=(currentEmployee.role==='REVIEWER'&&r.status==='PENDING_REVIEW') ||
       (currentEmployee.role==='APPROVER'&&r.status==='PENDING_APPROVAL');
@@ -384,7 +407,8 @@ async function logout(){
   renderPayments();
   $('#dashboard').classList.add('hidden');
   $('#loginCard').classList.remove('hidden');
-  $('#userBadge').textContent='Not signed in';
+  $('#userMenuWrap').classList.add('hidden');
+  closeUserMenu();
   $('#loginPassword').value='';
   setTimeout(()=>$('#loginUsername')?.focus(),0);
 }
