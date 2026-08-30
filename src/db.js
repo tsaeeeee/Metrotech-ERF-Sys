@@ -17,7 +17,7 @@ export async function pingDb() {
 
 export async function listActiveEmployees() {
   const { rows } = await pool.query(
-    `select email,name,employee_id,department,location,division,role,signature_file
+    `select email,name,employee_id,department,location,division,role,signature_file,username
      from employees where active=true order by
      case role when 'REQUESTOR' then 1 when 'REVIEWER' then 2 else 3 end, name`
   );
@@ -26,41 +26,126 @@ export async function listActiveEmployees() {
 
 export async function getEmployee(email) {
   const { rows } = await pool.query(
-    `select email,name,employee_id,department,location,division,role,signature_file
+    `select email,name,employee_id,department,location,division,role,signature_file,username
      from employees where lower(email)=lower($1) and active=true limit 1`,
     [email]
   );
   return rows[0] || null;
 }
 
-export async function updateEmployeeProfile(email,{employeeId,department,location,division,role,signatureFile}) {
-  const allowedRoles=new Set(['REQUESTOR','REVIEWER','APPROVER']);
-  const nextRole=String(role||'').toUpperCase();
-  if(!allowedRoles.has(nextRole)) throw Object.assign(new Error('Invalid role.'),{status:400});
+export async function authenticateLocalUser(username,password) {
+  const {rows}=await pool.query(
+    `select email,name,employee_id,department,location,division,role,signature_file,username
+     from employees
+     where active=true
+       and username is not null
+       and lower(username)=lower($1)
+       and password_hash is not null
+       and password_hash=crypt($2,password_hash)
+     limit 1`,
+    [String(username||'').trim(),String(password||'')]
+  );
+  return rows[0] || null;
+}
 
+export async function updateEmployeeSignature(email,signatureFile) {
+  if(!signatureFile) throw Object.assign(new Error('Choose a signature image first.'),{status:400});
   const {rows}=await pool.query(
     `update employees
-     set employee_id=$2,
-         department=$3,
-         location=$4,
-         division=$5,
-         role=$6,
-         signature_file=coalesce($7,signature_file)
+     set signature_file=$2
      where lower(email)=lower($1) and active=true
-     returning email,name,employee_id,department,location,division,role,signature_file`,
-    [
-      email,
-      String(employeeId||'').trim(),
-      String(department||'').trim(),
-      String(location||'').trim(),
-      String(division||'').trim(),
-      nextRole,
-      signatureFile||null
-    ]
+     returning email,name,employee_id,department,location,division,role,signature_file,username`,
+    [email,signatureFile]
   );
   if(!rows[0]) throw Object.assign(new Error('Employee not found.'),{status:404});
   return rows[0];
 }
+
+export async function listManagedEmployees() {
+  const {rows}=await pool.query(
+    `select email,name,employee_id,department,location,division,role,active,username,
+       (coalesce(signature_file,'')<>'') as has_signature
+     from employees
+     where role<>'ADMIN'
+     order by active desc,name`
+  );
+  return rows;
+}
+
+function validateManagedRole(role){
+  const next=String(role||'').trim().toUpperCase();
+  if(!['REQUESTOR','REVIEWER','APPROVER'].includes(next))
+    throw Object.assign(new Error('Role must be Requestor, Reviewer, or Approver.'),{status:400});
+  return next;
+}
+
+export async function createManagedEmployee(data) {
+  const role=validateManagedRole(data.role);
+  const required=['name','email','username','password','employeeId','department','location','division'];
+  for(const key of required){
+    if(!String(data[key]||'').trim())
+      throw Object.assign(new Error(`${key} is required.`),{status:400});
+  }
+
+  try{
+    const {rows}=await pool.query(
+      `insert into employees(
+        email,name,employee_id,department,location,division,role,signature_file,active,username,password_hash
+       ) values(
+        lower($1),$2,$3,$4,$5,$6,$7,'',true,$8,crypt($9,gen_salt('bf',10))
+       )
+       returning email,name,employee_id,department,location,division,role,active,username,
+         false as has_signature`,
+      [
+        String(data.email).trim(),String(data.name).trim(),String(data.employeeId).trim(),
+        String(data.department).trim(),String(data.location).trim(),String(data.division).trim(),
+        role,String(data.username).trim(),String(data.password)
+      ]
+    );
+    return rows[0];
+  }catch(e){
+    if(e.code==='23505') throw Object.assign(new Error('Email or username already exists.'),{status:409});
+    throw e;
+  }
+}
+
+export async function updateManagedEmployee(email,data) {
+  const role=validateManagedRole(data.role);
+  const required=['name','username','employeeId','department','location','division'];
+  for(const key of required){
+    if(!String(data[key]||'').trim())
+      throw Object.assign(new Error(`${key} is required.`),{status:400});
+  }
+
+  try{
+    const {rows}=await pool.query(
+      `update employees
+       set name=$2,
+           employee_id=$3,
+           department=$4,
+           location=$5,
+           division=$6,
+           role=$7,
+           username=$8,
+           active=$9,
+           password_hash=case when $10<>'' then crypt($10,gen_salt('bf',10)) else password_hash end
+       where lower(email)=lower($1) and role<>'ADMIN'
+       returning email,name,employee_id,department,location,division,role,active,username,
+         (coalesce(signature_file,'')<>'') as has_signature`,
+      [
+        email,String(data.name).trim(),String(data.employeeId).trim(),String(data.department).trim(),
+        String(data.location).trim(),String(data.division).trim(),role,String(data.username).trim(),
+        data.active!==false,String(data.password||'')
+      ]
+    );
+    if(!rows[0]) throw Object.assign(new Error('Managed user not found.'),{status:404});
+    return rows[0];
+  }catch(e){
+    if(e.code==='23505') throw Object.assign(new Error('Username already exists.'),{status:409});
+    throw e;
+  }
+}
+
 
 export async function listRequestsForEmployee(employee) {
   let q, params;
@@ -74,11 +159,13 @@ export async function listRequestsForEmployee(employee) {
          from requests where lower(reviewer_email)=lower($1) and status='PENDING_REVIEW'
          order by updated_at asc limit 100`;
     params=[employee.email];
-  } else {
+  } else if (employee.role === 'APPROVER') {
     q = `select id,ref_no,request_date,employee_name,total,status,revision,last_rejection_reason,updated_at
          from requests where lower(approver_email)=lower($1) and status='PENDING_APPROVAL'
          order by updated_at asc limit 100`;
     params=[employee.email];
+  } else {
+    return [];
   }
   const { rows } = await pool.query(q,params);
   return rows;
