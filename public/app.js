@@ -5,6 +5,8 @@ let payments=[];
 let editingIndex=-1;
 let revisionTarget=null;
 let currentDetailId=null;
+let adminUsers=[];
+let editingAdminEmail=null;
 
 function msg(text,type='ok'){
   $('#msg').innerHTML=`<div class="notice ${type}">${esc(text)}</div>`;
@@ -49,8 +51,6 @@ async function loadMe(){
     currentEmployee=employee;
     $('#loginCard').classList.add('hidden');
     $('#dashboard').classList.remove('hidden');
-    $('#roleTitle').textContent=employee.role==='REQUESTOR'?'Requestor Dashboard':employee.role==='REVIEWER'?'Reviewer Dashboard':'Approver Dashboard';
-    $('#queueTitle').textContent=employee.role==='REQUESTOR'?'My Requests':employee.role==='REVIEWER'?'Pending Review':'Pending Approval';
 
     const initials=String(employee.name||employee.email||'U')
       .split(/\s+/).filter(Boolean).slice(0,2).map(x=>x[0]).join('').toUpperCase();
@@ -60,8 +60,27 @@ async function loadMe(){
     $('#userMenuFullName').textContent=employee.name||employee.email;
     $('#userMenuEmail').textContent=employee.email;
     $('#userMenuWrap').classList.remove('hidden');
+
+    const isAdmin=employee.role==='ADMIN';
+    $('#workflowDashboard').classList.toggle('hidden',isAdmin);
+    $('#adminDashboard').classList.toggle('hidden',!isAdmin);
+    $('#userProfileMenuItem').classList.toggle('hidden',isAdmin);
+
+    if(isAdmin){
+      await loadAdminUsers();
+      return;
+    }
+
+    $('#roleTitle').textContent=employee.role==='REQUESTOR'?'Requestor Dashboard':employee.role==='REVIEWER'?'Reviewer Dashboard':'Approver Dashboard';
+    $('#queueTitle').textContent=employee.role==='REQUESTOR'?'My Requests':employee.role==='REVIEWER'?'Pending Review':'Pending Approval';
     $('#requestForm').classList.toggle('hidden',employee.role!=='REQUESTOR');
-    const fields=[['Employee ID',employee.employee_id],['Department',employee.department],['Location',employee.location],['Division',employee.division]];
+
+    const fields=[
+      ['Employee ID',employee.employee_id],
+      ['Department',employee.department],
+      ['Location',employee.location],
+      ['Division',employee.division]
+    ];
     $('#profile').innerHTML=fields.map(([a,b])=>`<div><label>${a}</label><strong>${esc(b)}</strong></div>`).join('');
     renderRequests(requests);
     if(employee.role==='REQUESTOR' && !$('#paymentDate').value) $('#paymentDate').value=new Date().toISOString().slice(0,10);
@@ -92,6 +111,9 @@ function renderRequests(requests){
     const recall=currentEmployee?.role==='REQUESTOR' && r.status==='PENDING_REVIEW'
       ? `<button class="btn tiny recall" onclick="recallRequest('${r.id}','${esc(r.ref_no)}')">Recall</button>`
       : '';
+    const savePdf=r.status==='APPROVED'
+      ? `<button class="btn tiny primary" onclick="downloadFinalPdf('${r.id}')">Save PDF</button>`
+      : '';
     return `<tr>
       <td><strong>${esc(r.ref_no)}</strong>${r.last_rejection_reason?`<div class="reason-mini">${esc(r.last_rejection_reason)}</div>`:''}</td>
       <td>${esc(r.employee_name)}</td>
@@ -99,7 +121,7 @@ function renderRequests(requests){
       <td class="money">${rupiah(r.total)}</td>
       <td class="status-col"><span class="status ${esc(r.status)}">${esc(r.status)}</span></td>
       <td class="rev-col">${r.revision}</td>
-      <td class="actions action-col"><button class="btn tiny ghost" onclick="openRequest('${r.id}')">Open</button> ${recall} ${revise}</td>
+      <td class="actions action-col"><button class="btn tiny ghost" onclick="openRequest('${r.id}')">Open</button> ${savePdf} ${recall} ${revise}</td>
     </tr>`;
   }).join('');
 }
@@ -119,13 +141,19 @@ document.addEventListener('click',e=>{
 });
 
 function openProfileModal(){
-  if(!currentEmployee) return;
-  $('#profileAccount').textContent=`${currentEmployee.name} · ${currentEmployee.email}`;
-  $('#profileEmployeeId').value=currentEmployee.employee_id||'';
-  $('#profileDepartment').value=currentEmployee.department||'';
-  $('#profileLocation').value=currentEmployee.location||'';
-  $('#profileDivision').value=currentEmployee.division||'';
-  $('#profileRole').value=currentEmployee.role||'REQUESTOR';
+  if(!currentEmployee || currentEmployee.role==='ADMIN') return;
+  const fields=[
+    ['Name',currentEmployee.name],
+    ['Email',currentEmployee.email],
+    ['Employee ID',currentEmployee.employee_id],
+    ['Department',currentEmployee.department],
+    ['Location',currentEmployee.location],
+    ['Division',currentEmployee.division],
+    ['Role',currentEmployee.role]
+  ];
+  $('#lockedProfileGrid').innerHTML=fields.map(([label,value])=>`
+    <div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>
+  `).join('');
   $('#profileSignature').value='';
   $('#profileModal').classList.remove('hidden');
   document.body.classList.add('modal-open');
@@ -133,8 +161,10 @@ function openProfileModal(){
 
 function closeProfileModal(){
   $('#profileModal').classList.add('hidden');
+  $('#adminUserModal').classList.add('hidden');
   $('#profileSignature').value='';
-  if($('#detailModal').classList.contains('hidden')) document.body.classList.remove('modal-open');
+  if($('#detailModal').classList.contains('hidden') && $('#adminUserModal').classList.contains('hidden'))
+    document.body.classList.remove('modal-open');
 }
 
 function profileBackdrop(e){
@@ -143,30 +173,146 @@ function profileBackdrop(e){
 
 async function saveProfile(event){
   event.preventDefault();
-  if(!currentEmployee) return;
+  if(!currentEmployee || currentEmployee.role==='ADMIN') return;
+  const sig=$('#profileSignature').files?.[0];
+  if(!sig) return msg('Choose a signature image first.','err');
+
   const btn=$('#saveProfileBtn');
   btn.disabled=true;
   btn.textContent='Saving…';
   try{
     const fd=new FormData();
-    fd.append('employeeId',$('#profileEmployeeId').value.trim());
-    fd.append('department',$('#profileDepartment').value.trim());
-    fd.append('location',$('#profileLocation').value.trim());
-    fd.append('division',$('#profileDivision').value.trim());
-    fd.append('role',$('#profileRole').value);
-    const sig=$('#profileSignature').files?.[0];
-    if(sig) fd.append('signature',sig,sig.name);
-
+    fd.append('signature',sig,sig.name);
     await api('/api/profile',{method:'PUT',body:fd});
     closeProfileModal();
-    msg('Profile updated successfully.','ok');
+    msg('Signature updated successfully.','ok');
     await loadMe();
   }catch(e){
     msg(e.message,'err');
   }finally{
     btn.disabled=false;
-    btn.textContent='Save Profile';
+    btn.textContent='Save Signature';
   }
+}
+
+async function loadAdminUsers(){
+  if(currentEmployee?.role!=='ADMIN') return;
+  try{
+    const data=await api('/api/admin/users');
+    adminUsers=data.users||[];
+    renderAdminUsers();
+  }catch(e){msg(e.message,'err')}
+}
+
+function renderAdminUsers(){
+  const empty=$('#adminUsersEmpty');
+  const table=$('#adminUsersTable');
+  if(!adminUsers.length){
+    empty.classList.remove('hidden');
+    table.classList.add('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+  table.classList.remove('hidden');
+  $('#adminUsersBody').innerHTML=adminUsers.map(u=>`
+    <tr>
+      <td><strong>${esc(u.name)}</strong><div class="admin-username">@${esc(u.username||'—')}</div></td>
+      <td>${esc(u.email)}</td>
+      <td>${esc(u.employee_id)}</td>
+      <td>${esc(u.department)}</td>
+      <td><span class="role-chip">${esc(u.role)}</span></td>
+      <td>${u.has_signature?'<span class="signature-state ready">Uploaded</span>':'<span class="signature-state">Not uploaded</span>'}</td>
+      <td>${u.active?'<span class="user-state active">Active</span>':'<span class="user-state">Inactive</span>'}</td>
+      <td class="actions action-col"><button class="btn tiny ghost" type="button" onclick="openAdminUserModal('${encodeURIComponent(u.email)}')">Edit</button></td>
+    </tr>
+  `).join('');
+}
+
+function openAdminUserModal(encodedEmail=''){
+  if(currentEmployee?.role!=='ADMIN') return;
+  editingAdminEmail=encodedEmail?decodeURIComponent(encodedEmail):null;
+  const user=editingAdminEmail?adminUsers.find(u=>u.email===editingAdminEmail):null;
+
+  $('#adminUserModalTitle').textContent=user?'Edit User':'Create User';
+  $('#adminUserModalHint').textContent=user?'Update user master data. Email is locked after creation.':'Create a new Expense Request System account.';
+  $('#saveAdminUserBtn').textContent=user?'Save Changes':'Create User';
+
+  $('#adminName').value=user?.name||'';
+  $('#adminEmail').value=user?.email||'';
+  $('#adminEmail').disabled=!!user;
+  $('#adminUsername').value=user?.username||'';
+  $('#adminPassword').value='';
+  $('#adminPassword').required=!user;
+  $('#adminPasswordLabel').textContent=user?'Reset Password':'Temporary Password';
+  $('#adminPasswordHint').textContent=user?'Leave empty to keep the current password.':'Required when creating a user.';
+  $('#adminEmployeeId').value=user?.employee_id||'';
+  $('#adminDepartment').value=user?.department||'';
+  $('#adminLocation').value=user?.location||'';
+  $('#adminDivision').value=user?.division||'';
+  $('#adminRole').value=user?.role||'REQUESTOR';
+  $('#adminActive').checked=user?.active!==false;
+  $('#adminActiveField').classList.toggle('hidden',!user);
+
+  $('#adminUserModal').classList.remove('hidden');
+  document.body.classList.add('modal-open');
+}
+
+function closeAdminUserModal(){
+  $('#adminUserModal').classList.add('hidden');
+  editingAdminEmail=null;
+  $('#adminUserForm').reset();
+  $('#adminEmail').disabled=false;
+  if($('#profileModal').classList.contains('hidden') && $('#detailModal').classList.contains('hidden'))
+    document.body.classList.remove('modal-open');
+}
+
+function adminUserBackdrop(e){
+  if(e.target.id==='adminUserModal') closeAdminUserModal();
+}
+
+async function saveAdminUser(event){
+  event.preventDefault();
+  if(currentEmployee?.role!=='ADMIN') return;
+
+  const body={
+    name:$('#adminName').value.trim(),
+    email:$('#adminEmail').value.trim(),
+    username:$('#adminUsername').value.trim(),
+    password:$('#adminPassword').value,
+    employeeId:$('#adminEmployeeId').value.trim(),
+    department:$('#adminDepartment').value.trim(),
+    location:$('#adminLocation').value.trim(),
+    division:$('#adminDivision').value.trim(),
+    role:$('#adminRole').value,
+    active:editingAdminEmail?$('#adminActive').checked:true
+  };
+
+  const btn=$('#saveAdminUserBtn');
+  btn.disabled=true;
+  btn.textContent=editingAdminEmail?'Saving…':'Creating…';
+  try{
+    if(editingAdminEmail){
+      await api(`/api/admin/users/${encodeURIComponent(editingAdminEmail)}`,{
+        method:'PUT',body:JSON.stringify(body)
+      });
+      msg('User updated successfully.','ok');
+    }else{
+      await api('/api/admin/users',{method:'POST',body:JSON.stringify(body)});
+      msg('User created successfully.','ok');
+    }
+    closeAdminUserModal();
+    await loadAdminUsers();
+  }catch(e){
+    msg(e.message,'err');
+  }finally{
+    btn.disabled=false;
+    btn.textContent=editingAdminEmail?'Save Changes':'Create User';
+  }
+}
+
+function downloadFinalPdf(id){
+  if(!id) return;
+  window.location.href=`/api/requests/${id}/form/download`;
 }
 
 function toggleCategoryMenu(event){
@@ -461,6 +607,7 @@ async function openRequest(id){
     const actionable=(currentEmployee.role==='REVIEWER'&&r.status==='PENDING_REVIEW') ||
       (currentEmployee.role==='APPROVER'&&r.status==='PENDING_APPROVAL');
     $('#decisionPanel').classList.toggle('hidden',!actionable);
+    $('#detailSavePdfBtn').classList.toggle('hidden',r.status!=='APPROVED');
     $('#decisionReason').value='';
     $('#approveBtn').disabled=!actionable;
     $('#rejectBtn').disabled=true;
@@ -505,6 +652,7 @@ async function logout(){
   await api('/api/logout',{method:'POST',body:'{}'});
   clearMsg();
   currentEmployee=null; payments=[]; editingIndex=-1; revisionTarget=null; currentDetailId=null;
+  adminUsers=[]; editingAdminEmail=null;
   $('#profileModal').classList.add('hidden');
   renderPayments();
   $('#dashboard').classList.add('hidden');
