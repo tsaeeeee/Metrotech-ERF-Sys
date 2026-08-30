@@ -90,3 +90,15 @@ CREATE TABLE IF NOT EXISTS email_log (
 CREATE UNIQUE INDEX IF NOT EXISTS employees_username_lower_uidx
   ON employees(lower(username))
   WHERE username IS NOT NULL;
+
+
+CREATE TABLE IF NOT EXISTS app_settings(
+  key text PRIMARY KEY,
+  value text NOT NULL DEFAULT '',
+  is_secret boolean NOT NULL DEFAULT false,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  updated_by text
+);
+
+CREATE INDEX IF NOT EXISTS app_settings_updated_at_idx
+  ON app_settings(updated_at);
