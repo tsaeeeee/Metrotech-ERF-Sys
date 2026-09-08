@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS requests (
   department text NOT NULL,
   location text NOT NULL,
   division text NOT NULL,
+  request_type text NOT NULL DEFAULT 'EXPENSE' CHECK (request_type IN ('EXPENSE','REIMBURSEMENT')),
   total numeric(18,2) NOT NULL,
   status text NOT NULL CHECK (status IN ('PENDING_REVIEW','RECALLED','REVIEW_REJECTED','PENDING_APPROVAL','APPROVAL_REJECTED','APPROVED')),
   revision integer NOT NULL DEFAULT 1,
