@@ -23,25 +23,44 @@ function rtInjectStyles(){
       margin:14px 0 18px;padding:14px 16px;border:1px solid #e2e8f0;
       border-radius:14px;background:#f8fafc;
     }
-    .request-type-copy{display:flex;flex-direction:column;gap:3px}
+    .request-type-copy{display:flex;flex-direction:column;gap:3px;min-width:0}
     .request-type-copy strong{font-size:14px;color:#0f2744}
     .request-type-copy small{color:#64748b;font-size:12px}
-    .request-type-control{display:flex;align-items:center;gap:10px;font-size:12px;font-weight:700;color:#64748b;white-space:nowrap}
-    .request-type-control .active{color:#0f2744}
-    .request-type-switch{position:relative;width:48px;height:26px;display:inline-block}
-    .request-type-switch input{opacity:0;width:0;height:0}
-    .request-type-slider{position:absolute;inset:0;cursor:pointer;background:#cbd5e1;border-radius:999px;transition:.18s ease}
-    .request-type-slider:before{content:'';position:absolute;width:20px;height:20px;left:3px;top:3px;background:#fff;border-radius:50%;box-shadow:0 1px 3px rgba(15,23,42,.28);transition:.18s ease}
-    .request-type-switch input:checked + .request-type-slider{background:#155da8}
-    .request-type-switch input:checked + .request-type-slider:before{transform:translateX(22px)}
-    .request-type-switch input:disabled + .request-type-slider{opacity:.55;cursor:not-allowed}
+    .request-type-control{
+      display:grid;grid-template-columns:1fr 1fr;align-items:center;
+      width:340px;max-width:100%;padding:4px;
+      border-radius:999px;background:#155da8;
+      box-shadow:inset 0 0 0 1px rgba(15,39,68,.08);
+    }
+    .request-type-option{
+      appearance:none;border:0;background:transparent;color:#fff;
+      min-height:40px;padding:8px 18px;border-radius:999px;
+      font:inherit;font-size:12px;font-weight:800;line-height:1.15;
+      white-space:nowrap;cursor:pointer;transition:background .18s ease,color .18s ease,box-shadow .18s ease,transform .12s ease;
+    }
+    .request-type-option:hover:not(:disabled){background:rgba(255,255,255,.11)}
+    .request-type-option:active:not(:disabled){transform:scale(.985)}
+    .request-type-option.active{
+      background:#fff;color:#155da8;
+      box-shadow:0 2px 7px rgba(15,39,68,.18);
+    }
+    .request-type-option:disabled{cursor:not-allowed;opacity:.66}
+    .request-type-control.is-locked{opacity:.76}
     .evidence-mode-note{display:block;margin-top:5px;font-size:11px;color:#64748b}
     @media(max-width:700px){
       .request-type-row{align-items:flex-start;flex-direction:column}
-      .request-type-control{width:100%;justify-content:flex-end}
+      .request-type-control{width:100%}
+      .request-type-option{min-height:38px;padding:8px 10px;font-size:11.5px}
     }
   `;
   document.head.appendChild(style);
+}
+
+function rtSetRequestType(type){
+  if(revisionTarget) return;
+  rtRequestType=rtNormalizeType(type);
+  rtApplyUi();
+  syncAddButton();
 }
 
 function rtEnsureControl(){
@@ -59,24 +78,17 @@ function rtEnsureControl(){
         <strong>Request Type</strong>
         <small id="requestTypeHint">Choose Expense Request or Reimbursement before adding payments.</small>
       </div>
-      <div class="request-type-control">
-        <span id="requestTypeExpenseLabel">Expense Request</span>
-        <label class="request-type-switch" title="Switch request type">
-          <input id="requestTypeToggle" type="checkbox" aria-label="Use Reimbursement">
-          <span class="request-type-slider"></span>
-        </label>
-        <span id="requestTypeReimbursementLabel">Reimbursement</span>
+      <div id="requestTypeControl" class="request-type-control" role="group" aria-label="Request Type">
+        <button id="requestTypeExpenseLabel" class="request-type-option" type="button" aria-pressed="true">Expense Request</button>
+        <button id="requestTypeReimbursementLabel" class="request-type-option" type="button" aria-pressed="false">Reimbursement</button>
       </div>`;
 
     const paymentForm=form.querySelector('.payment-form');
     if(paymentForm) form.insertBefore(row,paymentForm);
     else form.appendChild(row);
 
-    $('#requestTypeToggle').addEventListener('change',event=>{
-      rtRequestType=event.target.checked?'REIMBURSEMENT':'EXPENSE';
-      rtApplyUi();
-      syncAddButton();
-    });
+    $('#requestTypeExpenseLabel').addEventListener('click',()=>rtSetRequestType('EXPENSE'));
+    $('#requestTypeReimbursementLabel').addEventListener('click',()=>rtSetRequestType('REIMBURSEMENT'));
   }
 
   rtApplyUi();
@@ -84,14 +96,23 @@ function rtEnsureControl(){
 
 function rtApplyUi(){
   if(currentEmployee?.role!=='REQUESTOR') return;
-  const toggle=$('#requestTypeToggle');
-  if(toggle){
-    toggle.checked=rtIsReimbursement();
-    toggle.disabled=Boolean(revisionTarget);
-  }
 
-  $('#requestTypeExpenseLabel')?.classList.toggle('active',!rtIsReimbursement());
-  $('#requestTypeReimbursementLabel')?.classList.toggle('active',rtIsReimbursement());
+  const expenseButton=$('#requestTypeExpenseLabel');
+  const reimbursementButton=$('#requestTypeReimbursementLabel');
+  const control=$('#requestTypeControl');
+  const locked=Boolean(revisionTarget);
+
+  if(expenseButton){
+    expenseButton.classList.toggle('active',!rtIsReimbursement());
+    expenseButton.setAttribute('aria-pressed',String(!rtIsReimbursement()));
+    expenseButton.disabled=locked;
+  }
+  if(reimbursementButton){
+    reimbursementButton.classList.toggle('active',rtIsReimbursement());
+    reimbursementButton.setAttribute('aria-pressed',String(rtIsReimbursement()));
+    reimbursementButton.disabled=locked;
+  }
+  control?.classList.toggle('is-locked',locked);
 
   const hint=$('#requestTypeHint');
   if(hint){
