@@ -180,7 +180,15 @@ function canAccess(employee,request){
   return false;
 }
 
-function parseItemsAndFiles(req){
+function normalizeRequestType(value){
+  const type=String(value||'EXPENSE').trim().toUpperCase();
+  if(!['EXPENSE','REIMBURSEMENT'].includes(type))
+    throw Object.assign(new Error('Request type must be EXPENSE or REIMBURSEMENT.'),{status:400});
+  return type;
+}
+
+function parseItemsAndFiles(req,requestType='EXPENSE'){
+  const evidenceRequired=normalizeRequestType(requestType)==='REIMBURSEMENT';
   let rawItems;
   try { rawItems=JSON.parse(String(req.body.items||'[]')); }
   catch { throw Object.assign(new Error('Invalid payment data.'),{status:400}); }
@@ -202,7 +210,8 @@ function parseItemsAndFiles(req){
     const itemFiles=files.filter(f=>f.fieldname===`evidence_${i}`);
     if(!category||!purpose||!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate)||!Number.isFinite(amount)||amount<=0)
       throw Object.assign(new Error(`Payment #${i+1} is incomplete.`),{status:400});
-    if(!itemFiles.length) throw Object.assign(new Error(`Payment #${i+1} requires evidence.`),{status:400});
+    if(evidenceRequired&&!itemFiles.length)
+      throw Object.assign(new Error(`Payment #${i+1} requires evidence for reimbursement.`),{status:400});
     return {category,purpose,paymentDate,amount,evidenceNames:itemFiles.map(f=>f.originalname)};
   });
   return {items,files};
@@ -258,6 +267,8 @@ async function loadExistingEvidenceFiles(requestId,revision,lineNo,targetIndex,e
 }
 
 async function parseRevisionItemsAndFiles(req,detail){
+  const requestType=normalizeRequestType(detail.request?.request_type||'EXPENSE');
+  const evidenceRequired=requestType==='REIMBURSEMENT';
   let rawItems;
   try { rawItems=JSON.parse(String(req.body.items||'[]')); }
   catch { throw Object.assign(new Error('Invalid payment data.'),{status:400}); }
@@ -292,32 +303,34 @@ async function parseRevisionItemsAndFiles(req,detail){
     let itemFiles=uploaded.filter(f=>f.fieldname===`evidence_${i}`);
     let evidenceNames=itemFiles.map(f=>f.originalname);
 
-    // No new upload means "keep the evidence from this payment's current revision".
+    // No new upload means keep this payment's evidence from the current revision when available.
     if(!itemFiles.length){
       const sourceLineNo=Number(x.sourceLineNo);
       const sourceItem=Number.isInteger(sourceLineNo)&&sourceLineNo>0
         ? currentItems.get(sourceLineNo)
         : null;
 
-      if(!sourceItem)
-        throw Object.assign(new Error(`Payment #${i+1} requires evidence.`),{status:400});
+      if(sourceItem){
+        itemFiles=await loadExistingEvidenceFiles(
+          detail.request.id,
+          detail.request.revision,
+          sourceLineNo,
+          i,
+          sourceItem.evidence_names||[]
+        );
 
-      itemFiles=await loadExistingEvidenceFiles(
-        detail.request.id,
-        detail.request.revision,
-        sourceLineNo,
-        i,
-        sourceItem.evidence_names||[]
-      );
-
-      if(!itemFiles.length)
-        throw Object.assign(new Error(
-          `Existing evidence for Payment #${i+1} is unavailable. Please attach evidence again.`
-        ),{status:400});
-
-      evidenceNames=(sourceItem.evidence_names||[]).length
-        ? sourceItem.evidence_names
-        : itemFiles.map(f=>f.originalname);
+        if(itemFiles.length){
+          evidenceNames=(sourceItem.evidence_names||[]).length
+            ? sourceItem.evidence_names
+            : itemFiles.map(f=>f.originalname);
+        }else if(evidenceRequired){
+          throw Object.assign(new Error(
+            `Existing evidence for Payment #${i+1} is unavailable. Please attach evidence again.`
+          ),{status:400});
+        }
+      }else if(evidenceRequired){
+        throw Object.assign(new Error(`Payment #${i+1} requires evidence for reimbursement.`),{status:400});
+      }
     }
 
     files.push(...itemFiles);
@@ -335,9 +348,14 @@ async function generateSubmissionDocs(requestId,files){
   const detail=await getRequestDetail(requestId);
   if(!detail) throw new Error('Request disappeared after creation.');
   const dir=path.join(DATA_DIR,String(requestId),`r${detail.request.revision}`);
-  const evidencePath=path.join(dir,'evidence.pdf');
   const formPath=path.join(dir,`form-${detail.request.status.toLowerCase()}.pdf`);
-  await buildEvidencePdf({request:detail.request,items:detail.items,files,outPath:evidencePath});
+  let evidencePath=null;
+
+  if(files.length){
+    evidencePath=path.join(dir,'evidence.pdf');
+    await buildEvidencePdf({request:detail.request,items:detail.items,files,outPath:evidencePath});
+  }
+
   await buildFormPdf({request:detail.request,items:detail.items,outPath:formPath});
   await setDocumentPaths(requestId,formPath,evidencePath);
   return {detail:await getRequestDetail(requestId),formPath,evidencePath};
@@ -460,10 +478,18 @@ app.post('/api/admin/app-settings/test-smtp',requireUser,requireAdmin,async(req,
 
 app.post('/api/requests',requireUser,upload.any(),async(req,res,next)=>{
   try{
-    if(req.employee.role!=='REQUESTOR') return res.status(403).json({error:'Only Requestor can create an expense request.'});
-    const {items,files}=parseItemsAndFiles(req);
+    if(req.employee.role!=='REQUESTOR') return res.status(403).json({error:'Only Requestor can create a request.'});
+    const requestType=normalizeRequestType(req.body.requestType||'EXPENSE');
+    const {items,files}=parseItemsAndFiles(req,requestType);
     const runtimeSettings=await getRuntimeAppSettings();
-    const request=await createExpenseRequest(req.employee,items,runtimeSettings.timezone);
+    let request=await createExpenseRequest(req.employee,items,runtimeSettings.timezone);
+
+    const {rows:typedRows}=await pool.query(
+      `update requests set request_type=$2,updated_at=now() where id=$1 returning *`,
+      [request.id,requestType]
+    );
+    request=typedRows[0]||request;
+
     await persistOriginals(request.id,1,files);
     const {detail}=await generateSubmissionDocs(request.id,files);
     await sendWorkflowMail({
@@ -471,7 +497,10 @@ app.post('/api/requests',requireUser,upload.any(),async(req,res,next)=>{
       subject:`[ERF] ${detail.request.ref_no} pending review`,
       text:`${detail.request.employee_name} submitted ${detail.request.ref_no} for review.`
     });
-    res.status(201).json({ok:true,requestId:request.id,refNo:request.ref_no,status:'PENDING_REVIEW',revision:1});
+    res.status(201).json({
+      ok:true,requestId:request.id,refNo:request.ref_no,status:'PENDING_REVIEW',revision:1,
+      requestType:detail.request.request_type
+    });
   }catch(e){next(e)}
 });
 
@@ -508,7 +537,10 @@ app.post('/api/requests/:id/revise',requireUser,upload.any(),async(req,res,next)
       subject:`[ERF] ${detail.request.ref_no} revised and pending review`,
       text:`${detail.request.employee_name} submitted revision ${detail.request.revision} of ${detail.request.ref_no}.`
     });
-    res.json({ok:true,requestId:request.id,refNo:request.ref_no,status:'PENDING_REVIEW',revision:request.revision});
+    res.json({
+      ok:true,requestId:request.id,refNo:request.ref_no,status:'PENDING_REVIEW',revision:request.revision,
+      requestType:detail.request.request_type
+    });
   }catch(e){next(e)}
 });
 
@@ -586,6 +618,17 @@ app.post('/api/requests/:id/approve',requireUser,async(req,res,next)=>{
       attachments
     });
     res.json({ok:true,status:detail.request.status});
+  }catch(e){next(e)}
+});
+
+// Keep the base UI untouched and append the request-type extension at runtime.
+app.get('/app.js',async(req,res,next)=>{
+  try{
+    const [base,extension]=await Promise.all([
+      fs.readFile(path.join(__dirname,'../public/app.js'),'utf8'),
+      fs.readFile(path.join(__dirname,'../public/request-type.js'),'utf8')
+    ]);
+    res.type('application/javascript').send(`${base}\n\n${extension}`);
   }catch(e){next(e)}
 });
 
