@@ -187,6 +187,12 @@ function normalizeRequestType(value){
   return type;
 }
 
+function requestCode(request){
+  return String(request?.request_type||'').toUpperCase()==='REIMBURSEMENT' || String(request?.ref_no||'').startsWith('RRF-')
+    ? 'RRF'
+    : 'ERF';
+}
+
 function parseItemsAndFiles(req,requestType='EXPENSE'){
   const evidenceRequired=normalizeRequestType(requestType)==='REIMBURSEMENT';
   let rawItems;
@@ -482,19 +488,13 @@ app.post('/api/requests',requireUser,upload.any(),async(req,res,next)=>{
     const requestType=normalizeRequestType(req.body.requestType||'EXPENSE');
     const {items,files}=parseItemsAndFiles(req,requestType);
     const runtimeSettings=await getRuntimeAppSettings();
-    let request=await createExpenseRequest(req.employee,items,runtimeSettings.timezone);
-
-    const {rows:typedRows}=await pool.query(
-      `update requests set request_type=$2,updated_at=now() where id=$1 returning *`,
-      [request.id,requestType]
-    );
-    request=typedRows[0]||request;
+    const request=await createExpenseRequest(req.employee,items,runtimeSettings.timezone,requestType);
 
     await persistOriginals(request.id,1,files);
     const {detail}=await generateSubmissionDocs(request.id,files);
     await sendWorkflowMail({
       event:'SUBMITTED',request:detail.request,to:detail.request.reviewer_email,
-      subject:`[ERF] ${detail.request.ref_no} pending review`,
+      subject:`[${requestCode(detail.request)}] ${detail.request.ref_no} pending review`,
       text:`${detail.request.employee_name} submitted ${detail.request.ref_no} for review.`
     });
     res.status(201).json({
@@ -513,7 +513,7 @@ app.post('/api/requests/:id/recall',requireUser,async(req,res,next)=>{
       event:'RECALLED',
       request:detail.request,
       to:detail.request.reviewer_email,
-      subject:`[ERF] ${detail.request.ref_no} recalled by requestor`,
+      subject:`[${requestCode(detail.request)}] ${detail.request.ref_no} recalled by requestor`,
       text:`${detail.request.ref_no} was recalled by ${req.employee.name} and no longer requires review.`
     });
     res.json({ok:true,status:detail.request.status,refNo:detail.request.ref_no});
@@ -534,7 +534,7 @@ app.post('/api/requests/:id/revise',requireUser,upload.any(),async(req,res,next)
     const {detail}=await generateSubmissionDocs(request.id,files);
     await sendWorkflowMail({
       event:'REVISED',request:detail.request,to:detail.request.reviewer_email,
-      subject:`[ERF] ${detail.request.ref_no} revised and pending review`,
+      subject:`[${requestCode(detail.request)}] ${detail.request.ref_no} revised and pending review`,
       text:`${detail.request.employee_name} submitted revision ${detail.request.revision} of ${detail.request.ref_no}.`
     });
     res.json({
@@ -589,10 +589,11 @@ app.post('/api/requests/:id/review',requireUser,async(req,res,next)=>{
     const request=await transitionRequest(req.params.id,req.employee,'REVIEW',req.body.decision,req.body.reason||'');
     const detail=await regenerateForm(request.id);
     const approved=detail.request.status==='PENDING_APPROVAL';
+    const code=requestCode(detail.request);
     await sendWorkflowMail({
       event:approved?'REVIEW_APPROVED':'REVIEW_REJECTED',request:detail.request,
       to:approved?detail.request.approver_email:detail.request.requester_email,
-      subject:approved?`[ERF] ${detail.request.ref_no} pending final approval`:`[ERF] ${detail.request.ref_no} rejected by reviewer`,
+      subject:approved?`[${code}] ${detail.request.ref_no} pending final approval`:`[${code}] ${detail.request.ref_no} rejected by reviewer`,
       text:approved?`${detail.request.ref_no} was reviewed by ${req.employee.name} and is ready for final approval.`
         :`${detail.request.ref_no} was rejected by ${req.employee.name}. Reason: ${req.body.reason}`
     });
@@ -605,6 +606,7 @@ app.post('/api/requests/:id/approve',requireUser,async(req,res,next)=>{
     const request=await transitionRequest(req.params.id,req.employee,'APPROVAL',req.body.decision,req.body.reason||'');
     const detail=await regenerateForm(request.id);
     const approved=detail.request.status==='APPROVED';
+    const code=requestCode(detail.request);
     const attachments=approved?[
       {filename:`${detail.request.ref_no}.pdf`,path:detail.request.form_pdf_path}
     ]:[];
@@ -612,7 +614,7 @@ app.post('/api/requests/:id/approve',requireUser,async(req,res,next)=>{
       event:approved?'FINAL_APPROVED':'APPROVAL_REJECTED',request:detail.request,
       to:detail.request.requester_email,
       cc:approved?[detail.request.reviewer_email,(await getRuntimeAppSettings()).finalApprovedCc]:detail.request.reviewer_email,
-      subject:approved?`[ERF] ${detail.request.ref_no} approved`:`[ERF] ${detail.request.ref_no} rejected by approver`,
+      subject:approved?`[${code}] ${detail.request.ref_no} approved`:`[${code}] ${detail.request.ref_no} rejected by approver`,
       text:approved?`${detail.request.ref_no} has been approved by ${req.employee.name}.`
         :`${detail.request.ref_no} was rejected by ${req.employee.name}. Reason: ${req.body.reason}`,
       attachments
