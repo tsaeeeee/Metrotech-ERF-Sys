@@ -71,8 +71,10 @@ CREATE TABLE IF NOT EXISTS workflow_actions (
 CREATE INDEX IF NOT EXISTS workflow_actions_request_idx ON workflow_actions(request_id, created_at);
 
 CREATE TABLE IF NOT EXISTS daily_counters (
-  counter_date date PRIMARY KEY,
-  last_sequence integer NOT NULL DEFAULT 0
+  counter_date date NOT NULL,
+  request_type text NOT NULL DEFAULT 'EXPENSE' CHECK (request_type IN ('EXPENSE','REIMBURSEMENT')),
+  last_sequence integer NOT NULL DEFAULT 0,
+  PRIMARY KEY(counter_date, request_type)
 );
 
 CREATE TABLE IF NOT EXISTS email_log (
