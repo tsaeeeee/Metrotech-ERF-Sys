@@ -41,6 +41,12 @@ function displayDate(v){
   return `${m[3]}-${mons[Number(m[2])-1]}-${m[1].slice(-2)}`;
 }
 
+function requestFormTitle(request){
+  return String(request?.request_type||'EXPENSE').toUpperCase()==='REIMBURSEMENT'
+    ? 'REIMBURSEMENT FORM'
+    : 'EXPENSE REQUEST FORM';
+}
+
 async function ensureParent(filePath){ await fs.mkdir(path.dirname(filePath),{recursive:true}); }
 
 function rightAlignedX(font,text,size,rightX){
@@ -139,6 +145,34 @@ function sheetA1(title,cell){
   return `'${String(title).replaceAll("'","''")}'!${cell}`;
 }
 
+function sheetColumn(index){
+  let n=Number(index)+1;
+  let out='';
+  while(n>0){
+    const rem=(n-1)%26;
+    out=String.fromCharCode(65+rem)+out;
+    n=Math.floor((n-1)/26);
+  }
+  return out;
+}
+
+async function findTemplateTitleCell(sheets,spreadsheetId,title){
+  try{
+    const result=await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range:sheetA1(title,'A1:Z15')
+    });
+    const rows=result.data.values||[];
+    for(let r=0;r<rows.length;r++){
+      for(let c=0;c<(rows[r]||[]).length;c++){
+        if(String(rows[r][c]||'').trim().toUpperCase()==='EXPENSE REQUEST FORM')
+          return `${sheetColumn(c)}${r+1}`;
+      }
+    }
+  }catch{}
+  return null;
+}
+
 async function buildGoogleSheetFormPdf({request,items,outPath}){
   const templateId=process.env.TEMPLATE_SPREADSHEET_ID;
   if(!templateId) throw new Error('TEMPLATE_SPREADSHEET_ID is not configured.');
@@ -196,6 +230,12 @@ async function buildGoogleSheetFormPdf({request,items,outPath}){
       {range:sheetA1(title,'D13'),values:[[request.division]]},
       {range:sheetA1(title,'G32'),values:[[Number(request.total)]]}
     ];
+
+    const dynamicTitle=requestFormTitle(request);
+    if(dynamicTitle!=='EXPENSE REQUEST FORM'){
+      const titleCell=await findTemplateTitleCell(sheets,tempId,title);
+      if(titleCell) data.push({range:sheetA1(title,titleCell),values:[[dynamicTitle]]});
+    }
 
     items.slice(0,16).forEach((it,i)=>{
       const row=16+i;
@@ -264,7 +304,8 @@ async function buildMockFormPdf({request,items,outPath}) {
     page.drawImage(brandLogo,{x:42,y:786,width:logoW,height:logoH});
   }
 
-  page.drawText('EXPENSE REQUEST FORM',{x:173,y:795,size:16.5,font:bold,color:navy});
+  const formTitle=requestFormTitle(request);
+  page.drawText(formTitle,{x:173,y:795,size:formTitle==='REIMBURSEMENT FORM'?15.5:16.5,font:bold,color:navy});
   page.drawText('Operations Division',{x:238,y:779,size:7.8,font:normal,color:grey});
 
   const metaX=414;
