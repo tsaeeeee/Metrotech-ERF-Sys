@@ -399,12 +399,13 @@ export async function createExpenseRequest(employee, items, timezone='Asia/Jakar
     const requestDate = dateRows[0].request_date;
     const compact = dateRows[0].compact_date;
     const { rows:counterRows } = await client.query(
-      `insert into daily_counters(counter_date,last_sequence) values($1,1)
-       on conflict(counter_date) do update set last_sequence=daily_counters.last_sequence+1
-       returning last_sequence`, [requestDate]
+      `insert into daily_counters(counter_date,request_type,last_sequence) values($1,$2,1)
+       on conflict(counter_date,request_type) do update set last_sequence=daily_counters.last_sequence+1
+       returning last_sequence`, [requestDate,normalizedType]
     );
     const seq = Number(counterRows[0].last_sequence);
-    const refNo = `ERF-${compact.slice(0,4)}-${compact.slice(4)}-${String(seq).padStart(4,'0')}`;
+    const prefix = normalizedType==='REIMBURSEMENT' ? 'RRF' : 'ERF';
+    const refNo = `${prefix}-${compact.slice(0,4)}-${compact.slice(4)}-${String(seq).padStart(4,'0')}`;
     const total = items.reduce((s,x)=>s+Number(x.amount),0);
 
     const { rows } = await client.query(
