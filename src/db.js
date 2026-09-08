@@ -355,17 +355,17 @@ export async function setManagedEmployeeActive(email,active) {
 export async function listRequestsForEmployee(employee) {
   let q, params;
   if (employee.role === 'REQUESTOR') {
-    q = `select id,ref_no,request_date,employee_name,total,status,revision,last_rejection_reason,updated_at
+    q = `select id,ref_no,request_date,employee_name,request_type,total,status,revision,last_rejection_reason,updated_at
          from requests where lower(requester_email)=lower($1)
          order by updated_at desc limit 50`;
     params=[employee.email];
   } else if (employee.role === 'REVIEWER') {
-    q = `select id,ref_no,request_date,employee_name,total,status,revision,last_rejection_reason,updated_at
+    q = `select id,ref_no,request_date,employee_name,request_type,total,status,revision,last_rejection_reason,updated_at
          from requests where lower(reviewer_email)=lower($1) and status='PENDING_REVIEW'
          order by updated_at asc limit 100`;
     params=[employee.email];
   } else if (employee.role === 'APPROVER') {
-    q = `select id,ref_no,request_date,employee_name,total,status,revision,last_rejection_reason,updated_at
+    q = `select id,ref_no,request_date,employee_name,request_type,total,status,revision,last_rejection_reason,updated_at
          from requests where lower(approver_email)=lower($1) and status='PENDING_APPROVAL'
          order by updated_at asc limit 100`;
     params=[employee.email];
@@ -377,7 +377,11 @@ export async function listRequestsForEmployee(employee) {
 }
 
 
-export async function createExpenseRequest(employee, items, timezone='Asia/Jakarta') {
+export async function createExpenseRequest(employee, items, timezone='Asia/Jakarta', requestType='EXPENSE') {
+  const normalizedType=String(requestType||'EXPENSE').trim().toUpperCase();
+  if(!['EXPENSE','REIMBURSEMENT'].includes(normalizedType))
+    throw Object.assign(new Error('Request type must be EXPENSE or REIMBURSEMENT.'),{status:400});
+
   const client = await pool.connect();
   try {
     await client.query('begin');
@@ -406,11 +410,11 @@ export async function createExpenseRequest(employee, items, timezone='Asia/Jakar
     const { rows } = await client.query(
       `insert into requests(
         ref_no,request_date,requester_email,employee_name,employee_id,department,location,division,
-        total,status,revision,reviewer_email,approver_email
-      ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,'PENDING_REVIEW',1,$10,$11)
+        request_type,total,status,revision,reviewer_email,approver_email
+      ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'PENDING_REVIEW',1,$11,$12)
       returning *`,
       [refNo,requestDate,employee.email,employee.name,employee.employee_id,employee.department,
-       employee.location,employee.division,total,reviewer.email,approver.email]
+       employee.location,employee.division,normalizedType,total,reviewer.email,approver.email]
     );
     const request=rows[0];
     await insertItems(client, request.id, 1, items);
