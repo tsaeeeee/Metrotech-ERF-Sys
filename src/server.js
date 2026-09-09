@@ -14,6 +14,7 @@ import {
   getRequestDetail,setDocumentPaths,transitionRequest,recallExpenseRequest,reviseExpenseRequest
 } from './db.js';
 import { buildEvidencePdf,buildFormPdf } from './documents.js';
+import { buildRequestPacket } from './request-packet.js';
 import { sendWorkflowMail,testSmtp } from './mailer.js';
 import { configureAuth,googleAuthReady,passport } from './auth.js';
 import {
@@ -309,7 +310,6 @@ async function parseRevisionItemsAndFiles(req,detail){
     let itemFiles=uploaded.filter(f=>f.fieldname===`evidence_${i}`);
     let evidenceNames=itemFiles.map(f=>f.originalname);
 
-    // No new upload means keep this payment's evidence from the current revision when available.
     if(!itemFiles.length){
       const sourceLineNo=Number(x.sourceLineNo);
       const sourceItem=Number.isInteger(sourceLineNo)&&sourceLineNo>0
@@ -350,11 +350,26 @@ async function parseRevisionItemsAndFiles(req,detail){
   return {items,files};
 }
 
+async function buildPacketForDetail(detail,{evidencePath=detail.request.evidence_pdf_path||null}={}){
+  const dir=path.join(DATA_DIR,String(detail.request.id),`r${detail.request.revision}`);
+  await fs.mkdir(dir,{recursive:true});
+  const formSourcePath=path.join(dir,'.form-source.tmp.pdf');
+  const packetPath=path.join(dir,'request-packet.pdf');
+
+  try{
+    await buildFormPdf({request:detail.request,items:detail.items,outPath:formSourcePath});
+    await buildRequestPacket({formPath:formSourcePath,evidencePath,outPath:packetPath});
+  }finally{
+    await fs.rm(formSourcePath,{force:true}).catch(()=>{});
+  }
+
+  return packetPath;
+}
+
 async function generateSubmissionDocs(requestId,files){
   const detail=await getRequestDetail(requestId);
   if(!detail) throw new Error('Request disappeared after creation.');
   const dir=path.join(DATA_DIR,String(requestId),`r${detail.request.revision}`);
-  const formPath=path.join(dir,`form-${detail.request.status.toLowerCase()}.pdf`);
   let evidencePath=null;
 
   if(files.length){
@@ -362,18 +377,43 @@ async function generateSubmissionDocs(requestId,files){
     await buildEvidencePdf({request:detail.request,items:detail.items,files,outPath:evidencePath});
   }
 
-  await buildFormPdf({request:detail.request,items:detail.items,outPath:formPath});
-  await setDocumentPaths(requestId,formPath,evidencePath);
-  return {detail:await getRequestDetail(requestId),formPath,evidencePath};
+  const packetPath=await buildPacketForDetail(detail,{evidencePath});
+  await setDocumentPaths(requestId,packetPath,evidencePath);
+  return {detail:await getRequestDetail(requestId),formPath:packetPath,evidencePath};
 }
 
 async function regenerateForm(requestId){
   const detail=await getRequestDetail(requestId);
-  const dir=path.join(DATA_DIR,String(requestId),`r${detail.request.revision}`);
-  const formPath=path.join(dir,`form-${detail.request.status.toLowerCase()}.pdf`);
-  await buildFormPdf({request:detail.request,items:detail.items,outPath:formPath});
-  await setDocumentPaths(requestId,formPath,null);
+  if(!detail) throw new Error('Request not found.');
+  const packetPath=await buildPacketForDetail(detail);
+  await setDocumentPaths(requestId,packetPath,null);
   return await getRequestDetail(requestId);
+}
+
+async function cleanupApprovedRequestFiles(detail){
+  const request=detail.request;
+  const root=path.join(DATA_DIR,String(request.id));
+  const keepRevision=`r${request.revision}`;
+  const packetPath=request.form_pdf_path;
+  const packetName=path.basename(String(packetPath||'request-packet.pdf'));
+
+  let rootEntries=[];
+  try{rootEntries=await fs.readdir(root,{withFileTypes:true})}catch{return}
+
+  for(const entry of rootEntries){
+    if(entry.name===keepRevision) continue;
+    await fs.rm(path.join(root,entry.name),{recursive:true,force:true});
+  }
+
+  const currentDir=path.join(root,keepRevision);
+  let currentEntries=[];
+  try{currentEntries=await fs.readdir(currentDir,{withFileTypes:true})}catch{}
+  for(const entry of currentEntries){
+    if(entry.name===packetName) continue;
+    await fs.rm(path.join(currentDir,entry.name),{recursive:true,force:true});
+  }
+
+  await setDocumentPaths(request.id,packetPath,'');
 }
 
 app.get('/api/me',requireUser,async(req,res)=>{
@@ -550,7 +590,12 @@ app.get('/api/requests/:id',requireUser,async(req,res,next)=>{
     if(!detail) return res.status(404).json({error:'Request not found'});
     if(!canAccess(req.employee,detail.request)) return res.status(403).json({error:'Access denied'});
     const {form_pdf_path,evidence_pdf_path,...safeRequest}=detail.request;
-    res.json({request:safeRequest,items:detail.items,actions:detail.actions,documents:{form:!!form_pdf_path,evidence:!!evidence_pdf_path}});
+    res.json({
+      request:safeRequest,
+      items:detail.items,
+      actions:detail.actions,
+      documents:{packet:!!form_pdf_path,form:!!form_pdf_path,evidence:!!evidence_pdf_path}
+    });
   }catch(e){next(e)}
 });
 
@@ -558,7 +603,7 @@ app.get('/api/requests/:id/form',requireUser,async(req,res,next)=>{
   try{
     const detail=await getRequestDetail(req.params.id);
     if(!detail||!canAccess(req.employee,detail.request)) return res.status(404).end();
-    if(!detail.request.form_pdf_path) return res.status(404).json({error:'Form PDF is not available.'});
+    if(!detail.request.form_pdf_path) return res.status(404).json({error:'Request packet PDF is not available.'});
     res.sendFile(path.resolve(detail.request.form_pdf_path));
   }catch(e){next(e)}
 });
@@ -570,7 +615,7 @@ app.get('/api/requests/:id/form/download',requireUser,async(req,res,next)=>{
     if(detail.request.status!=='APPROVED')
       return res.status(409).json({error:'Final PDF is available after full approval.'});
     if(!detail.request.form_pdf_path)
-      return res.status(404).json({error:'Final Form PDF is not available.'});
+      return res.status(404).json({error:'Final request packet PDF is not available.'});
     res.download(path.resolve(detail.request.form_pdf_path),`${detail.request.ref_no}.pdf`);
   }catch(e){next(e)}
 });
@@ -604,7 +649,7 @@ app.post('/api/requests/:id/review',requireUser,async(req,res,next)=>{
 app.post('/api/requests/:id/approve',requireUser,async(req,res,next)=>{
   try{
     const request=await transitionRequest(req.params.id,req.employee,'APPROVAL',req.body.decision,req.body.reason||'');
-    const detail=await regenerateForm(request.id);
+    let detail=await regenerateForm(request.id);
     const approved=detail.request.status==='APPROVED';
     const code=requestCode(detail.request);
     const attachments=approved?[
@@ -619,11 +664,16 @@ app.post('/api/requests/:id/approve',requireUser,async(req,res,next)=>{
         :`${detail.request.ref_no} was rejected by ${req.employee.name}. Reason: ${req.body.reason}`,
       attachments
     });
+
+    if(approved){
+      await cleanupApprovedRequestFiles(detail);
+      detail=await getRequestDetail(request.id);
+    }
+
     res.json({ok:true,status:detail.request.status});
   }catch(e){next(e)}
 });
 
-// Keep the base UI untouched and append the request-type extension at runtime.
 app.get('/app.js',async(req,res,next)=>{
   try{
     const [base,extension]=await Promise.all([
