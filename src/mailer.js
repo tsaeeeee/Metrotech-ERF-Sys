@@ -15,6 +15,35 @@ function smtpReady(settings){
   return Boolean(settings.smtpEnabled && settings.smtpHost && settings.mailFrom);
 }
 
+function workflowPdfAttachments(request){
+  const refNo=String(request?.ref_no||'request');
+  const files=[];
+  if(request?.form_pdf_path){
+    files.push({
+      filename:`${refNo}.pdf`,
+      path:request.form_pdf_path
+    });
+  }
+  if(request?.evidence_pdf_path){
+    files.push({
+      filename:`${refNo}-evidence.pdf`,
+      path:request.evidence_pdf_path
+    });
+  }
+  return files;
+}
+
+function mergeAttachments(request,attachments=[]){
+  const merged=[...workflowPdfAttachments(request),...(Array.isArray(attachments)?attachments:[])];
+  const seen=new Set();
+  return merged.filter(item=>{
+    const key=String(item?.path||item?.filename||'');
+    if(!key||seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export async function testSmtp(to){
   const settings=await getRuntimeAppSettings();
   if(!smtpReady(settings))
@@ -52,6 +81,7 @@ export async function sendWorkflowMail({event,request,to,cc='',subject,text,atta
   }
 
   const transport=createTransport(settings);
+  const mailAttachments=mergeAttachments(request,attachments);
   try{
     await transport.sendMail({
       from:{name:settings.mailSenderName||'Metrotech Expense Approval System',address:settings.mailFrom},
@@ -59,7 +89,7 @@ export async function sendWorkflowMail({event,request,to,cc='',subject,text,atta
       cc:ccText||undefined,
       subject,
       text:`${text}\n\nThis is an automated notification. Please do not reply to this email.`,
-      attachments
+      attachments:mailAttachments
     });
     await logEmail({
       requestId:request?.id||null,refNo:request?.ref_no||null,event,to:toText,cc:ccText,status:'SENT',error:''
