@@ -375,7 +375,26 @@ submitExpense=async function(){
   }
 };
 
-// The first loadMe() call starts at the end of the base app.js before this extension
-// is evaluated, so run lightweight follow-up syncs once login state settles.
-setTimeout(()=>{rtEnsureControl();sigSyncWorkflowUi();},350);
-setTimeout(()=>{rtEnsureControl();sigSyncWorkflowUi();},1200);
+function packetSyncDocumentUi(){
+  const split=document.querySelector('#detailModal .pdf-split');
+  if(!split) return;
+  const first=split.children?.[0];
+  const second=split.children?.[1];
+  if(first){
+    first.style.gridColumn='1 / -1';
+    const label=first.querySelector('.pdf-label');
+    if(label) label.textContent='Request Packet · Form + Evidence';
+  }
+  if(second) second.style.display='none';
+  split.style.gridTemplateColumns='minmax(0,1fr)';
+}
+
+const packetOriginalOpenRequest=openRequest;
+openRequest=async function(...args){
+  const result=await packetOriginalOpenRequest(...args);
+  packetSyncDocumentUi();
+  return result;
+};
+
+setTimeout(()=>{rtEnsureControl();sigSyncWorkflowUi();packetSyncDocumentUi();},350);
+setTimeout(()=>{rtEnsureControl();sigSyncWorkflowUi();packetSyncDocumentUi();},1200);
