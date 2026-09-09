@@ -15,33 +15,36 @@ function smtpReady(settings){
   return Boolean(settings.smtpEnabled && settings.smtpHost && settings.mailFrom);
 }
 
-function workflowPdfAttachments(request){
-  const refNo=String(request?.ref_no||'request');
-  const files=[];
-  if(request?.form_pdf_path){
-    files.push({
-      filename:`${refNo}.pdf`,
-      path:request.form_pdf_path
-    });
-  }
-  if(request?.evidence_pdf_path){
-    files.push({
-      filename:`${refNo}-evidence.pdf`,
-      path:request.evidence_pdf_path
-    });
-  }
-  return files;
+function recipientList(value){
+  const values=Array.isArray(value)?value:[value];
+  return values
+    .flatMap(item=>String(item||'').split(','))
+    .map(item=>item.trim())
+    .filter(Boolean);
 }
 
-function mergeAttachments(request,attachments=[]){
-  const merged=[...workflowPdfAttachments(request),...(Array.isArray(attachments)?attachments:[])];
+function uniqueRecipients(values=[]){
   const seen=new Set();
-  return merged.filter(item=>{
-    const key=String(item?.path||item?.filename||'');
-    if(!key||seen.has(key)) return false;
+  const result=[];
+  for(const value of values){
+    const email=String(value||'').trim();
+    const key=email.toLowerCase();
+    if(!email||seen.has(key)) continue;
     seen.add(key);
-    return true;
-  });
+    result.push(email);
+  }
+  return result;
+}
+
+function finalApprovalAttachments(event,request,attachments=[]){
+  if(event!=='FINAL_APPROVED') return [];
+  const provided=Array.isArray(attachments)?attachments.filter(Boolean):[];
+  if(provided.length) return provided;
+  if(!request?.form_pdf_path) return [];
+  return [{
+    filename:`${String(request.ref_no||'approved-request')}.pdf`,
+    path:request.form_pdf_path
+  }];
 }
 
 export async function testSmtp(to){
@@ -62,8 +65,14 @@ export async function testSmtp(to){
 
 export async function sendWorkflowMail({event,request,to,cc='',subject,text,attachments=[]}) {
   const settings=await getRuntimeAppSettings();
-  const originalTo=Array.isArray(to)?to.filter(Boolean).join(','):String(to||'');
-  const originalCc=Array.isArray(cc)?cc.filter(Boolean).join(','):String(cc||'');
+  const toRecipients=uniqueRecipients(recipientList(to));
+  const baseCc=recipientList(cc);
+  const finalCc=event==='FINAL_APPROVED'
+    ? uniqueRecipients([...baseCc,request?.reviewer_email,request?.approver_email])
+    : uniqueRecipients(baseCc);
+
+  const originalTo=toRecipients.join(',');
+  const originalCc=finalCc.join(',');
   const override=String(settings.mailOverrideTo||'').trim();
   const toText=override||originalTo;
   const ccText=override?'':originalCc;
@@ -81,7 +90,7 @@ export async function sendWorkflowMail({event,request,to,cc='',subject,text,atta
   }
 
   const transport=createTransport(settings);
-  const mailAttachments=mergeAttachments(request,attachments);
+  const mailAttachments=finalApprovalAttachments(event,request,attachments);
   try{
     await transport.sendMail({
       from:{name:settings.mailSenderName||'Metrotech Expense Approval System',address:settings.mailFrom},
