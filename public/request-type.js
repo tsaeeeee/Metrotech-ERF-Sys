@@ -13,6 +13,16 @@ function rtIsReimbursement(){
   return rtRequestType==='REIMBURSEMENT';
 }
 
+function sigHasDigitalSignature(){
+  return Boolean(String(currentEmployee?.signature_file||'').trim());
+}
+
+function sigRequireWorkflowSignature(action='perform this action'){
+  if(sigHasDigitalSignature()) return true;
+  msg(`Digital signature required. Upload your signature in My Profile before you can ${action}.`,'err');
+  return false;
+}
+
 function rtInjectStyles(){
   if(document.getElementById('requestTypeStyles')) return;
   const style=document.createElement('style');
@@ -47,13 +57,81 @@ function rtInjectStyles(){
     .request-type-option:disabled{cursor:not-allowed;opacity:.66}
     .request-type-control.is-locked{opacity:.76}
     .evidence-mode-note{display:block;margin-top:5px;font-size:11px;color:#64748b}
+    .signature-required-notice{
+      display:flex;align-items:center;justify-content:space-between;gap:14px;
+      margin:0 0 18px;padding:13px 15px;border:1px solid #f59e0b33;
+      border-radius:12px;background:#fff8e7;color:#7c4a03;
+    }
+    .signature-required-notice strong{display:block;font-size:13px;margin-bottom:2px;color:#7c4a03}
+    .signature-required-notice span{font-size:12px;line-height:1.4}
+    .signature-required-notice button{
+      border:0;border-radius:999px;padding:8px 13px;background:#155da8;color:#fff;
+      font:inherit;font-size:12px;font-weight:800;white-space:nowrap;cursor:pointer;
+    }
+    .signature-decision-note{
+      margin:0 0 12px;padding:10px 12px;border-radius:10px;background:#fff8e7;
+      color:#7c4a03;font-size:12px;line-height:1.45;
+    }
+    .signature-decision-note button{
+      margin-left:6px;border:0;background:transparent;color:#155da8;font:inherit;
+      font-weight:800;text-decoration:underline;cursor:pointer;
+    }
     @media(max-width:700px){
       .request-type-row{align-items:flex-start;flex-direction:column}
       .request-type-control{width:100%}
       .request-type-option{min-height:38px;padding:8px 10px;font-size:11.5px}
+      .signature-required-notice{align-items:flex-start;flex-direction:column}
     }
   `;
   document.head.appendChild(style);
+}
+
+function sigSyncWorkflowUi(){
+  if(!currentEmployee || currentEmployee.role==='ADMIN') return;
+  rtInjectStyles();
+
+  const missing=!sigHasDigitalSignature();
+  const dashboard=$('#workflowDashboard');
+  let notice=$('#signatureRequiredNotice');
+
+  if(missing && dashboard){
+    if(!notice){
+      notice=document.createElement('div');
+      notice.id='signatureRequiredNotice';
+      notice.className='signature-required-notice';
+      notice.innerHTML=`
+        <div>
+          <strong>Digital signature required</strong>
+          <span>Upload your signature in My Profile before submitting, recalling, revising, reviewing, rejecting, or approving requests.</span>
+        </div>
+        <button type="button" onclick="openProfileModal()">Open My Profile</button>`;
+      dashboard.prepend(notice);
+    }
+  }else{
+    notice?.remove();
+  }
+
+  if(currentEmployee.role==='REQUESTOR' && missing){
+    const submit=$('#submitExpenseBtn');
+    if(submit) submit.disabled=true;
+  }
+
+  const decisionPanel=$('#decisionPanel');
+  let decisionNote=$('#signatureDecisionNote');
+  const decisionVisible=decisionPanel && !decisionPanel.classList.contains('hidden');
+  if(missing && decisionVisible && ['REVIEWER','APPROVER'].includes(currentEmployee.role)){
+    if(!decisionNote){
+      decisionNote=document.createElement('div');
+      decisionNote.id='signatureDecisionNote';
+      decisionNote.className='signature-decision-note';
+      decisionNote.innerHTML='Upload your digital signature before taking a decision.<button type="button" onclick="openProfileModal()">Open My Profile</button>';
+      decisionPanel.prepend(decisionNote);
+    }
+    if($('#approveBtn')) $('#approveBtn').disabled=true;
+    if($('#rejectBtn')) $('#rejectBtn').disabled=true;
+  }else{
+    decisionNote?.remove();
+  }
 }
 
 function rtSetRequestType(type){
@@ -144,12 +222,15 @@ function rtApplyUi(){
       ? 'Required for reimbursement.'
       : 'Optional for expense request.';
   }
+
+  sigSyncWorkflowUi();
 }
 
 const rtOriginalLoadMe=loadMe;
 loadMe=async function(...args){
   const result=await rtOriginalLoadMe(...args);
   if(currentEmployee?.role==='REQUESTOR') rtEnsureControl();
+  sigSyncWorkflowUi();
   return result;
 };
 
@@ -190,6 +271,7 @@ addPayment=function(){
   }
   resetPaymentForm();
   renderPayments();
+  sigSyncWorkflowUi();
 };
 
 const rtOriginalStartRevision=startRevision;
@@ -214,8 +296,46 @@ cancelRevision=function(){
   rtApplyUi();
 };
 
+const sigOriginalRecallRequest=recallRequest;
+recallRequest=async function(...args){
+  if(!sigRequireWorkflowSignature('recall this request')) return;
+  return sigOriginalRecallRequest(...args);
+};
+
+const sigOriginalSendDecision=sendDecision;
+sendDecision=async function(decision){
+  const rejecting=String(decision).toUpperCase()==='REJECT';
+  const role=currentEmployee?.role;
+  const action=role==='REVIEWER'
+    ? (rejecting?'reject this request':'review and approve this request')
+    : (rejecting?'reject this request':'approve this request');
+  if(!sigRequireWorkflowSignature(action)) return;
+  return sigOriginalSendDecision(decision);
+};
+
+const sigOriginalSyncRejectButton=syncRejectButton;
+syncRejectButton=function(...args){
+  sigOriginalSyncRejectButton(...args);
+  if(!sigHasDigitalSignature() && $('#rejectBtn')) $('#rejectBtn').disabled=true;
+};
+
+const sigOriginalOpenRequest=openRequest;
+openRequest=async function(...args){
+  const result=await sigOriginalOpenRequest(...args);
+  sigSyncWorkflowUi();
+  return result;
+};
+
+const sigOriginalRenderPayments=renderPayments;
+renderPayments=function(...args){
+  const result=sigOriginalRenderPayments(...args);
+  sigSyncWorkflowUi();
+  return result;
+};
+
 submitExpense=async function(){
   if(!payments.length) return;
+  if(!sigRequireWorkflowSignature(revisionTarget?'resubmit this request':'submit this request')) return;
   if(rtIsReimbursement() && payments.some(x=>!(x.evidence||[]).length))
     return msg('Every reimbursement payment requires evidence before submission.','err');
 
@@ -251,11 +371,11 @@ submitExpense=async function(){
     btn.textContent=revisionTarget
       ? 'Submit Revision'
       : rtIsReimbursement()?'Submit Reimbursement':'Submit Expense';
-    btn.disabled=!payments.length;
+    btn.disabled=!payments.length || !sigHasDigitalSignature();
   }
 };
 
 // The first loadMe() call starts at the end of the base app.js before this extension
-// is evaluated, so run a lightweight follow-up sync once login state settles.
-setTimeout(()=>rtEnsureControl(),350);
-setTimeout(()=>rtEnsureControl(),1200);
+// is evaluated, so run lightweight follow-up syncs once login state settles.
+setTimeout(()=>{rtEnsureControl();sigSyncWorkflowUi();},350);
+setTimeout(()=>{rtEnsureControl();sigSyncWorkflowUi();},1200);
