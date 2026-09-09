@@ -1,0 +1,47 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: metrotech-erf-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-metrotech_erf}
+      POSTGRES_USER: ${POSTGRES_USER:-metrotech_erf}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - erf_postgres_data:/var/lib/postgresql/data
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-metrotech_erf} -d ${POSTGRES_DB:-metrotech_erf}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - erf_internal
+
+  app:
+    build: .
+    container_name: metrotech-erf-app
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - erf_pdfs:/data/pdfs
+      - ./signatures:/data/signatures:ro
+    networks:
+      - erf_internal
+      - metrotech_proxy
+
+volumes:
+  erf_postgres_data:
+    name: metrotech_erf_postgres_data
+  erf_pdfs:
+    name: metrotech_erf_pdfs
+
+networks:
+  erf_internal:
+    name: metrotech_erf_internal
+  metrotech_proxy:
+    external: true
+    name: metrotech_proxy
