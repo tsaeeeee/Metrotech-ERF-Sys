@@ -1,6 +1,10 @@
 import nodemailer from 'nodemailer';
+import fs from 'node:fs/promises';
 import { getEmployee,logEmail } from './db.js';
 import { getRuntimeAppSettings } from './settings.js';
+
+const MAIL_GATEWAY_URL=String(process.env.MAIL_GATEWAY_URL||'').trim();
+const MAIL_GATEWAY_SECRET=String(process.env.MAIL_GATEWAY_SECRET||'').trim();
 
 function createTransport(settings){
   return nodemailer.createTransport({
@@ -11,8 +15,66 @@ function createTransport(settings){
   });
 }
 
+function gatewayReady(){
+  return Boolean(MAIL_GATEWAY_URL && MAIL_GATEWAY_SECRET);
+}
+
 function smtpReady(settings){
   return Boolean(settings.smtpEnabled && settings.smtpHost && settings.mailFrom);
+}
+
+function mailReady(settings){
+  return gatewayReady() || smtpReady(settings);
+}
+
+async function gatewayAttachments(attachments=[]){
+  const result=[];
+  for(const file of Array.isArray(attachments)?attachments:[]){
+    if(!file) continue;
+    let buffer=null;
+    if(Buffer.isBuffer(file.content)) buffer=file.content;
+    else if(file.path) buffer=await fs.readFile(file.path);
+    if(!buffer) continue;
+    result.push({
+      filename:String(file.filename||'attachment.pdf'),
+      mimeType:String(file.contentType||'application/pdf'),
+      base64:buffer.toString('base64')
+    });
+  }
+  return result;
+}
+
+async function sendViaGateway({to,cc='',subject,text,html,attachments=[]}){
+  if(!gatewayReady())
+    throw new Error('Mail gateway is not configured.');
+
+  const payload={
+    secret:MAIL_GATEWAY_SECRET,
+    to:String(to||''),
+    cc:String(cc||''),
+    subject:String(subject||''),
+    text:String(text||''),
+    html:String(html||''),
+    attachments:await gatewayAttachments(attachments)
+  };
+
+  const response=await fetch(MAIL_GATEWAY_URL,{
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body:JSON.stringify(payload),
+    redirect:'follow',
+    signal:AbortSignal.timeout(30000)
+  });
+
+  const raw=await response.text();
+  let data;
+  try{data=JSON.parse(raw)}
+  catch{throw new Error(`Mail gateway returned invalid response (${response.status}).`)}
+
+  if(!response.ok || !data?.ok)
+    throw new Error(data?.error || `Mail gateway request failed (${response.status}).`);
+
+  return data;
 }
 
 function recipientList(value){
@@ -283,9 +345,9 @@ function buildTestHtml(){
 <tr><td style="height:5px;background:#2f9eea;font-size:0;line-height:0;">&nbsp;</td></tr>
 <tr><td align="center" style="padding:34px 28px 8px 28px;font-family:Arial,Helvetica,sans-serif;font-size:27px;font-weight:800;color:#45b8ff;">METROTECH</td></tr>
 <tr><td align="center" style="padding:0 28px;font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#72839f;">Expense Request System</td></tr>
-<tr><td align="center" style="padding:28px 32px 8px 32px;"><span style="display:inline-block;background:#15803d;color:#fff;border-radius:999px;padding:6px 12px;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;">SMTP Connected</span></td></tr>
+<tr><td align="center" style="padding:28px 32px 8px 32px;"><span style="display:inline-block;background:#15803d;color:#fff;border-radius:999px;padding:6px 12px;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;">Mail Gateway Connected</span></td></tr>
 <tr><td align="center" style="padding:10px 32px 0 32px;font-family:Arial,Helvetica,sans-serif;font-size:23px;font-weight:800;line-height:30px;color:#fff;">Email delivery is working</td></tr>
-<tr><td align="center" style="padding:12px 42px 32px 42px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:22px;color:#aebbd0;">SMTP configuration has been verified successfully. Workflow notifications can now be delivered from the Metrotech Expense Request System.</td></tr>
+<tr><td align="center" style="padding:12px 42px 32px 42px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:22px;color:#aebbd0;">Email delivery has been verified successfully. Workflow notifications can now be delivered from the Metrotech Expense Request System.</td></tr>
 <tr><td style="padding:0 38px;"><div style="height:1px;background:#25344e;font-size:0;line-height:0;">&nbsp;</div></td></tr>
 <tr><td align="center" style="padding:22px 38px 30px 38px;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:18px;color:#71819b;">This is an automated test message. Please do not reply to this email.</td></tr>
 </table>
@@ -306,18 +368,25 @@ function finalApprovalAttachments(event,request,attachments=[]){
 
 export async function testSmtp(to){
   const settings=await getRuntimeAppSettings();
-  if(!smtpReady(settings))
-    throw Object.assign(new Error('SMTP is not fully configured yet.'),{status:409});
   if(!to) throw Object.assign(new Error('Test recipient is required.'),{status:400});
+
+  const subject='Metrotech ERF Email Delivery Test';
+  const text='Email delivery is working. This is a test message from Metrotech Expense Request System.';
+  const html=buildTestHtml();
+
+  if(gatewayReady()){
+    await sendViaGateway({to,subject,text,html});
+    return;
+  }
+
+  if(!smtpReady(settings))
+    throw Object.assign(new Error('Email delivery is not fully configured yet.'),{status:409});
 
   const transport=createTransport(settings);
   await transport.verify();
   await transport.sendMail({
     from:{name:settings.mailSenderName||'Metrotech Expense Approval System',address:settings.mailFrom},
-    to,
-    subject:'Metrotech ERF SMTP Test',
-    text:'SMTP configuration is working. This is a test message from Metrotech Expense Request System.',
-    html:buildTestHtml()
+    to,subject,text,html
   });
 }
 
@@ -341,7 +410,7 @@ export async function sendWorkflowMail({event,request,to,cc='',subject,text,atta
   const plainText=`${text}\n\nReference: ${request?.ref_no||'-'}\nRequest Type: ${requestTypeLabel(request)}\nRequestor: ${request?.employee_name||'-'}\nTotal: ${formatMoney(request?.total)}\n\nThis is an automated notification. Please do not reply to this email.`;
   const html=buildWorkflowHtml({event,request,recipientName,settings,text});
 
-  if(!smtpReady(settings)){
+  if(!mailReady(settings)){
     console.log('[MAIL:CONSOLE]',{
       event,to:toText,cc:ccText,originalTo,originalCc,subject:mailSubject,overridden:Boolean(override)
     });
@@ -352,18 +421,29 @@ export async function sendWorkflowMail({event,request,to,cc='',subject,text,atta
     return;
   }
 
-  const transport=createTransport(settings);
   const mailAttachments=finalApprovalAttachments(event,request,attachments);
   try{
-    await transport.sendMail({
-      from:{name:settings.mailSenderName||'Metrotech Expense Approval System',address:settings.mailFrom},
-      to:toText,
-      cc:ccText||undefined,
-      subject:mailSubject,
-      text:plainText,
-      html,
-      attachments:mailAttachments
-    });
+    if(gatewayReady()){
+      await sendViaGateway({
+        to:toText,
+        cc:ccText,
+        subject:mailSubject,
+        text:plainText,
+        html,
+        attachments:mailAttachments
+      });
+    }else{
+      const transport=createTransport(settings);
+      await transport.sendMail({
+        from:{name:settings.mailSenderName||'Metrotech Expense Approval System',address:settings.mailFrom},
+        to:toText,
+        cc:ccText||undefined,
+        subject:mailSubject,
+        text:plainText,
+        html,
+        attachments:mailAttachments
+      });
+    }
     await logEmail({
       requestId:request?.id||null,refNo:request?.ref_no||null,event,to:toText,cc:ccText,status:'SENT',error:''
     });
