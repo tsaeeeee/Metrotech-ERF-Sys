@@ -299,32 +299,40 @@ async function buildMockFormPdf({request,items,outPath}) {
   // Header / brand
   const brandLogo=await embedBrandLogo(doc);
   if(brandLogo){
-    const logoW=112;
+    const logoW=124;
     const logoH=logoW*(brandLogo.height/brandLogo.width);
     page.drawImage(brandLogo,{x:42,y:786,width:logoW,height:logoH});
   }
 
   const formTitle=requestFormTitle(request);
-  page.drawText(formTitle,{x:173,y:795,size:formTitle==='REIMBURSEMENT FORM'?15.5:16.5,font:bold,color:navy});
-  page.drawText('Operations Division',{x:238,y:779,size:7.8,font:normal,color:grey});
+  const formTitleSize=formTitle==='REIMBURSEMENT FORM'?15.5:16.5;
+  page.drawText(formTitle,{
+    x:centeredX(bold,formTitle,formTitleSize,0,595),
+    y:795,size:formTitleSize,font:bold,color:navy
+  });
+  const divisionTitle='Operations Division';
+  page.drawText(divisionTitle,{
+    x:centeredX(normal,divisionTitle,7.8,0,595),
+    y:779,size:7.8,font:normal,color:grey
+  });
 
-  const metaX=414;
-  const metaY=775;
-  const metaW=139;
-  const metaH=38;
+  const metaW=116;
+  const metaX=553-metaW;
+  const metaY=777;
+  const metaH=36;
   page.drawRectangle({x:metaX,y:metaY,width:metaW,height:metaH,borderWidth:.55,borderColor:line,color:pale});
-  page.drawLine({start:{x:metaX,y:metaY+19},end:{x:metaX+metaW,y:metaY+19},thickness:.45,color:line});
-  page.drawText('Request Date',{x:metaX+7,y:metaY+26,size:6.3,font:bold,color:grey});
+  page.drawLine({start:{x:metaX,y:metaY+18},end:{x:metaX+metaW,y:metaY+18},thickness:.45,color:line});
+  page.drawText('Request Date',{x:metaX+7,y:metaY+25,size:6.3,font:bold,color:grey});
   const requestDateText=displayDate(request.request_date);
   page.drawText(requestDateText,{
     x:rightAlignedX(normal,requestDateText,7.2,metaX+metaW-7),
-    y:metaY+26,size:7.2,font:normal,color:navy
+    y:metaY+25,size:7.2,font:normal,color:navy
   });
-  page.drawText('Ref No',{x:metaX+7,y:metaY+7,size:6.3,font:bold,color:grey});
+  page.drawText('Ref No',{x:metaX+7,y:metaY+6,size:6.3,font:bold,color:grey});
   const refText=String(request.ref_no||'');
   page.drawText(refText,{
     x:rightAlignedX(bold,refText,6.3,metaX+metaW-7),
-    y:metaY+7,size:6.3,font:bold,color:navy
+    y:metaY+6,size:6.3,font:bold,color:navy
   });
 
   // Employee information
