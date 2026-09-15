@@ -76,6 +76,24 @@ function rtInjectStyles(){
       margin-left:6px;border:0;background:transparent;color:#155da8;font:inherit;
       font-weight:800;text-decoration:underline;cursor:pointer;
     }
+    .decision-action-loading{
+      display:inline-flex!important;
+      align-items:center;
+      justify-content:center;
+      gap:8px;
+    }
+    .decision-spinner{
+      width:14px;
+      height:14px;
+      flex:0 0 14px;
+      border:2px solid currentColor;
+      border-right-color:transparent;
+      border-radius:50%;
+      animation:decision-spin .7s linear infinite;
+    }
+    @keyframes decision-spin{
+      to{transform:rotate(360deg)}
+    }
     @media(max-width:700px){
       .request-type-row{align-items:flex-start;flex-direction:column}
       .request-type-control{width:100%}
@@ -309,8 +327,40 @@ sendDecision=async function(decision){
   const action=role==='REVIEWER'
     ? (rejecting?'reject this request':'review and approve this request')
     : (rejecting?'reject this request':'approve this request');
+
   if(!sigRequireWorkflowSignature(action)) return;
-  return sigOriginalSendDecision(decision);
+
+  rtInjectStyles();
+
+  const approveBtn=$('#approveBtn');
+  const rejectBtn=$('#rejectBtn');
+  const activeBtn=rejecting?rejectBtn:approveBtn;
+
+  if(activeBtn){
+    activeBtn.classList.add('decision-action-loading');
+    activeBtn.setAttribute('aria-busy','true');
+    activeBtn.innerHTML=
+      `<span class="decision-spinner" aria-hidden="true"></span>${rejecting?'Rejecting…':'Approving…'}`;
+  }
+
+  if(approveBtn) approveBtn.disabled=true;
+  if(rejectBtn) rejectBtn.disabled=true;
+
+  try{
+    return await sigOriginalSendDecision(decision);
+  }finally{
+    if(approveBtn){
+      approveBtn.classList.remove('decision-action-loading');
+      approveBtn.removeAttribute('aria-busy');
+      approveBtn.textContent='Approve';
+    }
+
+    if(rejectBtn){
+      rejectBtn.classList.remove('decision-action-loading');
+      rejectBtn.removeAttribute('aria-busy');
+      rejectBtn.textContent='Reject';
+    }
+  }
 };
 
 const sigOriginalSyncRejectButton=syncRejectButton;
