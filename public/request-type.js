@@ -91,6 +91,15 @@ function rtInjectStyles(){
       border-radius:50%;
       animation:decision-spin .7s linear infinite;
     }
+    .evidence-file-link{
+      color:inherit;
+      text-decoration:none;
+      cursor:pointer;
+    }
+    .evidence-file-link:hover{
+      color:#155da8;
+      text-decoration:underline;
+    }
     @keyframes decision-spin{
       to{transform:rotate(360deg)}
     }
@@ -369,10 +378,62 @@ syncRejectButton=function(...args){
   if(!sigHasDigitalSignature() && $('#rejectBtn')) $('#rejectBtn').disabled=true;
 };
 
+const evidencePreviewUrls=new WeakMap();
+
+function evidencePreviewUrl(file){
+  if(typeof File==='undefined' || !(file instanceof File)) return '';
+  let url=evidencePreviewUrls.get(file);
+  if(!url){
+    url=URL.createObjectURL(file);
+    evidencePreviewUrls.set(file,url);
+  }
+  return url;
+}
+
+function evidenceSyncPaymentLinks(){
+  const rows=[...document.querySelectorAll('#paymentBody tr')];
+  rows.forEach((row,i)=>{
+    const payment=payments[i];
+    if(!payment) return;
+    const cell=row.children?.[4];
+    if(!cell) return;
+
+    cell.innerHTML=(payment.evidence||[]).map(file=>{
+      const name=esc(file?.name||'Evidence');
+      if(typeof File!=='undefined' && file instanceof File){
+        const href=evidencePreviewUrl(file);
+        return `<a class="file-chip evidence-file-link" href="${href}" target="_blank" rel="noopener noreferrer" title="Open evidence in new tab">📎 ${name} ↗</a>`;
+      }
+      if(revisionTarget?.id){
+        const href=`/api/requests/${encodeURIComponent(revisionTarget.id)}/evidence`;
+        return `<a class="file-chip evidence-file-link" href="${href}" target="_blank" rel="noopener noreferrer" title="Open saved evidence in new tab">📎 ${name} ↗</a>`;
+      }
+      return `<span class="file-chip">📎 ${name}</span>`;
+    }).join(' ');
+  });
+}
+
+function evidenceSyncDetailLinks(){
+  if(!currentDetailId) return;
+  const href=`/api/requests/${encodeURIComponent(currentDetailId)}/evidence`;
+  document.querySelectorAll('#detailItems .file-chip').forEach(chip=>{
+    if(chip.tagName==='A') return;
+    const link=document.createElement('a');
+    link.className=`${chip.className} evidence-file-link`;
+    link.href=href;
+    link.target='_blank';
+    link.rel='noopener noreferrer';
+    link.title='Open evidence in new tab';
+    link.innerHTML=`${chip.innerHTML} <span aria-hidden="true">↗</span>`;
+    chip.replaceWith(link);
+  });
+}
+
 const sigOriginalOpenRequest=openRequest;
 openRequest=async function(...args){
   const result=await sigOriginalOpenRequest(...args);
   sigSyncWorkflowUi();
+  evidenceSyncDetailLinks();
   return result;
 };
 
@@ -380,6 +441,7 @@ const sigOriginalRenderPayments=renderPayments;
 renderPayments=function(...args){
   const result=sigOriginalRenderPayments(...args);
   sigSyncWorkflowUi();
+  evidenceSyncPaymentLinks();
   return result;
 };
 
