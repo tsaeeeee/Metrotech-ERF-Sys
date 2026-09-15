@@ -375,26 +375,55 @@ submitExpense=async function(){
   }
 };
 
-function packetSyncDocumentUi(){
-  const split=document.querySelector('#detailModal .pdf-split');
-  if(!split) return;
-  const first=split.children?.[0];
-  const second=split.children?.[1];
-  if(first){
-    first.style.gridColumn='1 / -1';
-    const label=first.querySelector('.pdf-label');
-    if(label) label.textContent='Request Packet · Form + Evidence';
-  }
-  if(second) second.style.display='none';
-  split.style.gridTemplateColumns='minmax(0,1fr)';
-}
+// The stored form URL points to the merged request packet. In the split preview,
+// render only page 1 on the left (the request form) and keep evidence on the right.
+const splitOriginalRenderPdfDocument=renderPdfDocument;
+renderPdfDocument=async function(url,targetSelector){
+  if(targetSelector!=='#formPdfViewer')
+    return splitOriginalRenderPdfDocument(url,targetSelector);
 
-const packetOriginalOpenRequest=openRequest;
-openRequest=async function(...args){
-  const result=await packetOriginalOpenRequest(...args);
-  packetSyncDocumentUi();
-  return result;
+  const target=$(targetSelector);
+  if(!target) return;
+  if(!url){
+    target.innerHTML='<div class="pdf-empty">Document unavailable.</div>';
+    return;
+  }
+
+  target.innerHTML='<div class="pdf-loading">Loading document…</div>';
+  try{
+    const pdfjs=await getPdfJs();
+    const task=pdfjs.getDocument({url,withCredentials:true});
+    const pdf=await task.promise;
+    const page=await pdf.getPage(1);
+    target.innerHTML='';
+
+    const baseViewport=page.getViewport({scale:1});
+    const availableWidth=Math.max(260,target.clientWidth-24);
+    const cssScale=Math.min(1.35,availableWidth/baseViewport.width);
+    const pixelRatio=Math.min(window.devicePixelRatio||1,2);
+    const renderViewport=page.getViewport({scale:cssScale*pixelRatio});
+
+    const pageWrap=document.createElement('div');
+    pageWrap.className='pdf-page';
+    const canvas=document.createElement('canvas');
+    canvas.width=Math.ceil(renderViewport.width);
+    canvas.height=Math.ceil(renderViewport.height);
+    canvas.style.width=`${Math.ceil(renderViewport.width/pixelRatio)}px`;
+    canvas.style.height=`${Math.ceil(renderViewport.height/pixelRatio)}px`;
+    pageWrap.appendChild(canvas);
+    target.appendChild(pageWrap);
+
+    await page.render({
+      canvasContext:canvas.getContext('2d',{alpha:false}),
+      viewport:renderViewport
+    }).promise;
+  }catch(e){
+    console.error('Form preview failed:',e);
+    target.innerHTML='<div class="pdf-empty">Unable to preview this document.</div>';
+  }
 };
 
-setTimeout(()=>{rtEnsureControl();sigSyncWorkflowUi();packetSyncDocumentUi();},350);
-setTimeout(()=>{rtEnsureControl();sigSyncWorkflowUi();packetSyncDocumentUi();},1200);
+// The first loadMe() call starts at the end of the base app.js before this extension
+// is evaluated, so run lightweight follow-up syncs once login state settles.
+setTimeout(()=>{rtEnsureControl();sigSyncWorkflowUi();},350);
+setTimeout(()=>{rtEnsureControl();sigSyncWorkflowUi();},1200);
