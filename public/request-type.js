@@ -3,6 +3,66 @@
 
 let rtRequestType='EXPENSE';
 
+function toastDismiss(node){
+  if(!node) return;
+  node.classList.remove('show');
+  node.classList.add('hide');
+  window.setTimeout(()=>node.remove(),180);
+}
+
+function toastHost(){
+  rtInjectStyles();
+  let host=document.getElementById('toastHost');
+  if(!host){
+    host=document.createElement('div');
+    host.id='toastHost';
+    host.className='ui-toast-host';
+    host.setAttribute('aria-live','polite');
+    host.setAttribute('aria-atomic','false');
+    document.body.appendChild(host);
+  }
+  return host;
+}
+
+msg=function(text,type='ok'){
+  const host=toastHost();
+  const isError=type==='err';
+  const toast=document.createElement('div');
+  toast.className=`ui-toast ${isError?'err':'ok'}`;
+  toast.setAttribute('role',isError?'alert':'status');
+
+  const icon=document.createElement('div');
+  icon.className='ui-toast-icon';
+  icon.textContent=isError?'!':'✓';
+
+  const copy=document.createElement('div');
+  copy.className='ui-toast-copy';
+  const title=document.createElement('strong');
+  title.textContent=isError?'Action failed':'Success';
+  const body=document.createElement('span');
+  body.textContent=String(text||'');
+  copy.append(title,body);
+
+  const close=document.createElement('button');
+  close.className='ui-toast-close';
+  close.type='button';
+  close.setAttribute('aria-label','Dismiss notification');
+  close.textContent='×';
+  close.addEventListener('click',()=>toastDismiss(toast));
+
+  toast.append(icon,copy,close);
+  host.appendChild(toast);
+  requestAnimationFrame(()=>toast.classList.add('show'));
+  window.setTimeout(()=>toastDismiss(toast),isError?6500:4800);
+  return toast;
+};
+
+clearMsg=function(){
+  const legacy=$('#msg');
+  if(legacy) legacy.innerHTML='';
+  document.querySelectorAll('#toastHost .ui-toast').forEach(toastDismiss);
+};
+
 function rtNormalizeType(value){
   return String(value||'EXPENSE').trim().toUpperCase()==='REIMBURSEMENT'
     ? 'REIMBURSEMENT'
@@ -100,6 +160,50 @@ function rtInjectStyles(){
       color:#155da8;
       text-decoration:underline;
     }
+    .ui-toast-host{
+      position:fixed;
+      top:70px;
+      right:18px;
+      z-index:120;
+      width:min(360px,calc(100vw - 28px));
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      pointer-events:none;
+    }
+    .ui-toast{
+      pointer-events:auto;
+      display:grid;
+      grid-template-columns:30px minmax(0,1fr) 24px;
+      gap:10px;
+      align-items:start;
+      padding:12px 11px 12px 12px;
+      border:1px solid rgba(148,163,184,.30);
+      border-radius:14px;
+      background:rgba(255,255,255,.94);
+      box-shadow:0 16px 42px rgba(15,23,42,.18),0 2px 8px rgba(15,23,42,.08);
+      backdrop-filter:blur(18px) saturate(1.15);
+      -webkit-backdrop-filter:blur(18px) saturate(1.15);
+      opacity:0;
+      transform:translateX(26px) scale(.985);
+      transition:opacity .18s ease,transform .18s ease;
+    }
+    .ui-toast.show{opacity:1;transform:translateX(0) scale(1)}
+    .ui-toast.hide{opacity:0;transform:translateX(20px) scale(.985)}
+    .ui-toast-icon{
+      width:28px;height:28px;border-radius:9px;display:grid;place-items:center;
+      font-size:13px;font-weight:900;
+    }
+    .ui-toast.ok .ui-toast-icon{background:#ecfdf3;color:#067647}
+    .ui-toast.err .ui-toast-icon{background:#fff1f0;color:#b42318}
+    .ui-toast-copy{min-width:0;padding-top:1px}
+    .ui-toast-copy strong{display:block;font-size:12px;color:#172033;margin-bottom:2px}
+    .ui-toast-copy span{display:block;font-size:11.5px;line-height:1.42;color:#475467;word-break:break-word}
+    .ui-toast-close{
+      width:24px;height:24px;padding:0;border:0;border-radius:7px;background:transparent;
+      color:#98a2b3;font:18px/1 Arial,sans-serif;cursor:pointer;
+    }
+    .ui-toast-close:hover{background:#f2f4f7;color:#475467}
     @keyframes decision-spin{
       to{transform:rotate(360deg)}
     }
@@ -108,6 +212,7 @@ function rtInjectStyles(){
       .request-type-control{width:100%}
       .request-type-option{min-height:38px;padding:8px 10px;font-size:11.5px}
       .signature-required-notice{align-items:flex-start;flex-direction:column}
+      .ui-toast-host{top:62px;left:10px;right:10px;width:auto}
     }
   `;
   document.head.appendChild(style);
@@ -344,6 +449,17 @@ sendDecision=async function(decision){
   const approveBtn=$('#approveBtn');
   const rejectBtn=$('#rejectBtn');
   const activeBtn=rejecting?rejectBtn:approveBtn;
+  const requestId=currentDetailId;
+  const refNo=String($('#detailRef')?.textContent||'Request').trim()||'Request';
+  let nextApprover='';
+
+  if(role==='REVIEWER' && !rejecting && requestId){
+    try{
+      const data=await api(`/api/requests/${encodeURIComponent(requestId)}`);
+      const resolved=workflowAssigneeName(data?.request,'approver');
+      if(resolved!=='—') nextApprover=resolved;
+    }catch{}
+  }
 
   if(activeBtn){
     activeBtn.classList.add('decision-action-loading');
@@ -356,7 +472,12 @@ sendDecision=async function(decision){
   if(rejectBtn) rejectBtn.disabled=true;
 
   try{
-    return await sigOriginalSendDecision(decision);
+    const result=await sigOriginalSendDecision(decision);
+    if(role==='REVIEWER' && !rejecting && nextApprover){
+      clearMsg();
+      msg(`${refNo} approved by Reviewer and forwarded to ${nextApprover} for final approval.`,'ok');
+    }
+    return result;
   }finally{
     if(approveBtn){
       approveBtn.classList.remove('decision-action-loading');
