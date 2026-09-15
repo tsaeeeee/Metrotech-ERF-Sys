@@ -429,11 +429,54 @@ function evidenceSyncDetailLinks(){
   });
 }
 
+function workflowAssigneeName(request,key){
+  const name=String(request?.[`${key}_name`]||'').trim();
+  if(name) return name;
+  const email=String(request?.[`${key}_email`]||'').trim();
+  return email||'—';
+}
+
+function workflowSyncDetailAssignees(data){
+  const summary=$('#detailSummary');
+  const request=data?.request;
+  if(!summary || !request) return;
+
+  summary.querySelectorAll('[data-workflow-assignee]').forEach(node=>node.remove());
+  const rows=[
+    ['Reviewer',workflowAssigneeName(request,'reviewer')],
+    ['Approver',workflowAssigneeName(request,'approver')]
+  ];
+  summary.insertAdjacentHTML('beforeend',rows.map(([label,value])=>
+    `<div data-workflow-assignee><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`
+  ).join(''));
+}
+
+async function workflowAssignmentNote(requestId){
+  if(!requestId) return '';
+  try{
+    const data=await api(`/api/requests/${encodeURIComponent(requestId)}`);
+    const request=data?.request;
+    if(!request) return '';
+    return ` Reviewer: ${workflowAssigneeName(request,'reviewer')}. Approver: ${workflowAssigneeName(request,'approver')}.`;
+  }catch{
+    return '';
+  }
+}
+
 const sigOriginalOpenRequest=openRequest;
 openRequest=async function(...args){
   const result=await sigOriginalOpenRequest(...args);
   sigSyncWorkflowUi();
   evidenceSyncDetailLinks();
+
+  const id=args[0];
+  if(id && !$('#detailModal')?.classList.contains('hidden')){
+    try{
+      const data=await api(`/api/requests/${encodeURIComponent(id)}`);
+      workflowSyncDetailAssignees(data);
+    }catch{}
+  }
+
   return result;
 };
 
@@ -475,7 +518,8 @@ submitExpense=async function(){
 
     const url=revisionTarget?`/api/requests/${revisionTarget.id}/revise`:'/api/requests';
     const r=await api(url,{method:'POST',body:fd});
-    msg(`${r.refNo} ${revisionTarget?'revision submitted':'submitted'} successfully. Status: PENDING_REVIEW.`,'ok');
+    const assignmentNote=await workflowAssignmentNote(r.requestId);
+    msg(`${r.refNo} ${revisionTarget?'revision submitted':'submitted'} successfully. Status: PENDING_REVIEW.${assignmentNote}`,'ok');
     cancelRevision();
     await loadMe();
   }catch(e){
