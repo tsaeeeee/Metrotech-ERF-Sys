@@ -14,6 +14,29 @@ CREATE TABLE IF NOT EXISTS employees (
   password_hash text
 );
 
+CREATE TABLE IF NOT EXISTS employee_form_roles (
+  employee_email text NOT NULL REFERENCES employees(email) ON DELETE CASCADE,
+  form_type text NOT NULL CHECK (form_type IN ('ECF')),
+  role_code text NOT NULL CHECK (role_code IN ('REQUESTOR','CHECKER')),
+  active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (employee_email, form_type)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS employee_form_roles_single_checker_uidx
+  ON employee_form_roles(form_type)
+  WHERE active=true AND role_code='CHECKER';
+
+CREATE TABLE IF NOT EXISTS employee_payment_profiles (
+  employee_email text PRIMARY KEY REFERENCES employees(email) ON DELETE CASCADE,
+  payment_to text NOT NULL DEFAULT '',
+  bank_name text NOT NULL DEFAULT '',
+  bank_code text NOT NULL DEFAULT '',
+  account_number text NOT NULL DEFAULT '',
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS requests (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   ref_no text NOT NULL UNIQUE,
@@ -26,7 +49,7 @@ CREATE TABLE IF NOT EXISTS requests (
   division text NOT NULL,
   request_type text NOT NULL DEFAULT 'EXPENSE' CHECK (request_type IN ('EXPENSE','REIMBURSEMENT')),
   total numeric(18,2) NOT NULL,
-  status text NOT NULL CHECK (status IN ('PENDING_REVIEW','RECALLED','REVIEW_REJECTED','PENDING_APPROVAL','APPROVAL_REJECTED','APPROVED')),
+  status text NOT NULL CHECK (status IN ('PENDING_CHECK','CHECK_REJECTED','PENDING_REVIEW','RECALLED','REVIEW_REJECTED','PENDING_APPROVAL','APPROVAL_REJECTED','APPROVED')),
   revision integer NOT NULL DEFAULT 1,
   form_pdf_path text,
   evidence_pdf_path text,
@@ -39,6 +62,21 @@ CREATE TABLE IF NOT EXISTS requests (
 
 CREATE INDEX IF NOT EXISTS requests_requester_idx ON requests(requester_email);
 CREATE INDEX IF NOT EXISTS requests_status_idx ON requests(status);
+
+CREATE TABLE IF NOT EXISTS ecf_details (
+  request_id uuid PRIMARY KEY REFERENCES requests(id) ON DELETE CASCADE,
+  service_order_number text NOT NULL DEFAULT '-',
+  payment_to text NOT NULL,
+  bank_name text NOT NULL,
+  bank_code text NOT NULL,
+  account_number text NOT NULL,
+  checker_email text NOT NULL,
+  checker_name text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS ecf_details_checker_idx ON ecf_details(checker_email);
 
 CREATE TABLE IF NOT EXISTS request_items (
   id bigserial PRIMARY KEY,
@@ -119,11 +157,9 @@ CREATE TABLE IF NOT EXISTS email_log (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
-
 CREATE UNIQUE INDEX IF NOT EXISTS employees_username_lower_uidx
   ON employees(lower(username))
   WHERE username IS NOT NULL;
-
 
 CREATE TABLE IF NOT EXISTS app_settings(
   key text PRIMARY KEY,
