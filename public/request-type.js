@@ -2,6 +2,7 @@
 // Loaded after app.js by src/server.js so the existing ERF UI can stay unchanged.
 
 let rtRequestType='EXPENSE';
+let signaturePreviewObjectUrl=null;
 
 function toastDismiss(node){
   if(!node) return;
@@ -136,6 +137,39 @@ function rtInjectStyles(){
       margin-left:6px;border:0;background:transparent;color:#155da8;font:inherit;
       font-weight:800;text-decoration:underline;cursor:pointer;
     }
+    .signature-mini-preview{
+      min-height:92px;
+      margin:7px 0 10px;
+      padding:9px 11px;
+      display:flex;
+      align-items:center;
+      gap:12px;
+      border:1px solid #e2e8f0;
+      border-radius:11px;
+      background:#f8fafc;
+    }
+    .signature-mini-preview img{
+      display:block;
+      width:auto;
+      max-width:210px;
+      max-height:72px;
+      object-fit:contain;
+      padding:5px 7px;
+      border:1px solid #e2e8f0;
+      border-radius:8px;
+      background:#fff;
+    }
+    .signature-preview-empty{
+      color:#98a2b3;
+      font-size:11.5px;
+      line-height:1.4;
+    }
+    .signature-preview-caption{
+      color:#667085;
+      font-size:10.5px;
+      font-weight:700;
+      line-height:1.35;
+    }
     .decision-action-loading{
       display:inline-flex!important;
       align-items:center;
@@ -212,6 +246,8 @@ function rtInjectStyles(){
       .request-type-control{width:100%}
       .request-type-option{min-height:38px;padding:8px 10px;font-size:11.5px}
       .signature-required-notice{align-items:flex-start;flex-direction:column}
+      .signature-mini-preview{align-items:flex-start;flex-direction:column}
+      .signature-mini-preview img{max-width:100%}
       .ui-toast-host{top:62px;left:10px;right:10px;width:auto}
     }
   `;
@@ -265,6 +301,104 @@ function sigSyncWorkflowUi(){
     decisionNote?.remove();
   }
 }
+
+function signatureEnsurePreview(){
+  rtInjectStyles();
+  const field=document.querySelector('#profileForm .signature-upload');
+  if(!field) return null;
+  let preview=$('#signatureMiniPreview');
+  if(preview) return preview;
+
+  preview=document.createElement('div');
+  preview.id='signatureMiniPreview';
+  preview.className='signature-mini-preview';
+  preview.innerHTML=`
+    <img id="signaturePreviewImage" class="hidden" alt="Signature preview">
+    <div>
+      <div id="signaturePreviewEmpty" class="signature-preview-empty">No signature uploaded yet.</div>
+      <div id="signaturePreviewCaption" class="signature-preview-caption hidden"></div>
+    </div>`;
+
+  const picker=field.querySelector('.evidence-picker');
+  if(picker) field.insertBefore(preview,picker);
+  else field.appendChild(preview);
+  return preview;
+}
+
+function signatureClearObjectUrl(){
+  if(signaturePreviewObjectUrl){
+    URL.revokeObjectURL(signaturePreviewObjectUrl);
+    signaturePreviewObjectUrl=null;
+  }
+}
+
+function signatureShowPreview(src,caption){
+  signatureEnsurePreview();
+  const image=$('#signaturePreviewImage');
+  const empty=$('#signaturePreviewEmpty');
+  const label=$('#signaturePreviewCaption');
+  if(!image || !empty || !label) return;
+
+  image.onload=()=>{
+    image.classList.remove('hidden');
+    empty.classList.add('hidden');
+    label.textContent=caption||'Current signature';
+    label.classList.remove('hidden');
+  };
+  image.onerror=()=>{
+    image.removeAttribute('src');
+    image.classList.add('hidden');
+    label.classList.add('hidden');
+    empty.textContent='Signature preview is unavailable.';
+    empty.classList.remove('hidden');
+  };
+  image.src=src;
+}
+
+function signatureRefreshStoredPreview(){
+  signatureClearObjectUrl();
+  signatureEnsurePreview();
+  const image=$('#signaturePreviewImage');
+  const empty=$('#signaturePreviewEmpty');
+  const label=$('#signaturePreviewCaption');
+  if(!image || !empty || !label) return;
+
+  image.onload=null;
+  image.onerror=null;
+  image.removeAttribute('src');
+  image.classList.add('hidden');
+  label.classList.add('hidden');
+
+  if(!sigHasDigitalSignature()){
+    empty.textContent='No signature uploaded yet.';
+    empty.classList.remove('hidden');
+    return;
+  }
+
+  empty.textContent='Loading current signature…';
+  empty.classList.remove('hidden');
+  signatureShowPreview(`/api/profile/signature?t=${Date.now()}`,'Current signature');
+}
+
+const sigOriginalOpenProfileModal=openProfileModal;
+openProfileModal=function(...args){
+  const result=sigOriginalOpenProfileModal(...args);
+  if(currentEmployee && currentEmployee.role!=='ADMIN') signatureRefreshStoredPreview();
+  return result;
+};
+
+document.addEventListener('change',e=>{
+  if(e.target.id!=='profileSignature') return;
+  const file=e.target.files?.[0];
+  if(!file){
+    signatureRefreshStoredPreview();
+    return;
+  }
+
+  signatureClearObjectUrl();
+  signaturePreviewObjectUrl=URL.createObjectURL(file);
+  signatureShowPreview(signaturePreviewObjectUrl,'Selected replacement');
+});
 
 function rtSetRequestType(type){
   if(revisionTarget) return;
