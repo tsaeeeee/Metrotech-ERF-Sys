@@ -442,6 +442,26 @@ app.put('/api/profile',requireUser,signatureUpload.single('signature'),async(req
   }catch(e){next(e)}
 });
 
+app.get('/api/profile/signature',requireUser,async(req,res,next)=>{
+  try{
+    if(req.employee.role==='ADMIN') return res.status(404).end();
+    const signatureFile=String(req.employee.signature_file||'').trim();
+    if(!signatureFile) return res.status(404).end();
+
+    const root=path.resolve(PROFILE_SIGNATURE_DIR);
+    const resolved=path.resolve(signatureFile);
+    if(resolved!==root && !resolved.startsWith(`${root}${path.sep}`))
+      return res.status(404).end();
+
+    await fs.access(resolved);
+    res.set('Cache-Control','private, no-store, max-age=0');
+    res.sendFile(resolved);
+  }catch(e){
+    if(e?.code==='ENOENT') return res.status(404).end();
+    next(e);
+  }
+});
+
 app.get('/api/admin/users',requireUser,requireAdmin,async(req,res,next)=>{
   try{
     res.json({users:await listManagedEmployees()});
