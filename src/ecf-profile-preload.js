@@ -1,9 +1,36 @@
 import 'dotenv/config';
 import express from 'express';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { pool,getEmployee } from './db.js';
 
 const INSTALL_KEY=Symbol.for('metrotech.ecfPaymentProfileRoutesInstalled');
 const originalListen=express.application.listen;
+const originalStatic=express.static;
+
+// Keep index.html untouched: when the existing page asks for ecf-admin.js,
+// append the ECF payment-profile UI extension to that same script response.
+express.static=function(root,options){
+  const middleware=originalStatic(root,options);
+  const isPublicRoot=path.basename(String(root||''))==='public';
+  if(!isPublicRoot) return middleware;
+
+  return async function ecfExtendedStatic(req,res,next){
+    if(req.path==='/ecf-admin.js'){
+      try{
+        const [adminExtension,profileExtension]=await Promise.all([
+          fs.readFile(path.join(root,'ecf-admin.js'),'utf8'),
+          fs.readFile(path.join(root,'ecf-profile.js'),'utf8')
+        ]);
+        res.type('application/javascript').send(`${adminExtension}\n\n${profileExtension}`);
+        return;
+      }catch(error){
+        console.error('Failed to load ECF profile UI extension:',error);
+      }
+    }
+    return middleware(req,res,next);
+  };
+};
 
 function paymentProfilePayload(row={}){
   return {
@@ -82,8 +109,8 @@ function installPaymentProfileRoutes(app){
   if(app[INSTALL_KEY]) return;
   app[INSTALL_KEY]=true;
 
-  // Registered as non-GET routes because this extension is installed at startup
-  // immediately before listen(), after the main server has registered its GET SPA fallback.
+  // These non-GET API routes are installed immediately before listen().
+  // The main server's JSON/session middleware has already been registered.
   app.post('/api/profile/payment/read',async(req,res)=>{
     try{
       const employee=await profileEmployee(req);
