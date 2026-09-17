@@ -110,7 +110,7 @@ function ecfSetPaymentFields(profile={}){
 async function ecfLoadPaymentProfile(){
   ecfEnsurePaymentFields();
   try{
-    const data=await api('/api/profile/payment');
+    const data=await api('/api/profile/payment/read',{method:'POST',body:JSON.stringify({})});
     ecfSetPaymentFields(data.paymentProfile||{});
   }catch(e){
     msg(e.message,'err');
@@ -142,16 +142,19 @@ saveProfile=async function(event){
   btn.disabled=true;
   btn.textContent='Saving…';
   try{
-    const fd=new FormData();
-    fd.append('paymentTo',paymentTo);
-    fd.append('bankName',bankName);
-    fd.append('bankCode',bankCode);
-    fd.append('accountNumber',accountNumber);
-    if(sig) fd.append('signature',sig,sig.name);
+    if(sig){
+      const fd=new FormData();
+      fd.append('signature',sig,sig.name);
+      const signatureResult=await api('/api/profile',{method:'PUT',body:fd});
+      if(signatureResult.employee) currentEmployee=signatureResult.employee;
+    }
 
-    const result=await api('/api/profile',{method:'PUT',body:fd});
-    if(result.employee) currentEmployee=result.employee;
-    ecfSetPaymentFields(result.paymentProfile||{paymentTo,bankName,bankCode,accountNumber});
+    const paymentResult=await api('/api/profile/payment',{
+      method:'PUT',
+      body:JSON.stringify({paymentTo,bankName,bankCode,accountNumber})
+    });
+    ecfSetPaymentFields(paymentResult.paymentProfile||{paymentTo,bankName,bankCode,accountNumber});
+
     closeProfileModal();
     msg('Profile updated successfully.','ok');
     await loadMe();
