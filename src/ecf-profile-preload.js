@@ -3,6 +3,7 @@ import express from 'express';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pool,getEmployee } from './db.js';
+import { ECF_BANK_DIRECTORY,findEcfBank } from './ecf-bank-directory.js';
 
 const INSTALL_KEY=Symbol.for('metrotech.ecfPaymentProfileRoutesInstalled');
 const originalListen=express.application.listen;
@@ -58,6 +59,10 @@ function normalizePaymentProfile(input={}){
   if(profile.accountNumber.length>80)
     throw Object.assign(new Error('Account Number is too long.'),{status:400});
 
+  const hasBank=Boolean(profile.bankName||profile.bankCode);
+  if(hasBank && !findEcfBank(profile.bankName,profile.bankCode))
+    throw Object.assign(new Error('Choose a bank from the available bank list.'),{status:400});
+
   return profile;
 }
 
@@ -111,6 +116,13 @@ function installPaymentProfileRoutes(app){
 
   // These non-GET API routes are installed immediately before listen().
   // The main server's JSON/session middleware has already been registered.
+  app.post('/api/profile/payment/banks/read',async(req,res)=>{
+    try{
+      await profileEmployee(req);
+      res.json({banks:ECF_BANK_DIRECTORY});
+    }catch(error){sendRouteError(res,error)}
+  });
+
   app.post('/api/profile/payment/read',async(req,res)=>{
     try{
       const employee=await profileEmployee(req);
