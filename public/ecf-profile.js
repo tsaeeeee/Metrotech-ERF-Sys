@@ -8,6 +8,7 @@ let ecfPaymentProfile={
   bankCode:'',
   accountNumber:''
 };
+let ecfBankDirectory=[];
 
 function ecfProfileInjectStyles(){
   if(document.getElementById('ecfProfileStyles')) return;
@@ -22,6 +23,16 @@ function ecfProfileInjectStyles(){
     }
     .ecf-payment-heading h3{margin:0 0 3px;color:#0b3768;font-size:14px}
     .ecf-payment-heading p{margin:0;color:#667085;font-size:11.5px;line-height:1.45}
+    .ecf-bank-field select{
+      width:100%;
+      height:42px;
+      border:1px solid #cbd5e1;
+      border-radius:9px;
+      padding:9px 11px;
+      font:inherit;
+      background:#fff;
+      color:#172033;
+    }
     .ecf-payment-display{
       grid-column:1/-1;
       display:flex;
@@ -67,13 +78,13 @@ function ecfEnsurePaymentFields(){
   paymentTo.className='field';
   paymentTo.innerHTML=`<label>Payment To</label><input id="profilePaymentTo" maxlength="160" autocomplete="name" placeholder="Beneficiary name">`;
 
-  const bankName=document.createElement('div');
-  bankName.className='field';
-  bankName.innerHTML=`<label>Bank Name</label><input id="profileBankName" maxlength="80" placeholder="e.g. BCA">`;
-
-  const bankCode=document.createElement('div');
-  bankCode.className='field';
-  bankCode.innerHTML=`<label>Bank Code</label><input id="profileBankCode" maxlength="20" inputmode="numeric" placeholder="e.g. 014">`;
+  const bank=document.createElement('div');
+  bank.className='field ecf-bank-field';
+  bank.innerHTML=`
+    <label>Bank</label>
+    <select id="profileBankSelect">
+      <option value="">Choose bank</option>
+    </select>`;
 
   const accountNumber=document.createElement('div');
   accountNumber.className='field';
@@ -81,17 +92,36 @@ function ecfEnsurePaymentFields(){
 
   const note=document.createElement('div');
   note.className='ecf-payment-display';
-  note.innerHTML='<strong>PDF display:</strong> Bank Name and Bank Code will appear together, for example BCA (014).';
+  note.innerHTML='<strong>Bank code is automatic.</strong> Choose the bank once; the code is included in the selected bank name and stored automatically.';
 
   form.insertBefore(heading,actions);
   form.insertBefore(paymentTo,actions);
-  form.insertBefore(bankName,actions);
-  form.insertBefore(bankCode,actions);
+  form.insertBefore(bank,actions);
   form.insertBefore(accountNumber,actions);
   form.insertBefore(note,actions);
 
   const button=document.getElementById('saveProfileBtn');
   if(button) button.textContent='Save Profile';
+}
+
+function ecfRenderBankOptions(profile=ecfPaymentProfile){
+  const select=document.getElementById('profileBankSelect');
+  if(!select) return;
+
+  const currentCode=String(profile.bankCode||'').trim();
+  const currentName=String(profile.bankName||'').trim();
+  const matched=ecfBankDirectory.some(bank=>bank.code===currentCode && bank.name===currentName);
+
+  const options=['<option value="">Choose bank</option>'];
+  if((currentCode||currentName) && !matched){
+    const label=`${currentName||'Current bank'}${currentCode?` (${currentCode})`:''}`;
+    options.push(`<option value="${esc(currentCode)}" data-name="${esc(currentName)}">${esc(label)} — current saved value</option>`);
+  }
+  options.push(...ecfBankDirectory.map(bank=>
+    `<option value="${esc(bank.code)}" data-name="${esc(bank.name)}">${esc(bank.name)} (${esc(bank.code)})</option>`
+  ));
+  select.innerHTML=options.join('');
+  select.value=currentCode;
 }
 
 function ecfSetPaymentFields(profile={}){
@@ -102,15 +132,24 @@ function ecfSetPaymentFields(profile={}){
     accountNumber:String(profile.accountNumber??profile.account_number??'')
   };
   if(document.getElementById('profilePaymentTo')) document.getElementById('profilePaymentTo').value=ecfPaymentProfile.paymentTo;
-  if(document.getElementById('profileBankName')) document.getElementById('profileBankName').value=ecfPaymentProfile.bankName;
-  if(document.getElementById('profileBankCode')) document.getElementById('profileBankCode').value=ecfPaymentProfile.bankCode;
   if(document.getElementById('profileAccountNumber')) document.getElementById('profileAccountNumber').value=ecfPaymentProfile.accountNumber;
+  ecfRenderBankOptions(ecfPaymentProfile);
+}
+
+async function ecfLoadBankDirectory(){
+  if(ecfBankDirectory.length) return ecfBankDirectory;
+  const data=await api('/api/profile/payment/banks/read',{method:'POST',body:JSON.stringify({})});
+  ecfBankDirectory=Array.isArray(data.banks)?data.banks:[];
+  return ecfBankDirectory;
 }
 
 async function ecfLoadPaymentProfile(){
   ecfEnsurePaymentFields();
   try{
-    const data=await api('/api/profile/payment/read',{method:'POST',body:JSON.stringify({})});
+    const [,data]=await Promise.all([
+      ecfLoadBankDirectory(),
+      api('/api/profile/payment/read',{method:'POST',body:JSON.stringify({})})
+    ]);
     ecfSetPaymentFields(data.paymentProfile||{});
   }catch(e){
     msg(e.message,'err');
@@ -134,8 +173,10 @@ saveProfile=async function(event){
 
   const sig=document.getElementById('profileSignature')?.files?.[0]||null;
   const paymentTo=document.getElementById('profilePaymentTo')?.value.trim()||'';
-  const bankName=document.getElementById('profileBankName')?.value.trim()||'';
-  const bankCode=document.getElementById('profileBankCode')?.value.trim()||'';
+  const bankSelect=document.getElementById('profileBankSelect');
+  const selectedOption=bankSelect?.selectedOptions?.[0]||null;
+  const bankCode=String(bankSelect?.value||'').trim();
+  const bankName=String(selectedOption?.dataset?.name||'').trim();
   const accountNumber=document.getElementById('profileAccountNumber')?.value.trim()||'';
 
   const btn=document.getElementById('saveProfileBtn');
