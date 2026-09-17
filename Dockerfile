@@ -9,4 +9,4 @@ COPY . .
 RUN mkdir -p /data/pdfs
 ENV NODE_ENV=production
 EXPOSE 8080
-CMD ["node","src/server.js"]
+CMD ["node","--import","./src/ecf-profile-preload.js","src/server.js"]
