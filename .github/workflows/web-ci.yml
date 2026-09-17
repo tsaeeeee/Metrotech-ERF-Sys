@@ -46,8 +46,11 @@ jobs:
           node --check src/request-packet.js
           node --check src/mailer.js
           node --check src/settings.js
+          node --check src/ecf-profile-preload.js
           node --check public/app.js
           node --check public/request-type.js
+          node --check public/ecf-admin.js
+          node --check public/ecf-profile.js
           node --check scripts/workflow-smoke.js
       - name: Test workflow state machine
         run: npm run test:workflow
