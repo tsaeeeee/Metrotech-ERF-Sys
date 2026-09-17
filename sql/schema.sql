@@ -262,25 +262,25 @@ BEGIN
   IF target.role IN ('REVIEWER','APPROVER') THEN
     RAISE EXCEPTION USING
       ERRCODE='P0001',
-      MESSAGE='Reviewer and Approver ECF access is inherited from the primary role.';
+      MESSAGE='Reviewer and Approver ECF access is inherited from ERF Access.';
   END IF;
 
   IF target.role<>'REQUESTOR' THEN
     RAISE EXCEPTION USING
       ERRCODE='P0001',
-      MESSAGE='Only employees with primary role Requestor can be assigned ECF Requestor or Checker access.';
+      MESSAGE='Only employees with ERF Access Requestor can be assigned ECF Requestor or Checker access.';
   END IF;
 
   IF normalized_role NOT IN ('REQUESTOR','CHECKER','NONE') THEN
     RAISE EXCEPTION USING
       ERRCODE='22023',
-      MESSAGE='ECF role must be Requestor, Checker, or None.';
+      MESSAGE='ECF access must be Requestor, Checker, or None.';
   END IF;
 
   IF normalized_role='NONE' THEN
-    DELETE FROM employee_form_roles
-    WHERE lower(employee_email)=lower(target.email)
-      AND form_type='ECF';
+    DELETE FROM employee_form_roles AS fr
+    WHERE lower(fr.employee_email)=lower(target.email)
+      AND fr.form_type='ECF';
 
     RETURN QUERY SELECT target.email::text,'NONE'::text;
     RETURN;
@@ -295,8 +295,8 @@ BEGIN
   IF normalized_role='CHECKER' THEN
     SELECT fr.employee_email,e.name
       INTO current_checker
-    FROM employee_form_roles fr
-    JOIN employees e ON lower(e.email)=lower(fr.employee_email)
+    FROM employee_form_roles AS fr
+    JOIN employees AS e ON lower(e.email)=lower(fr.employee_email)
     WHERE fr.form_type='ECF'
       AND fr.role_code='CHECKER'
       AND fr.active=true
@@ -311,17 +311,17 @@ BEGIN
     END IF;
 
     IF FOUND AND p_replace_checker THEN
-      DELETE FROM employee_form_roles
-      WHERE form_type='ECF'
-        AND role_code='CHECKER'
-        AND active=true
-        AND lower(employee_email)<>lower(target.email);
+      DELETE FROM employee_form_roles AS fr
+      WHERE fr.form_type='ECF'
+        AND fr.role_code='CHECKER'
+        AND fr.active=true
+        AND lower(fr.employee_email)<>lower(target.email);
     END IF;
   END IF;
 
   INSERT INTO employee_form_roles(employee_email,form_type,role_code,active,updated_at)
   VALUES(target.email,'ECF',normalized_role,true,now())
-  ON CONFLICT (employee_email,form_type) DO UPDATE
+  ON CONFLICT ON CONSTRAINT employee_form_roles_pkey DO UPDATE
   SET role_code=excluded.role_code,
       active=true,
       updated_at=now();
