@@ -1,6 +1,6 @@
 // ECF admin access extension.
 // Loaded after /app.js so the stable ERF user-management flow can be extended
-// without changing the existing ERF role semantics.
+// without changing the existing ERF Access semantics.
 
 let ecfAdminRoles=[];
 
@@ -47,6 +47,14 @@ function ecfInjectAdminStyles(){
   document.head.appendChild(style);
 }
 
+function ecfApplyErfAccessLabels(){
+  const roleHeader=document.querySelector('#adminUsersTable thead tr')?.children?.[4];
+  if(roleHeader) roleHeader.textContent='ERF Access';
+
+  const roleFieldLabel=document.querySelector('#adminUserForm .admin-role-field > label');
+  if(roleFieldLabel) roleFieldLabel.textContent='ERF Access';
+}
+
 function ecfMergeRoleSnapshot(users,roles){
   const byEmail=new Map((roles||[]).map(r=>[String(r.email||'').toLowerCase(),r]));
   return (users||[]).map(user=>{
@@ -79,49 +87,51 @@ const ecfOriginalRenderAdminUsers=renderAdminUsers;
 renderAdminUsers=function(){
   ecfInjectAdminStyles();
   ecfOriginalRenderAdminUsers();
+  ecfApplyErfAccessLabels();
 
   const headerRow=document.querySelector('#adminUsersTable thead tr');
   if(headerRow && !document.getElementById('adminEcfAccessHeader')){
     const th=document.createElement('th');
     th.id='adminEcfAccessHeader';
     th.textContent='ECF Access';
-    const roleHeader=headerRow.children[4];
-    roleHeader?.insertAdjacentElement('afterend',th);
+    const erfAccessHeader=headerRow.children[4];
+    erfAccessHeader?.insertAdjacentElement('afterend',th);
   }
 
   document.querySelectorAll('#adminUsersBody tr').forEach((row,index)=>{
     const user=adminUsers[index];
     if(!user) return;
-    const roleCell=row.children[4];
-    if(!roleCell) return;
+    const erfAccessCell=row.children[4];
+    if(!erfAccessCell) return;
     const td=document.createElement('td');
     const role=String(user.ecf_role||'NONE').toUpperCase();
     td.innerHTML=`<span class="ecf-access-chip ${ecfRoleClass(role)}">${esc(ecfRoleLabel(role))}</span>`;
-    roleCell.insertAdjacentElement('afterend',td);
+    erfAccessCell.insertAdjacentElement('afterend',td);
   });
 };
 
 function ecfEnsureAccessField(){
   ecfInjectAdminStyles();
+  ecfApplyErfAccessLabels();
   let field=document.getElementById('adminEcfAccessField');
   if(field) return field;
 
-  const primaryRoleField=document.querySelector('#adminUserForm .admin-role-field');
-  if(!primaryRoleField) return null;
+  const erfAccessField=document.querySelector('#adminUserForm .admin-role-field');
+  if(!erfAccessField) return null;
 
   field=document.createElement('div');
   field.id='adminEcfAccessField';
   field.className='field ecf-access-field';
   field.innerHTML=`
-    <label>Expense Claim Form (ECF)</label>
+    <label>ECF Access</label>
     <select id="adminEcfAccess">
       <option value="REQUESTOR">Requestor</option>
       <option value="CHECKER">Checker</option>
       <option value="NONE">No Access</option>
     </select>
     <div id="adminEcfInherited" class="ecf-access-inherited hidden"></div>
-    <small id="adminEcfAccessHint" class="muted">Form-specific access. ERF Primary Role remains unchanged.</small>`;
-  primaryRoleField.insertAdjacentElement('afterend',field);
+    <small id="adminEcfAccessHint" class="muted">Expense Claim Form access. ERF Access remains unchanged.</small>`;
+  erfAccessField.insertAdjacentElement('afterend',field);
   return field;
 }
 
@@ -147,8 +157,8 @@ function ecfSyncAccessField({preserve=false}={}){
   if(primary==='REVIEWER' || primary==='APPROVER'){
     select.classList.add('hidden');
     inherited.classList.remove('hidden');
-    inherited.textContent=`${ecfRoleLabel(primary)} — inherited from Primary Role`;
-    hint.textContent='ECF access follows the existing Primary Role automatically.';
+    inherited.textContent=`${ecfRoleLabel(primary)} — inherited from ERF Access`;
+    hint.textContent='ECF Access follows ERF Access automatically for Reviewer and Approver.';
     return;
   }
 
@@ -158,7 +168,7 @@ function ecfSyncAccessField({preserve=false}={}){
 
   if(!active){
     select.value='NONE';
-    hint.textContent='Inactive users do not have active ECF access.';
+    hint.textContent='Inactive users do not have active ECF Access.';
     return;
   }
 
@@ -168,7 +178,7 @@ function ecfSyncAccessField({preserve=false}={}){
       : 'REQUESTOR';
     select.value=['REQUESTOR','CHECKER','NONE'].includes(current)?current:'REQUESTOR';
   }
-  hint.textContent='Requestor, Checker, or No Access applies only to ECF. ERF Primary Role stays unchanged.';
+  hint.textContent='Requestor, Checker, or No Access applies only to ECF. ERF Access stays unchanged.';
 }
 
 const ecfOriginalSelectAdminRole=selectAdminRole;
@@ -180,6 +190,7 @@ selectAdminRole=function(value,label){
 const ecfOriginalOpenAdminUserModal=openAdminUserModal;
 openAdminUserModal=function(encodedEmail=''){
   const result=ecfOriginalOpenAdminUserModal(encodedEmail);
+  ecfApplyErfAccessLabels();
   ecfEnsureAccessField();
   ecfSyncAccessField({preserve:false});
   return result;
