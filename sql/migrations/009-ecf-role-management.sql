@@ -10,7 +10,7 @@ WHERE e.role='REQUESTOR'
 ON CONFLICT (employee_email,form_type) DO NOTHING;
 
 -- Admin-facing read model. Reviewer and Approver are inherited from the
--- existing ERF primary role; only Requestor/Checker are form-specific.
+-- existing ERF Access; only Requestor/Checker are form-specific.
 CREATE OR REPLACE VIEW admin_ecf_roles AS
 SELECT
   e.email,
@@ -36,9 +36,9 @@ LEFT JOIN employee_form_roles fr
 WHERE e.role<>'ADMIN';
 
 -- Central role assignment primitive for the application layer. No employee
--- name is hardcoded. Only users whose primary role is REQUESTOR can receive
+-- name is hardcoded. Only users whose ERF Access is REQUESTOR can receive
 -- the form-specific REQUESTOR/CHECKER roles. REVIEWER and APPROVER stay
--- inherited from the existing ERF role.
+-- inherited from ERF Access.
 CREATE OR REPLACE FUNCTION set_ecf_employee_role(
   p_email text,
   p_role text,
@@ -67,38 +67,45 @@ BEGIN
   IF target.role IN ('REVIEWER','APPROVER') THEN
     RAISE EXCEPTION USING
       ERRCODE='P0001',
-      MESSAGE='Reviewer and Approver ECF access is inherited from the primary role.';
+      MESSAGE='Reviewer and Approver ECF access is inherited from ERF Access.';
   END IF;
 
   IF target.role<>'REQUESTOR' THEN
     RAISE EXCEPTION USING
       ERRCODE='P0001',
-      MESSAGE='Only employees with primary role Requestor can be assigned ECF Requestor or Checker access.';
+      MESSAGE='Only employees with ERF Access Requestor can be assigned ECF Requestor or Checker access.';
   END IF;
 
   IF normalized_role NOT IN ('REQUESTOR','CHECKER','NONE') THEN
     RAISE EXCEPTION USING
       ERRCODE='22023',
-      MESSAGE='ECF role must be Requestor, Checker, or None.';
+      MESSAGE='ECF access must be Requestor, Checker, or None.';
   END IF;
 
   IF normalized_role='NONE' THEN
-    DELETE FROM employee_form_roles
-    WHERE lower(employee_email)=lower(target.email)
-      AND form_type='ECF';
+    DELETE FROM employee_form_roles AS fr
+    WHERE lower(fr.employee_email)=lower(target.email)
+      AND fr.form_type='ECF';
 
     RETURN QUERY SELECT target.email::text,'NONE'::text;
     RETURN;
   END IF;
 
+  IF target.active=false THEN
+    RAISE EXCEPTION USING
+      ERRCODE='P0001',
+      MESSAGE='Inactive users cannot receive active ECF access.';
+  END IF;
+
   IF normalized_role='CHECKER' THEN
     SELECT fr.employee_email,e.name
       INTO current_checker
-    FROM employee_form_roles fr
-    JOIN employees e ON lower(e.email)=lower(fr.employee_email)
+    FROM employee_form_roles AS fr
+    JOIN employees AS e ON lower(e.email)=lower(fr.employee_email)
     WHERE fr.form_type='ECF'
       AND fr.role_code='CHECKER'
       AND fr.active=true
+      AND e.active=true
       AND lower(fr.employee_email)<>lower(target.email)
     LIMIT 1;
 
@@ -109,11 +116,11 @@ BEGIN
     END IF;
 
     IF FOUND AND p_replace_checker THEN
-      DELETE FROM employee_form_roles
-      WHERE form_type='ECF'
-        AND role_code='CHECKER'
-        AND active=true
-        AND lower(employee_email)<>lower(target.email);
+      DELETE FROM employee_form_roles AS fr
+      WHERE fr.form_type='ECF'
+        AND fr.role_code='CHECKER'
+        AND fr.active=true
+        AND lower(fr.employee_email)<>lower(target.email);
     END IF;
   END IF;
 
