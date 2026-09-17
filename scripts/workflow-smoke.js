@@ -66,6 +66,29 @@ try{
   const approver=await getEmployee('approver-test@metrotech.local');
   assert(requestor&&reviewer&&reviewer2&&approver,'Workflow test actors were not seeded.');
 
+  // Exercise the real ECF Admin role-assignment path so PL/pgSQL ambiguity or
+  // constraint regressions are caught by CI before reaching the browser.
+  await saveAppSettings({
+    ecfRoleAssignment:{
+      email:requestor.email,
+      role:'CHECKER',
+      replaceChecker:false
+    }
+  },bootstrapAdmin.email);
+  const {rows:ecfCheckerRows}=await pool.query(
+    `select role_code from employee_form_roles
+     where lower(employee_email)=lower($1) and form_type='ECF' and active=true`,
+    [requestor.email]
+  );
+  assert(ecfCheckerRows[0]?.role_code==='CHECKER','ECF Requestor must be assignable as Checker.');
+  await saveAppSettings({
+    ecfRoleAssignment:{
+      email:requestor.email,
+      role:'REQUESTOR',
+      replaceChecker:false
+    }
+  },bootstrapAdmin.email);
+
   const first=await createExpenseRequest(requestor,items('Initial submit'));
   assert(first.status==='PENDING_REVIEW','Submit must enter PENDING_REVIEW.');
 
