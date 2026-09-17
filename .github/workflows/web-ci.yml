@@ -46,6 +46,7 @@ jobs:
           node --check src/request-packet.js
           node --check src/mailer.js
           node --check src/settings.js
+          node --check src/ecf-bank-directory.js
           node --check src/ecf-profile-preload.js
           node --check public/app.js
           node --check public/request-type.js
