@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js",
+    "start": "node --import ./src/ecf-profile-preload.js src/server.js",
+    "dev": "node --watch --import ./src/ecf-profile-preload.js src/server.js",
     "test:workflow": "node scripts/workflow-smoke.js"
   },
   "dependencies": {
