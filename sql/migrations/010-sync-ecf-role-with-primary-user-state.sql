@@ -8,14 +8,19 @@ CREATE OR REPLACE FUNCTION sync_employee_ecf_role()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
+DECLARE
+  preserve_existing_role boolean := false;
 BEGIN
+  IF TG_OP='UPDATE' THEN
+    preserve_existing_role := OLD.role='REQUESTOR' AND OLD.active=true;
+  END IF;
+
   IF NEW.role='REQUESTOR' AND NEW.active=true THEN
     INSERT INTO employee_form_roles(employee_email,form_type,role_code,active,updated_at)
     VALUES(NEW.email,'ECF','REQUESTOR',true,now())
     ON CONFLICT (employee_email,form_type) DO UPDATE
     SET role_code=CASE
-          WHEN OLD.role='REQUESTOR' AND OLD.active=true
-            THEN employee_form_roles.role_code
+          WHEN preserve_existing_role THEN employee_form_roles.role_code
           ELSE 'REQUESTOR'
         END,
         active=true,
