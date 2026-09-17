@@ -28,6 +28,43 @@ CREATE UNIQUE INDEX IF NOT EXISTS employee_form_roles_single_checker_uidx
   ON employee_form_roles(form_type)
   WHERE active=true AND role_code='CHECKER';
 
+CREATE OR REPLACE FUNCTION sync_employee_ecf_role()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  preserve_existing_role boolean := false;
+BEGIN
+  IF TG_OP='UPDATE' THEN
+    preserve_existing_role := OLD.role='REQUESTOR' AND OLD.active=true;
+  END IF;
+
+  IF NEW.role='REQUESTOR' AND NEW.active=true THEN
+    INSERT INTO employee_form_roles(employee_email,form_type,role_code,active,updated_at)
+    VALUES(NEW.email,'ECF','REQUESTOR',true,now())
+    ON CONFLICT (employee_email,form_type) DO UPDATE
+    SET role_code=CASE
+          WHEN preserve_existing_role THEN employee_form_roles.role_code
+          ELSE 'REQUESTOR'
+        END,
+        active=true,
+        updated_at=now();
+  ELSE
+    DELETE FROM employee_form_roles
+    WHERE lower(employee_email)=lower(NEW.email)
+      AND form_type='ECF';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS employees_sync_ecf_role ON employees;
+CREATE TRIGGER employees_sync_ecf_role
+AFTER INSERT OR UPDATE OF role,active ON employees
+FOR EACH ROW
+EXECUTE FUNCTION sync_employee_ecf_role();
+
 CREATE TABLE IF NOT EXISTS employee_payment_profiles (
   employee_email text PRIMARY KEY REFERENCES employees(email) ON DELETE CASCADE,
   payment_to text NOT NULL DEFAULT '',
