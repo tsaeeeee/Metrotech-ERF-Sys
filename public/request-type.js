@@ -413,27 +413,10 @@ function rtEnsureControl(){
   if(!form) return;
   rtInjectStyles();
 
-  if(!$('#requestTypeRow')){
-    const row=document.createElement('div');
-    row.id='requestTypeRow';
-    row.className='request-type-row';
-    row.innerHTML=`
-      <div class="request-type-copy">
-        <strong>Request Type</strong>
-        <small id="requestTypeHint">Choose Expense Request or Reimbursement before adding payments.</small>
-      </div>
-      <div id="requestTypeControl" class="request-type-control" role="group" aria-label="Request Type">
-        <button id="requestTypeExpenseLabel" class="request-type-option" type="button" aria-pressed="true">Expense Request</button>
-        <button id="requestTypeReimbursementLabel" class="request-type-option" type="button" aria-pressed="false">Reimbursement</button>
-      </div>`;
-
-    const paymentForm=form.querySelector('.payment-form');
-    if(paymentForm) form.insertBefore(row,paymentForm);
-    else form.appendChild(row);
-
-    $('#requestTypeExpenseLabel').addEventListener('click',()=>rtSetRequestType('EXPENSE'));
-    $('#requestTypeReimbursementLabel').addEventListener('click',()=>rtSetRequestType('REIMBURSEMENT'));
-  }
+  // Production ERF is ERF-only. Keep legacy reimbursement records readable,
+  // but do not expose a request-type selector for new submissions.
+  if(!revisionTarget) rtRequestType='EXPENSE';
+  $('#requestTypeRow')?.remove();
 
   rtApplyUi();
 }
