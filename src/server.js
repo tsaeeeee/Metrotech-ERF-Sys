@@ -545,7 +545,7 @@ app.post('/api/admin/app-settings/test-smtp',requireUser,requireAdmin,async(req,
 app.post('/api/requests',requireUser,upload.any(),async(req,res,next)=>{
   try{
     if(req.employee.role!=='REQUESTOR') return res.status(403).json({error:'Only Requestor can create a request.'});
-    const requestType=normalizeRequestType(req.body.requestType||'EXPENSE');
+    const requestType='EXPENSE'; // Production ERF: new submissions are ERF-only.
     const {items,files}=parseItemsAndFiles(req,requestType);
     const runtimeSettings=await getRuntimeAppSettings();
     const request=await createExpenseRequest(req.employee,items,runtimeSettings.timezone,requestType);
