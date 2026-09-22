@@ -169,7 +169,7 @@ function employeeNeedsSetup(employee){
   return Boolean(
     employee &&
     employee.role!=='ADMIN' &&
-    (employee.must_change_password || !String(employee.signature_file||'').trim())
+    (employee.must_change_password || employee.must_upload_signature)
   );
 }
 
