@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS employees (
   signature_file text NOT NULL DEFAULT '',
   active boolean NOT NULL DEFAULT true,
   username text,
-  password_hash text
+  password_hash text,
+  must_change_password boolean NOT NULL DEFAULT false
 );
 
 CREATE TABLE IF NOT EXISTS requests (

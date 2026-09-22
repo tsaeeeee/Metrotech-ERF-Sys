@@ -954,3 +954,66 @@ h1{margin:0;color:var(--navy);font-size:26px}h2{margin:0 0 12px;color:var(--navy
   }
   .app-save-card .btn{width:100%}
 }
+
+
+/* Account password + first-login setup */
+.account-section-form{
+  margin-top:18px;
+  padding-top:16px;
+  border-top:1px solid var(--line)
+}
+.account-section-head{
+  grid-column:1/-1;
+  display:flex;
+  flex-direction:column;
+  gap:3px
+}
+.account-section-head strong{font-size:13px;color:var(--text)}
+.account-section-head span{font-size:11.5px;color:var(--muted)}
+.first-setup-panel{width:min(680px,94vw)}
+.first-setup-head{
+  display:flex;
+  align-items:center;
+  gap:14px;
+  padding-bottom:16px;
+  border-bottom:1px solid var(--line)
+}
+.first-setup-head .login-mark{flex:0 0 auto;margin:0}
+.first-setup-head h2{margin:0 0 3px}
+.first-setup-head p{margin:0}
+.setup-progress{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+  margin-top:16px
+}
+.setup-state{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px;
+  padding:10px 12px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:#f8fafc
+}
+.setup-state strong{font-size:12px}
+.setup-state span{font-size:11px;color:var(--muted)}
+.setup-state.done{background:#ecfdf3;border-color:#abefc6}
+.setup-state.done strong{color:#067647}
+.setup-state.pending{background:#fff8e7;border-color:#fedf89}
+.setup-state.pending strong{color:#934d00}
+.first-setup-footer{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-top:18px;
+  padding-top:14px;
+  border-top:1px solid var(--line)
+}
+@media(max-width:760px){
+  .setup-progress{grid-template-columns:1fr}
+  .first-setup-head{align-items:flex-start}
+  .first-setup-footer{align-items:flex-start;flex-direction:column}
+}

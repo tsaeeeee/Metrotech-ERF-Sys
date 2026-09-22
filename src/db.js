@@ -52,7 +52,7 @@ export async function ensureBootstrapAdminCredentials() {
 
 export async function listActiveEmployees() {
   const { rows } = await pool.query(
-    `select email,name,employee_id,department,location,division,role,signature_file,username
+    `select email,name,employee_id,department,location,division,role,signature_file,username,must_change_password
      from employees where active=true order by
      case role when 'REQUESTOR' then 1 when 'REVIEWER' then 2 else 3 end, name`
   );
@@ -61,7 +61,7 @@ export async function listActiveEmployees() {
 
 export async function getEmployee(email) {
   const { rows } = await pool.query(
-    `select email,name,employee_id,department,location,division,role,signature_file,username
+    `select email,name,employee_id,department,location,division,role,signature_file,username,must_change_password
      from employees where lower(email)=lower($1) and active=true limit 1`,
     [email]
   );
@@ -70,7 +70,7 @@ export async function getEmployee(email) {
 
 export async function authenticateLocalUser(username,password) {
   const {rows}=await pool.query(
-    `select email,name,employee_id,department,location,division,role,signature_file,username
+    `select email,name,employee_id,department,location,division,role,signature_file,username,must_change_password
      from employees
      where active=true
        and username is not null
@@ -81,6 +81,23 @@ export async function authenticateLocalUser(username,password) {
     [String(username||'').trim(),String(password||'')]
   );
   return rows[0] || null;
+}
+
+export async function changeEmployeePassword(email,currentPassword,newPassword) {
+  const {rows}=await pool.query(
+    `update employees
+     set password_hash=crypt($3,gen_salt('bf',10)),
+         must_change_password=false
+     where lower(email)=lower($1)
+       and active=true
+       and role<>'ADMIN'
+       and password_hash is not null
+       and password_hash=crypt($2,password_hash)
+     returning email,name,employee_id,department,location,division,role,signature_file,username,must_change_password`,
+    [email,String(currentPassword||''),String(newPassword||'')]
+  );
+  if(!rows[0]) throw Object.assign(new Error('Current password is incorrect.'),{status:400});
+  return rows[0];
 }
 
 export async function updateEmployeeSignature(email,signatureFile) {
@@ -98,7 +115,7 @@ export async function updateEmployeeSignature(email,signatureFile) {
 
 export async function listManagedEmployees() {
   const {rows}=await pool.query(
-    `select email,name,employee_id,department,location,division,role,active,username,
+    `select email,name,employee_id,department,location,division,role,active,username,must_change_password,
        (coalesce(signature_file,'')<>'') as has_signature
      from employees
      where role<>'ADMIN'
@@ -206,11 +223,11 @@ export async function createManagedEmployee(data) {
 
     const {rows}=await client.query(
       `insert into employees(
-        email,name,employee_id,department,location,division,role,signature_file,active,username,password_hash
+        email,name,employee_id,department,location,division,role,signature_file,active,username,password_hash,must_change_password
        ) values(
-        lower($1),$2,$3,$4,$5,$6,$7,'',true,$8,crypt($9,gen_salt('bf',10))
+        lower($1),$2,$3,$4,$5,$6,$7,'',true,$8,crypt($9,gen_salt('bf',10)),true
        )
-       returning email,name,employee_id,department,location,division,role,active,username,
+       returning email,name,employee_id,department,location,division,role,active,username,must_change_password,
          false as has_signature`,
       [
         String(data.email).trim(),String(data.name).trim(),String(data.employeeId).trim(),
@@ -280,9 +297,10 @@ export async function updateManagedEmployee(email,data) {
            role=$7,
            username=$8,
            active=$9,
-           password_hash=case when $10<>'' then crypt($10,gen_salt('bf',10)) else password_hash end
+           password_hash=case when $10<>'' then crypt($10,gen_salt('bf',10)) else password_hash end,
+           must_change_password=case when $10<>'' then true else must_change_password end
        where lower(email)=lower($1) and role<>'ADMIN'
-       returning email,name,employee_id,department,location,division,role,active,username,
+       returning email,name,employee_id,department,location,division,role,active,username,must_change_password,
          (coalesce(signature_file,'')<>'') as has_signature`,
       [
         email,String(data.name).trim(),String(data.employeeId).trim(),String(data.department).trim(),
@@ -337,7 +355,7 @@ export async function setManagedEmployeeActive(email,active) {
       `update employees
        set active=$2
        where lower(email)=lower($1) and role<>'ADMIN'
-       returning email,name,employee_id,department,location,division,role,active,username,
+       returning email,name,employee_id,department,location,division,role,active,username,must_change_password,
          (coalesce(signature_file,'')<>'') as has_signature`,
       [email,nextActive]
     );
