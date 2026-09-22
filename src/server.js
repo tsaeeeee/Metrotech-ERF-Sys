@@ -8,7 +8,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import {
-  pool,pingDb,getEmployee,authenticateLocalUser,updateEmployeeSignature,listManagedEmployees,
+  pool,pingDb,getEmployee,authenticateLocalUser,changeEmployeePassword,updateEmployeeSignature,listManagedEmployees,
   createManagedEmployee,updateManagedEmployee,setManagedEmployeeActive,ensureBootstrapAdminCredentials,
   listRequestsForEmployee,createExpenseRequest,
   getRequestDetail,setDocumentPaths,transitionRequest,recallExpenseRequest,reviseExpenseRequest
@@ -152,11 +152,26 @@ app.post('/api/login',async(req,res,next)=>{
 
     loginAttempts.delete(key);
     req.session.user={email:employee.email};
-    res.json({ok:true,employee});
+    res.json({ok:true,employee,setupRequired:employeeNeedsSetup(employee)});
   }catch(e){next(e)}
 });
 
 app.post('/api/logout',(req,res)=>req.session.destroy(()=>res.json({ok:true})));
+
+const setupAllowedPaths=new Set([
+  '/api/me',
+  '/api/profile',
+  '/api/profile/password',
+  '/api/profile/signature'
+]);
+
+function employeeNeedsSetup(employee){
+  return Boolean(
+    employee &&
+    employee.role!=='ADMIN' &&
+    (employee.must_change_password || !String(employee.signature_file||'').trim())
+  );
+}
 
 async function requireUser(req,res,next){
   try{
@@ -165,6 +180,11 @@ async function requireUser(req,res,next){
     const employee=await getEmployee(email);
     if(!employee) return res.status(403).json({error:'Employee is inactive or missing'});
     req.employee=employee;
+    if(employeeNeedsSetup(employee) && !setupAllowedPaths.has(req.path))
+      return res.status(428).json({
+        error:'Complete your first login setup before using the system.',
+        code:'SETUP_REQUIRED'
+      });
     next();
   }catch(e){next(e)}
 }
@@ -418,7 +438,32 @@ async function cleanupApprovedRequestFiles(detail){
 
 app.get('/api/me',requireUser,async(req,res)=>{
   const requests=await listRequestsForEmployee(req.employee);
-  res.json({employee:req.employee,requests});
+  res.json({employee:req.employee,requests,setupRequired:employeeNeedsSetup(req.employee)});
+});
+
+app.put('/api/profile/password',requireUser,async(req,res,next)=>{
+  try{
+    if(req.employee.role==='ADMIN')
+      return res.status(400).json({error:'Admin password is managed separately.'});
+
+    const currentPassword=String(req.body?.currentPassword||'');
+    const newPassword=String(req.body?.newPassword||'');
+    const confirmPassword=String(req.body?.confirmPassword||'');
+
+    if(!currentPassword || !newPassword || !confirmPassword)
+      return res.status(400).json({error:'Complete all password fields.'});
+    if(newPassword!==confirmPassword)
+      return res.status(400).json({error:'New password confirmation does not match.'});
+    if(newPassword===currentPassword)
+      return res.status(400).json({error:'New password must be different from the current password.'});
+    if(newPassword.length<12 || newPassword.length>128)
+      return res.status(400).json({error:'New password must be 12–128 characters.'});
+    if(!/[a-z]/.test(newPassword) || !/[A-Z]/.test(newPassword) || !/[0-9]/.test(newPassword))
+      return res.status(400).json({error:'New password must include uppercase, lowercase, and a number.'});
+
+    const employee=await changeEmployeePassword(req.employee.email,currentPassword,newPassword);
+    res.json({ok:true,employee,setupRequired:employeeNeedsSetup(employee)});
+  }catch(e){next(e)}
 });
 
 app.put('/api/profile',requireUser,signatureUpload.single('signature'),async(req,res,next)=>{
@@ -438,7 +483,7 @@ app.put('/api/profile',requireUser,signatureUpload.single('signature'),async(req
     await fs.writeFile(signatureFile,req.file.buffer);
 
     const employee=await updateEmployeeSignature(req.employee.email,signatureFile);
-    res.json({ok:true,employee});
+    res.json({ok:true,employee,setupRequired:employeeNeedsSetup(employee)});
   }catch(e){next(e)}
 });
 

@@ -57,12 +57,121 @@ async function submitLogin(event){
   }
 }
 
+function employeeNeedsSetup(employee=currentEmployee){
+  return Boolean(
+    employee &&
+    employee.role!=='ADMIN' &&
+    (employee.must_change_password || !String(employee.signature_file||'').trim())
+  );
+}
+
+function renderFirstSetupState(){
+  if(!currentEmployee || currentEmployee.role==='ADMIN') return;
+  const passwordDone=!currentEmployee.must_change_password;
+  const signatureDone=Boolean(String(currentEmployee.signature_file||'').trim());
+
+  $('#firstPasswordState').className=`setup-state ${passwordDone?'done':'pending'}`;
+  $('#firstPasswordState').innerHTML=passwordDone
+    ? '<strong>✓ Password</strong><span>Changed</span>'
+    : '<strong>1 Password</strong><span>Change required</span>';
+
+  $('#firstSignatureState').className=`setup-state ${signatureDone?'done':'pending'}`;
+  $('#firstSignatureState').innerHTML=signatureDone
+    ? '<strong>✓ Signature</strong><span>Uploaded</span>'
+    : '<strong>2 Signature</strong><span>Upload required</span>';
+
+  $('#firstPasswordForm').classList.toggle('hidden',passwordDone);
+  $('#firstSignatureForm').classList.toggle('hidden',signatureDone);
+}
+
+function openFirstSetupModal(){
+  renderFirstSetupState();
+  $('#firstSetupModal').classList.remove('hidden');
+  document.body.classList.add('modal-open');
+}
+
+function closeFirstSetupModal(force=false){
+  if(!force && employeeNeedsSetup()) return;
+  $('#firstSetupModal')?.classList.add('hidden');
+  $('#firstCurrentPassword').value='';
+  $('#firstNewPassword').value='';
+  $('#firstConfirmPassword').value='';
+  $('#firstSetupSignature').value='';
+  $('#firstSetupSignatureInfo').textContent='No file selected';
+  if($('#profileModal').classList.contains('hidden') && $('#detailModal').classList.contains('hidden') && $('#adminUserModal').classList.contains('hidden'))
+    document.body.classList.remove('modal-open');
+}
+
+async function finishFirstSetupIfReady(){
+  if(employeeNeedsSetup()){
+    renderFirstSetupState();
+    return;
+  }
+  closeFirstSetupModal(true);
+  await loadMe();
+  msg('Account setup completed successfully.','ok');
+}
+
+async function submitFirstPassword(event){
+  event.preventDefault();
+  const currentPassword=$('#firstCurrentPassword').value;
+  const newPassword=$('#firstNewPassword').value;
+  const confirmPassword=$('#firstConfirmPassword').value;
+  if(newPassword!==confirmPassword) return msg('New password confirmation does not match.','err');
+
+  const btn=$('#firstPasswordBtn');
+  btn.disabled=true;
+  btn.textContent='Changing…';
+  try{
+    const result=await api('/api/profile/password',{
+      method:'PUT',
+      body:JSON.stringify({currentPassword,newPassword,confirmPassword})
+    });
+    currentEmployee=result.employee;
+    $('#firstCurrentPassword').value='';
+    $('#firstNewPassword').value='';
+    $('#firstConfirmPassword').value='';
+    msg('Password changed successfully.','ok');
+    await finishFirstSetupIfReady();
+  }catch(e){
+    msg(e.message,'err');
+  }finally{
+    btn.disabled=false;
+    btn.textContent='Change Password';
+  }
+}
+
+async function submitFirstSignature(event){
+  event.preventDefault();
+  const sig=$('#firstSetupSignature').files?.[0];
+  if(!sig) return msg('Choose a signature image first.','err');
+
+  const btn=$('#firstSignatureBtn');
+  btn.disabled=true;
+  btn.textContent='Uploading…';
+  try{
+    const fd=new FormData();
+    fd.append('signature',sig,sig.name);
+    const result=await api('/api/profile',{method:'PUT',body:fd});
+    currentEmployee=result.employee;
+    $('#firstSetupSignature').value='';
+    $('#firstSetupSignatureInfo').textContent='No file selected';
+    msg('Digital signature uploaded successfully.','ok');
+    await finishFirstSetupIfReady();
+  }catch(e){
+    msg(e.message,'err');
+  }finally{
+    btn.disabled=false;
+    btn.textContent='Upload Signature';
+  }
+}
+
 async function loadMe(){
   try{
     const {employee,requests}=await api('/api/me');
     currentEmployee=employee;
     $('#loginCard').classList.add('hidden');
-    $('#dashboard').classList.remove('hidden');
+    $('#dashboard').classList.add('hidden');
 
     const initials=String(employee.name||employee.email||'U')
       .split(/\s+/).filter(Boolean).slice(0,2).map(x=>x[0]).join('').toUpperCase();
@@ -71,6 +180,15 @@ async function loadMe(){
     $('#userMenuRole').textContent=employee.role;
     $('#userMenuFullName').textContent=employee.name||employee.email;
     $('#userMenuEmail').textContent=employee.email;
+
+    if(employeeNeedsSetup(employee)){
+      $('#userMenuWrap').classList.add('hidden');
+      openFirstSetupModal();
+      return;
+    }
+
+    closeFirstSetupModal(true);
+    $('#dashboard').classList.remove('hidden');
     $('#userMenuWrap').classList.remove('hidden');
 
     const isAdmin=employee.role==='ADMIN';
@@ -169,6 +287,9 @@ function openProfileModal(){
   `).join('');
   $('#profileSignature').value='';
   $('#profileSignatureInfo').textContent='No file selected';
+  $('#profileCurrentPassword').value='';
+  $('#profileNewPassword').value='';
+  $('#profileConfirmPassword').value='';
   $('#profileModal').classList.remove('hidden');
   document.body.classList.add('modal-open');
 }
@@ -177,12 +298,45 @@ function closeProfileModal(){
   $('#profileModal').classList.add('hidden');
   $('#profileSignature').value='';
   $('#profileSignatureInfo').textContent='No file selected';
-  if($('#detailModal').classList.contains('hidden') && $('#adminUserModal').classList.contains('hidden'))
+  $('#profileCurrentPassword').value='';
+  $('#profileNewPassword').value='';
+  $('#profileConfirmPassword').value='';
+  if($('#detailModal').classList.contains('hidden') && $('#adminUserModal').classList.contains('hidden') && $('#firstSetupModal').classList.contains('hidden'))
     document.body.classList.remove('modal-open');
 }
 
 function profileBackdrop(e){
   if(e.target.id==='profileModal') closeProfileModal();
+}
+
+async function changeProfilePassword(event){
+  event.preventDefault();
+  if(!currentEmployee || currentEmployee.role==='ADMIN') return;
+
+  const currentPassword=$('#profileCurrentPassword').value;
+  const newPassword=$('#profileNewPassword').value;
+  const confirmPassword=$('#profileConfirmPassword').value;
+  if(newPassword!==confirmPassword) return msg('New password confirmation does not match.','err');
+
+  const btn=$('#changeProfilePasswordBtn');
+  btn.disabled=true;
+  btn.textContent='Changing…';
+  try{
+    const result=await api('/api/profile/password',{
+      method:'PUT',
+      body:JSON.stringify({currentPassword,newPassword,confirmPassword})
+    });
+    currentEmployee=result.employee;
+    $('#profileCurrentPassword').value='';
+    $('#profileNewPassword').value='';
+    $('#profileConfirmPassword').value='';
+    msg('Password changed successfully.','ok');
+  }catch(e){
+    msg(e.message,'err');
+  }finally{
+    btn.disabled=false;
+    btn.textContent='Change Password';
+  }
 }
 
 async function saveProfile(event){
@@ -408,6 +562,7 @@ function renderAdminUsers(){
       <td>${esc(u.department)}</td>
       <td><span class="role-chip">${esc(u.role)}</span></td>
       <td>${u.has_signature?'<span class="signature-state ready">Uploaded</span>':'<span class="signature-state">Not uploaded</span>'}</td>
+      <td>${u.must_change_password?'<span class="signature-state">Password change required</span>':u.has_signature?'<span class="signature-state ready">Ready</span>':'<span class="signature-state">Signature required</span>'}</td>
       <td>${u.active?'<span class="user-state active">Active</span>':'<span class="user-state">Inactive</span>'}</td>
       <td class="actions action-col">
         <button class="btn tiny ghost" type="button" onclick="openAdminUserModal('${encodeURIComponent(u.email)}')">Edit</button>
@@ -638,6 +793,10 @@ document.addEventListener('change',e=>{
   if(e.target.id==='profileSignature'){
     const file=e.target.files?.[0];
     $('#profileSignatureInfo').textContent=file?file.name:'No file selected';
+  }
+  if(e.target.id==='firstSetupSignature'){
+    const file=e.target.files?.[0];
+    $('#firstSetupSignatureInfo').textContent=file?file.name:'No file selected';
   }
 });
 
@@ -941,6 +1100,8 @@ async function logout(){
   currentEmployee=null; payments=[]; editingIndex=-1; revisionTarget=null; currentDetailId=null;
   adminUsers=[]; editingAdminEmail=null; appSettingsLoaded=false;
   $('#profileModal').classList.add('hidden');
+  $('#firstSetupModal').classList.add('hidden');
+  document.body.classList.remove('modal-open');
   renderPayments();
   $('#dashboard').classList.add('hidden');
   $('#loginCard').classList.remove('hidden');
