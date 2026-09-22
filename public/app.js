@@ -61,14 +61,14 @@ function employeeNeedsSetup(employee=currentEmployee){
   return Boolean(
     employee &&
     employee.role!=='ADMIN' &&
-    (employee.must_change_password || !String(employee.signature_file||'').trim())
+    (employee.must_change_password || employee.must_upload_signature)
   );
 }
 
 function renderFirstSetupState(){
   if(!currentEmployee || currentEmployee.role==='ADMIN') return;
   const passwordDone=!currentEmployee.must_change_password;
-  const signatureDone=Boolean(String(currentEmployee.signature_file||'').trim());
+  const signatureDone=!currentEmployee.must_upload_signature;
 
   $('#firstPasswordState').className=`setup-state ${passwordDone?'done':'pending'}`;
   $('#firstPasswordState').innerHTML=passwordDone
@@ -562,7 +562,13 @@ function renderAdminUsers(){
       <td>${esc(u.department)}</td>
       <td><span class="role-chip">${esc(u.role)}</span></td>
       <td>${u.has_signature?'<span class="signature-state ready">Uploaded</span>':'<span class="signature-state">Not uploaded</span>'}</td>
-      <td>${u.must_change_password?'<span class="signature-state">Password change required</span>':u.has_signature?'<span class="signature-state ready">Ready</span>':'<span class="signature-state">Signature required</span>'}</td>
+      <td>${u.must_change_password && u.must_upload_signature
+        ? '<span class="signature-state">Password & signature required</span>'
+        : u.must_change_password
+          ? '<span class="signature-state">Password change required</span>'
+          : u.must_upload_signature
+            ? '<span class="signature-state">Signature upload required</span>'
+            : '<span class="signature-state ready">Ready</span>'}</td>
       <td>${u.active?'<span class="user-state active">Active</span>':'<span class="user-state">Inactive</span>'}</td>
       <td class="actions action-col">
         <button class="btn tiny ghost" type="button" onclick="openAdminUserModal('${encodeURIComponent(u.email)}')">Edit</button>
