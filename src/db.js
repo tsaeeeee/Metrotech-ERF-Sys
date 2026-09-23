@@ -411,6 +411,7 @@ export async function getEcfRole(email){
 
 export async function listTasksForEmployee(employee){
   if(employee.role==='ADMIN') return [];
+  const ecfRole=employee.ecfRole||await getEcfRole(employee.email);
   const {rows}=await pool.query(
     `select r.id,r.ref_no,r.form_type,r.request_date,r.employee_name,r.total,r.status,
        d.source_erf_id,s.ref_no as source_erf_ref
@@ -420,7 +421,7 @@ export async function listTasksForEmployee(employee){
        and lower(r.requester_email)<>lower($1))
        or (r.status='PENDING_REVIEW' and lower(r.reviewer_email)=lower($1))
        or (r.status='PENDING_APPROVAL' and lower(r.approver_email)=lower($1))
-     order by r.updated_at asc limit 100`,[employee.email,employee.ecfRole==='CHECKER']
+     order by r.updated_at asc limit 100`,[employee.email,ecfRole==='CHECKER']
   );
   return rows;
 }

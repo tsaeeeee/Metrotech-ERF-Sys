@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { PDFDocument } from 'pdf-lib';
 
 process.env.POSTGRES_HOST ||= '127.0.0.1';
 process.env.POSTGRES_PORT ||= '5432';
@@ -11,7 +12,8 @@ process.env.APPROVER_NAME ||= 'Ervan Mardianto';
 const {
   pool,getEmployee,createExpenseRequest,transitionRequest,
   reviseExpenseRequest,recallExpenseRequest,createManagedEmployee,setManagedEmployeeActive,
-  createEcfClaim,listEligibleErfs,listTasksForEmployee,getEmsDashboard,getEcfRole
+  createEcfClaim,listEligibleErfs,listTasksForEmployee,getEmsDashboard,getEcfRole,
+  getRequestDetail
 }=await import('../src/db.js');
 
 function assert(condition,message){
@@ -143,6 +145,17 @@ try{
     'Concurrent ECF claims must not oversubscribe the same ERF.');
   const claim=simultaneous.find(result=>result.status==='fulfilled').value;
   assert(claim.status==='PENDING_CHECK'&&claim.form_type==='ECF','ECF must start with Checker.');
+  await pool.query(`update employee_payment_profiles set account_number='999999999'
+    where employee_email=$1`,[requestor.email]);
+  const claimDetail=await getRequestDetail(claim.id);
+  assert(claimDetail.request.account_number==='123456789',
+    'Submitted claim must retain its original bank account snapshot.');
+  const {buildFormPdf}=await import('../src/documents.js');
+  const pdfPath='/tmp/ems-claim-smoke.pdf';
+  await buildFormPdf({...claimDetail,outPath:pdfPath});
+  const pdf=await PDFDocument.load(await fs.readFile(pdfPath));
+  assert(pdf.getPageCount()===1,'ECF should generate its own signed form page.');
+  await fs.rm(pdfPath,{force:true});
   assert((await getEcfRole(checker.email))==='CHECKER','Assigned Checker must retain access.');
   let blocked=false;
   try{await createEcfClaim(requestor,claimItems(50000),first.id)}catch(e){blocked=e.status===409}
