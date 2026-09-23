@@ -10,7 +10,8 @@ import { fileURLToPath } from 'node:url';
 import {
   pool,pingDb,getEmployee,authenticateLocalUser,changeEmployeePassword,updateEmployeeSignature,listManagedEmployees,
   createManagedEmployee,updateManagedEmployee,setManagedEmployeeActive,ensureBootstrapAdminCredentials,
-  listRequestsForEmployee,createExpenseRequest,
+  listRequestsForEmployee,listTasksForEmployee,listMyRequests,listEligibleErfs,getEcfRole,getEmsDashboard,
+  createExpenseRequest,createEcfClaim,
   getRequestDetail,setDocumentPaths,transitionRequest,recallExpenseRequest,reviseExpenseRequest
 } from './db.js';
 import { buildEvidencePdf,buildFormPdf } from './documents.js';
@@ -180,6 +181,7 @@ async function requireUser(req,res,next){
     const employee=await getEmployee(email);
     if(!employee) return res.status(403).json({error:'Employee is inactive or missing'});
     req.employee=employee;
+    employee.ecfRole=await getEcfRole(employee.email);
     if(employeeNeedsSetup(employee) && !setupAllowedPaths.has(req.path))
       return res.status(428).json({
         error:'Complete your first login setup before using the system.',
@@ -195,6 +197,8 @@ function requireAdmin(req,res,next){
 }
 
 function canAccess(employee,request){
+  if(request.form_type==='ECF' && employee.ecfRole==='CHECKER' &&
+     request.status==='PENDING_CHECK') return true;
   if(employee.role==='REQUESTOR') return String(request.requester_email).toLowerCase()===String(employee.email).toLowerCase();
   if(employee.role==='REVIEWER') return String(request.reviewer_email).toLowerCase()===String(employee.email).toLowerCase();
   if(employee.role==='APPROVER') return String(request.approver_email).toLowerCase()===String(employee.email).toLowerCase();
@@ -209,6 +213,7 @@ function normalizeRequestType(value){
 }
 
 function requestCode(request){
+  if(request?.form_type==='ECF') return 'ECF';
   return String(request?.request_type||'').toUpperCase()==='REIMBURSEMENT' || String(request?.ref_no||'').startsWith('RRF-')
     ? 'RRF'
     : 'ERF';
@@ -295,7 +300,7 @@ async function loadExistingEvidenceFiles(requestId,revision,lineNo,targetIndex,e
 
 async function parseRevisionItemsAndFiles(req,detail){
   const requestType=normalizeRequestType(detail.request?.request_type||'EXPENSE');
-  const evidenceRequired=requestType==='REIMBURSEMENT';
+  const evidenceRequired=detail.request?.form_type==='ECF'||requestType==='REIMBURSEMENT';
   let rawItems;
   try { rawItems=JSON.parse(String(req.body.items||'[]')); }
   catch { throw Object.assign(new Error('Invalid payment data.'),{status:400}); }
@@ -438,7 +443,20 @@ async function cleanupApprovedRequestFiles(detail){
 
 app.get('/api/me',requireUser,async(req,res)=>{
   const requests=await listRequestsForEmployee(req.employee);
-  res.json({employee:req.employee,requests,setupRequired:employeeNeedsSetup(req.employee)});
+  const tasks=await listTasksForEmployee(req.employee);
+  const myRequests=await listMyRequests(req.employee);
+  res.json({employee:req.employee,requests,tasks,myRequests,setupRequired:employeeNeedsSetup(req.employee)});
+});
+
+app.get('/api/ems/dashboard',requireUser,async(req,res,next)=>{
+  try{res.json(await getEmsDashboard(req.employee))}catch(e){next(e)}
+});
+
+app.get('/api/ecf/eligible-erfs',requireUser,async(req,res,next)=>{
+  try{
+    if(req.employee.ecfRole!=='REQUESTOR') return res.status(403).json({error:'ECF Requestor access required.'});
+    res.json({erfs:await listEligibleErfs(req.employee)});
+  }catch(e){next(e)}
 });
 
 app.put('/api/profile/password',requireUser,async(req,res,next)=>{
@@ -609,6 +627,25 @@ app.post('/api/requests',requireUser,upload.any(),async(req,res,next)=>{
   }catch(e){next(e)}
 });
 
+app.post('/api/ecf/claims',requireUser,upload.any(),async(req,res,next)=>{
+  try{
+    if(req.employee.ecfRole!=='REQUESTOR') return res.status(403).json({error:'ECF Requestor access required.'});
+    const sourceErfId=String(req.body.sourceErfId||'');
+    if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sourceErfId))
+      return res.status(400).json({error:'Choose an approved source ERF.'});
+    const {items,files}=parseItemsAndFiles(req,'REIMBURSEMENT');
+    const settings=await getRuntimeAppSettings();
+    const request=await createEcfClaim(req.employee,items,sourceErfId,settings.timezone,
+      String(req.body.serviceOrderNumber||'').trim().slice(0,100));
+    await persistOriginals(request.id,1,files);
+    const {detail}=await generateSubmissionDocs(request.id,files);
+    await sendWorkflowMail({event:'SUBMITTED',request:detail.request,to:detail.request.checker_email,
+      subject:`[ECF] ${request.ref_no} pending check`,
+      text:`${request.employee_name} submitted ${request.ref_no} against ${detail.request.source_erf_ref}.`});
+    res.status(201).json({ok:true,requestId:request.id,refNo:request.ref_no,status:request.status});
+  }catch(e){next(e)}
+});
+
 app.post('/api/requests/:id/recall',requireUser,async(req,res,next)=>{
   try{
     if(req.employee.role!=='REQUESTOR') return res.status(403).json({error:'Only Requestor can recall a request.'});
@@ -617,7 +654,7 @@ app.post('/api/requests/:id/recall',requireUser,async(req,res,next)=>{
     await sendWorkflowMail({
       event:'RECALLED',
       request:detail.request,
-      to:detail.request.reviewer_email,
+      to:detail.request.form_type==='ECF'?detail.request.checker_email:detail.request.reviewer_email,
       subject:`[${requestCode(detail.request)}] ${detail.request.ref_no} recalled by requestor`,
       text:`${detail.request.ref_no} was recalled by ${req.employee.name} and no longer requires review.`
     });
@@ -632,18 +669,20 @@ app.post('/api/requests/:id/revise',requireUser,upload.any(),async(req,res,next)
     const currentDetail=await getRequestDetail(req.params.id);
     if(!currentDetail) return res.status(404).json({error:'Request not found'});
     if(!canAccess(req.employee,currentDetail.request)) return res.status(403).json({error:'Access denied'});
+    if(currentDetail.request.form_type==='ECF' && req.employee.ecfRole!=='REQUESTOR')
+      return res.status(403).json({error:'ECF Requestor access required.'});
 
     const {items,files}=await parseRevisionItemsAndFiles(req,currentDetail);
     const request=await reviseExpenseRequest(req.params.id,req.employee,items);
     await persistOriginals(request.id,request.revision,files);
     const {detail}=await generateSubmissionDocs(request.id,files);
     await sendWorkflowMail({
-      event:'REVISED',request:detail.request,to:detail.request.reviewer_email,
+      event:'REVISED',request:detail.request,to:detail.request.form_type==='ECF'?detail.request.checker_email:detail.request.reviewer_email,
       subject:`[${requestCode(detail.request)}] ${detail.request.ref_no} revised and pending review`,
       text:`${detail.request.employee_name} submitted revision ${detail.request.revision} of ${detail.request.ref_no}.`
     });
     res.json({
-      ok:true,requestId:request.id,refNo:request.ref_no,status:'PENDING_REVIEW',revision:request.revision,
+      ok:true,requestId:request.id,refNo:request.ref_no,status:request.status,revision:request.revision,
       requestType:detail.request.request_type
     });
   }catch(e){next(e)}
@@ -708,6 +747,20 @@ app.post('/api/requests/:id/review',requireUser,async(req,res,next)=>{
         :`${detail.request.ref_no} was rejected by ${req.employee.name}. Reason: ${req.body.reason}`
     });
     res.json({ok:true,status:detail.request.status});
+  }catch(e){next(e)}
+});
+
+app.post('/api/requests/:id/check',requireUser,async(req,res,next)=>{
+  try{
+    const request=await transitionRequest(req.params.id,req.employee,'CHECK',req.body.decision,req.body.reason||'');
+    const detail=await regenerateForm(request.id);
+    const passed=request.status==='PENDING_REVIEW';
+    await sendWorkflowMail({event:passed?'CHECK_APPROVED':'CHECK_REJECTED',request:detail.request,
+      to:passed?request.reviewer_email:request.requester_email,
+      subject:`[ECF] ${request.ref_no} ${passed?'pending review':'rejected by Checker'}`,
+      text:passed?`${request.ref_no} has passed the Checker stage.`:
+        `${request.ref_no} was rejected by Checker. Reason: ${req.body.reason}`});
+    res.json({ok:true,status:request.status});
   }catch(e){next(e)}
 });
 

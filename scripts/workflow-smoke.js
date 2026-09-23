@@ -10,7 +10,8 @@ process.env.APPROVER_NAME ||= 'Ervan Mardianto';
 
 const {
   pool,getEmployee,createExpenseRequest,transitionRequest,
-  reviseExpenseRequest,recallExpenseRequest,createManagedEmployee,setManagedEmployeeActive
+  reviseExpenseRequest,recallExpenseRequest,createManagedEmployee,setManagedEmployeeActive,
+  createEcfClaim,listEligibleErfs,listTasksForEmployee,getEmsDashboard,getEcfRole
 }=await import('../src/db.js');
 
 function assert(condition,message){
@@ -23,6 +24,10 @@ function items(label){
 try{
   const schema=await fs.readFile(new URL('../sql/schema.sql',import.meta.url),'utf8');
   await pool.query(schema);
+  for(const file of ['015-ems-foundation.sql','016-ems-claim-flow.sql']){
+    const migration=await fs.readFile(new URL(`../sql/migrations/${file}`,import.meta.url),'utf8');
+    await pool.query(migration);
+  }
   const adminSeed=await fs.readFile(new URL('../sql/dev-accounts.sql',import.meta.url),'utf8');
   await pool.query(adminSeed);
 
@@ -80,7 +85,7 @@ try{
      where lower(employee_email)=lower($1) and form_type='ECF' and active=true`,
     [requestor.email]
   );
-  assert(ecfCheckerRows[0]?.role_code==='CHECKER','ECF Requestor must be assignable as Checker.');
+  assert(ecfCheckerRows.some(row=>row.role_code==='CHECKER'),'ECF Requestor must be assignable as Checker.');
   await saveAppSettings({
     ecfRoleAssignment:{
       email:requestor.email,
@@ -114,6 +119,53 @@ try{
 
   const finalApproved=await transitionRequest(first.id,approver,'APPROVAL','APPROVE','');
   assert(finalApproved.status==='APPROVED','Final approval must enter APPROVED.');
+
+  // A separate Checker owns the first ECF stage. The source ERF is locked
+  // while reservations are calculated, including every active pending claim.
+  await pool.query(`insert into employees(
+      email,name,employee_id,department,location,division,role,signature_file,active
+    ) values('checker-test@metrotech.local','Claim Checker','TEST-006','Finance','Jakarta',
+      'Finance','REQUESTOR','/tmp/ci-checker-signature.png',true)`);
+  const checker=await getEmployee('checker-test@metrotech.local');
+  await saveAppSettings({ecfRoleAssignment:{email:checker.email,role:'CHECKER'}},bootstrapAdmin.email);
+  await pool.query(`insert into employee_payment_profiles
+    (employee_email,payment_to,bank_name,bank_code,account_number)
+    values($1,'Workflow Requestor','Bank Central Asia','BCA','123456789')`,[requestor.email]);
+  const eligible=await listEligibleErfs(requestor);
+  assert(eligible.some(row=>row.id===first.id),'Approved ERF should be eligible for a claim.');
+  const claimItems=amount=>[{...items('Linked claim')[0],amount}];
+  const simultaneous=await Promise.allSettled([
+    createEcfClaim(requestor,claimItems(60000),first.id),
+    createEcfClaim(requestor,claimItems(60000),first.id)
+  ]);
+  assert(simultaneous.filter(result=>result.status==='fulfilled').length===1 &&
+    simultaneous.filter(result=>result.status==='rejected'&&result.reason.status===409).length===1,
+    'Concurrent ECF claims must not oversubscribe the same ERF.');
+  const claim=simultaneous.find(result=>result.status==='fulfilled').value;
+  assert(claim.status==='PENDING_CHECK'&&claim.form_type==='ECF','ECF must start with Checker.');
+  assert((await getEcfRole(checker.email))==='CHECKER','Assigned Checker must retain access.');
+  let blocked=false;
+  try{await createEcfClaim(requestor,claimItems(50000),first.id)}catch(e){blocked=e.status===409}
+  assert(blocked,'Pending claim must reserve ERF balance.');
+  assert((await listTasksForEmployee(checker)).some(row=>row.id===claim.id),
+    'Checker must see the claim in My Tasks.');
+  await transitionRequest(claim.id,checker,'CHECK','REJECT','Please revise evidence.');
+  assert(Number((await listEligibleErfs(requestor)).find(row=>row.id===first.id).available)===100000,
+    'Rejected claim must release its reserved amount.');
+  await reviseExpenseRequest(claim.id,requestor,claimItems(70000));
+  assert((await pool.query('select status from requests where id=$1',[claim.id])).rows[0].status==='PENDING_CHECK',
+    'Revised claim returns to Checker.');
+  const nextClaim=await createEcfClaim(requestor,claimItems(30000),first.id);
+  assert(nextClaim.status==='PENDING_CHECK','One ERF can have several ECF claims.');
+  await transitionRequest(claim.id,checker,'CHECK','APPROVE');
+  const reviewerForClaim=await getEmployee(claim.reviewer_email);
+  await transitionRequest(claim.id,reviewerForClaim,'REVIEW','APPROVE');
+  await transitionRequest(claim.id,approver,'APPROVAL','APPROVE');
+  assert(Number((await listEligibleErfs(requestor)).find(row=>row.id===first.id).available)===0,
+    'Approved and pending claims together must consume the available ERF balance.');
+  const analytics=await getEmsDashboard(requestor);
+  assert(analytics.totals.some(row=>row.form_type==='ECF'&&row.status==='APPROVED'),
+    'EMS dashboard must include approved ECF claims.');
 
   const recalledRequest=await createExpenseRequest(requestor,items('Recall flow'));
   const recalled=await recallExpenseRequest(recalledRequest.id,requestor);
