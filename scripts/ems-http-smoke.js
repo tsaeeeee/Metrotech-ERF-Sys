@@ -12,7 +12,7 @@ process.env.PDF_DIR='/tmp/ems-http-smoke';
 process.env.PORT='18989';
 
 const base='http://127.0.0.1:18989';
-const {pool,getEmployee,createExpenseRequest,transitionRequest}=await import('../src/db.js');
+const {pool,getEmployee,createExpenseRequest}=await import('../src/db.js');
 const server=spawn(process.execPath,['--import','./src/ecf-profile-preload.js','src/server.js'],{
   env:process.env,stdio:['ignore','pipe','pipe']
 });
@@ -50,20 +50,14 @@ try{
   const requestor=await getEmployee('requestor-test@metrotech.local');
   const approver=await getEmployee('approver-test@metrotech.local');
   const erf=await createExpenseRequest(requestor,[{
-    category:'Testing',purpose:'HTTP route source',paymentDate:'2026-09-23',
+    category:'Testing',purpose:'Pending ERF',paymentDate:'2026-09-23',
     amount:100000,evidenceNames:[]
   }]);
-  await transitionRequest(erf.id,await getEmployee(erf.reviewer_email),'REVIEW','APPROVE');
-  await transitionRequest(erf.id,approver,'APPROVAL','APPROVE');
 
   const requestorCookie=await login('workflow-requestor');
-  const eligible=await request('/api/ecf/eligible-erfs',{cookie:requestorCookie});
-  assert(eligible.status===200&&eligible.data.erfs.some(row=>row.id===erf.id),
-    'Eligible ERF route must include the approved source.');
   const evidence=await PDFDocument.create();
   evidence.addPage([200,200]);
   const form=new FormData();
-  form.set('sourceErfId',erf.id);
   form.set('serviceOrderNumber','SO-HTTP-01');
   form.set('items',JSON.stringify([{
     category:'Testing',purpose:'Claim route',paymentDate:'2026-09-23',amount:20000
@@ -74,20 +68,23 @@ try{
     `ECF submit failed: ${JSON.stringify(submitted.data)}`);
   const id=submitted.data.requestId;
   const detail=await request(`/api/requests/${id}`,{cookie:requestorCookie});
-  assert(detail.status===200&&detail.data.request.source_erf_id===erf.id&&
+  assert(detail.status===200&&!detail.data.request.source_erf_id&&
     detail.data.documents.packet&&detail.data.documents.evidence,
-    'Claim detail must include source ERF and both document views.');
+    'Independent claim detail must include both document views.');
+  assert((await pool.query('select status from requests where id=$1',[erf.id])).rows[0].status==='PENDING_REVIEW',
+    'ECF submission must work without an approved ERF.');
   const tasksCookie=await login('workflow-requestor');
   assert((await request('/api/me',{cookie:tasksCookie})).data.myRequests.some(row=>row.id===id),
     'My Requests must include the submitted ECF.');
-  const oversized=new FormData();
-  oversized.set('sourceErfId',erf.id);
-  oversized.set('items',JSON.stringify([{
-    category:'Testing',purpose:'Over balance',paymentDate:'2026-09-23',amount:90000
+  const second=new FormData();
+  second.set('items',JSON.stringify([{
+    category:'Testing',purpose:'Another claim',paymentDate:'2026-09-23',amount:90000
   }]));
-  oversized.set('evidence_0',new Blob([await evidence.save()],{type:'application/pdf'}),'proof.pdf');
-  assert((await request('/api/ecf/claims',{method:'POST',body:oversized,cookie:requestorCookie})).status===409,
-    'Submit API must reject claims above the remaining balance.');
+  second.set('evidence_0',new Blob([await evidence.save()],{type:'application/pdf'}),'proof.pdf');
+  assert((await request('/api/ecf/claims',{method:'POST',body:second,cookie:requestorCookie})).status===201,
+    'ECF claims must not be limited by unrelated ERF totals.');
+  assert((await request('/api/requests',{method:'POST',body:{requestType:'REIMBURSEMENT'},cookie:requestorCookie})).status===400,
+    'New reimbursement submissions must use the separate ECF flow.');
 
   const checkerCookie=await login('workflow-checker');
   const tasks=await request('/api/me',{cookie:checkerCookie});
