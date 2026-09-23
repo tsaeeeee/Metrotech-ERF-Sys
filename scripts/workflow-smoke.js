@@ -125,9 +125,9 @@ try{
   // A separate Checker owns the first ECF stage. The source ERF is locked
   // while reservations are calculated, including every active pending claim.
   await pool.query(`insert into employees(
-      email,name,employee_id,department,location,division,role,signature_file,active
+      email,name,employee_id,department,location,division,role,signature_file,active,username,password_hash
     ) values('checker-test@metrotech.local','Claim Checker','TEST-006','Finance','Jakarta',
-      'Finance','REQUESTOR','/tmp/ci-checker-signature.png',true)`);
+      'Finance','REQUESTOR','/tmp/ci-checker-signature.png',true,'workflow-checker',crypt('ci-only',gen_salt('bf',10)))`);
   const checker=await getEmployee('checker-test@metrotech.local');
   await saveAppSettings({ecfRoleAssignment:{email:checker.email,role:'CHECKER'}},bootstrapAdmin.email);
   await pool.query(`insert into employee_payment_profiles
