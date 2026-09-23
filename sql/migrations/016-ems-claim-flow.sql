@@ -36,4 +36,110 @@ ON CONFLICT(employee_email,form_type,role_code) DO UPDATE SET active=true;
 CREATE INDEX IF NOT EXISTS requests_form_status_date_idx
   ON requests(form_type,status,request_date);
 
+-- Use the named constraint to avoid PL/pgSQL output-column ambiguity.
+CREATE OR REPLACE FUNCTION set_ecf_employee_role(
+  p_email text,
+  p_role text,
+  p_replace_checker boolean DEFAULT false
+)
+RETURNS TABLE(employee_email text, ecf_role text)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  target employees%ROWTYPE;
+  normalized_role text := upper(btrim(coalesce(p_role,'')));
+  current_checker record;
+BEGIN
+  PERFORM pg_advisory_xact_lock(77123003);
+
+  SELECT * INTO target
+  FROM employees
+  WHERE lower(email)=lower(p_email)
+    AND role<>'ADMIN'
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING ERRCODE='P0002', MESSAGE='Employee not found.';
+  END IF;
+
+  IF target.role IN ('REVIEWER','APPROVER') THEN
+    RAISE EXCEPTION USING
+      ERRCODE='P0001',
+      MESSAGE='Reviewer and Approver ECF access is inherited from ERF Access.';
+  END IF;
+
+  IF target.role<>'REQUESTOR' THEN
+    RAISE EXCEPTION USING
+      ERRCODE='P0001',
+      MESSAGE='Only employees with ERF Access Requestor can receive ECF Requestor or Checker access.';
+  END IF;
+
+  IF normalized_role NOT IN ('REQUESTOR','CHECKER','NONE') THEN
+    RAISE EXCEPTION USING
+      ERRCODE='22023',
+      MESSAGE='ECF access must be Requestor, Checker, or No Access.';
+  END IF;
+
+  IF normalized_role='NONE' THEN
+    DELETE FROM employee_form_roles fr
+    WHERE lower(fr.employee_email)=lower(target.email)
+      AND fr.form_type='ECF';
+    RETURN QUERY SELECT target.email::text,'NONE'::text;
+    RETURN;
+  END IF;
+
+  IF target.active=false THEN
+    RAISE EXCEPTION USING
+      ERRCODE='P0001',
+      MESSAGE='Inactive users cannot receive active ECF access.';
+  END IF;
+
+  INSERT INTO employee_form_roles(employee_email,form_type,role_code,active,updated_at)
+  VALUES(target.email,'ECF','REQUESTOR',true,now())
+  ON CONFLICT ON CONSTRAINT employee_form_roles_pkey DO UPDATE
+  SET active=true,updated_at=now();
+
+  IF normalized_role='REQUESTOR' THEN
+    DELETE FROM employee_form_roles fr
+    WHERE lower(fr.employee_email)=lower(target.email)
+      AND fr.form_type='ECF'
+      AND fr.role_code='CHECKER';
+    RETURN QUERY SELECT target.email::text,'REQUESTOR'::text;
+    RETURN;
+  END IF;
+
+  SELECT fr.employee_email,e.name
+    INTO current_checker
+  FROM employee_form_roles fr
+  JOIN employees e ON lower(e.email)=lower(fr.employee_email)
+  WHERE fr.form_type='ECF'
+    AND fr.role_code='CHECKER'
+    AND fr.active=true
+    AND e.active=true
+    AND lower(fr.employee_email)<>lower(target.email)
+  LIMIT 1;
+
+  IF FOUND AND NOT p_replace_checker THEN
+    RAISE EXCEPTION USING
+      ERRCODE='P0001',
+      MESSAGE=format('ECF Checker is currently assigned to %s. Confirm replacement first.',current_checker.name);
+  END IF;
+
+  IF FOUND AND p_replace_checker THEN
+    DELETE FROM employee_form_roles fr
+    WHERE fr.form_type='ECF'
+      AND role_code='CHECKER'
+      AND active=true
+      AND lower(fr.employee_email)<>lower(target.email);
+  END IF;
+
+  INSERT INTO employee_form_roles(employee_email,form_type,role_code,active,updated_at)
+  VALUES(target.email,'ECF','CHECKER',true,now())
+  ON CONFLICT ON CONSTRAINT employee_form_roles_pkey DO UPDATE
+  SET active=true,updated_at=now();
+
+  RETURN QUERY SELECT target.email::text,'CHECKER'::text;
+END;
+$$;
+
 COMMIT;

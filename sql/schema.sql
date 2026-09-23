@@ -283,9 +283,9 @@ BEGIN
   END IF;
 
   IF normalized_role='NONE' THEN
-    DELETE FROM employee_form_roles
-    WHERE lower(employee_email)=lower(target.email)
-      AND form_type='ECF';
+    DELETE FROM employee_form_roles fr
+    WHERE lower(fr.employee_email)=lower(target.email)
+      AND fr.form_type='ECF';
     RETURN QUERY SELECT target.email::text,'NONE'::text;
     RETURN;
   END IF;
@@ -298,14 +298,14 @@ BEGIN
 
   INSERT INTO employee_form_roles(employee_email,form_type,role_code,active,updated_at)
   VALUES(target.email,'ECF','REQUESTOR',true,now())
-  ON CONFLICT (employee_email,form_type,role_code) DO UPDATE
+  ON CONFLICT ON CONSTRAINT employee_form_roles_pkey DO UPDATE
   SET active=true,updated_at=now();
 
   IF normalized_role='REQUESTOR' THEN
-    DELETE FROM employee_form_roles
-    WHERE lower(employee_email)=lower(target.email)
-      AND form_type='ECF'
-      AND role_code='CHECKER';
+    DELETE FROM employee_form_roles fr
+    WHERE lower(fr.employee_email)=lower(target.email)
+      AND fr.form_type='ECF'
+      AND fr.role_code='CHECKER';
     RETURN QUERY SELECT target.email::text,'REQUESTOR'::text;
     RETURN;
   END IF;
@@ -328,16 +328,16 @@ BEGIN
   END IF;
 
   IF FOUND AND p_replace_checker THEN
-    DELETE FROM employee_form_roles
-    WHERE form_type='ECF'
+    DELETE FROM employee_form_roles fr
+    WHERE fr.form_type='ECF'
       AND role_code='CHECKER'
       AND active=true
-      AND lower(employee_email)<>lower(target.email);
+      AND lower(fr.employee_email)<>lower(target.email);
   END IF;
 
   INSERT INTO employee_form_roles(employee_email,form_type,role_code,active,updated_at)
   VALUES(target.email,'ECF','CHECKER',true,now())
-  ON CONFLICT (employee_email,form_type,role_code) DO UPDATE
+  ON CONFLICT ON CONSTRAINT employee_form_roles_pkey DO UPDATE
   SET active=true,updated_at=now();
 
   RETURN QUERY SELECT target.email::text,'CHECKER'::text;
