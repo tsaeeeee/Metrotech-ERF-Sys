@@ -248,7 +248,7 @@ function renderRequests(requests){
       ? `<button class="btn tiny primary" onclick="downloadFinalPdf('${r.id}')">Save PDF</button>`
       : '';
     return `<tr>
-      <td><strong>${esc(r.ref_no)}</strong>${r.source_erf_ref?`<div class="muted">Source: ${esc(r.source_erf_ref)}</div>`:''}${r.last_rejection_reason?`<div class="reason-mini">${esc(r.last_rejection_reason)}</div>`:''}</td>
+      <td><strong>${esc(r.ref_no)}</strong>${r.last_rejection_reason?`<div class="reason-mini">${esc(r.last_rejection_reason)}</div>`:''}</td>
       <td>${esc(r.employee_name)}</td>
       <td>${String(r.request_date).slice(0,10)}</td>
       <td class="money">${rupiah(r.total)}</td>

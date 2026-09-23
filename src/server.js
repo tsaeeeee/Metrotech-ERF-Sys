@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import {
   pool,pingDb,getEmployee,authenticateLocalUser,changeEmployeePassword,updateEmployeeSignature,listManagedEmployees,
   createManagedEmployee,updateManagedEmployee,setManagedEmployeeActive,ensureBootstrapAdminCredentials,
-  listRequestsForEmployee,listTasksForEmployee,listMyRequests,listEligibleErfs,getEcfRole,getEmsDashboard,
+  listRequestsForEmployee,listTasksForEmployee,listMyRequests,getEcfRole,getEmsDashboard,
   createExpenseRequest,createEcfClaim,
   getRequestDetail,setDocumentPaths,transitionRequest,recallExpenseRequest,reviseExpenseRequest
 } from './db.js';
@@ -452,13 +452,6 @@ app.get('/api/ems/dashboard',requireUser,async(req,res,next)=>{
   try{res.json(await getEmsDashboard(req.employee))}catch(e){next(e)}
 });
 
-app.get('/api/ecf/eligible-erfs',requireUser,async(req,res,next)=>{
-  try{
-    if(req.employee.ecfRole!=='REQUESTOR') return res.status(403).json({error:'ECF Requestor access required.'});
-    res.json({erfs:await listEligibleErfs(req.employee)});
-  }catch(e){next(e)}
-});
-
 app.put('/api/profile/password',requireUser,async(req,res,next)=>{
   try{
     if(req.employee.role==='ADMIN')
@@ -609,6 +602,7 @@ app.post('/api/requests',requireUser,upload.any(),async(req,res,next)=>{
   try{
     if(req.employee.role!=='REQUESTOR') return res.status(403).json({error:'Only Requestor can create a request.'});
     const requestType=normalizeRequestType(req.body.requestType||'EXPENSE');
+    if(requestType!=='EXPENSE') return res.status(400).json({error:'Use Expense Claim (ECF) for claims.'});
     const {items,files}=parseItemsAndFiles(req,requestType);
     const runtimeSettings=await getRuntimeAppSettings();
     const request=await createExpenseRequest(req.employee,items,runtimeSettings.timezone,requestType);
@@ -630,18 +624,15 @@ app.post('/api/requests',requireUser,upload.any(),async(req,res,next)=>{
 app.post('/api/ecf/claims',requireUser,upload.any(),async(req,res,next)=>{
   try{
     if(req.employee.ecfRole!=='REQUESTOR') return res.status(403).json({error:'ECF Requestor access required.'});
-    const sourceErfId=String(req.body.sourceErfId||'');
-    if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sourceErfId))
-      return res.status(400).json({error:'Choose an approved source ERF.'});
     const {items,files}=parseItemsAndFiles(req,'REIMBURSEMENT');
     const settings=await getRuntimeAppSettings();
-    const request=await createEcfClaim(req.employee,items,sourceErfId,settings.timezone,
+    const request=await createEcfClaim(req.employee,items,settings.timezone,
       String(req.body.serviceOrderNumber||'').trim().slice(0,100));
     await persistOriginals(request.id,1,files);
     const {detail}=await generateSubmissionDocs(request.id,files);
     await sendWorkflowMail({event:'SUBMITTED',request:detail.request,to:detail.request.checker_email,
       subject:`[ECF] ${request.ref_no} pending check`,
-      text:`${request.employee_name} submitted ${request.ref_no} against ${detail.request.source_erf_ref}.`});
+      text:`${request.employee_name} submitted ${request.ref_no} for checking.`});
     res.status(201).json({ok:true,requestId:request.id,refNo:request.ref_no,status:request.status});
   }catch(e){next(e)}
 });

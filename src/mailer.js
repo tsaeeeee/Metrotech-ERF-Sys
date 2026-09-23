@@ -198,7 +198,7 @@ function eventPresentation(event,request,fallbackText=''){
   };
   if(request?.form_type==='ECF'){
     const claimEvents={
-      SUBMITTED:{title:'A claim needs checking',badge:'Pending Check',message:`${requestor} submitted a claim against ${request.source_erf_ref||'an approved ERF'}.`,cta:'Check Claim'},
+      SUBMITTED:{title:'A claim needs checking',badge:'Pending Check',message:`${requestor} submitted a claim for checking.`,cta:'Check Claim'},
       REVISED:{title:'A revised claim needs checking',badge:'Pending Check',message:`${requestor} resubmitted this claim for checking.`,cta:'Check Claim'},
       CHECK_APPROVED:{title:'A claim needs review',badge:'Pending Review',message:'The Checker approved this claim. It is ready for review.',cta:'Review Claim'},
       CHECK_REJECTED:{title:'Your claim needs changes',badge:'Check Rejected',message:`Checker rejected this claim. ${reason||fallbackText}`,cta:'View Claim'}
@@ -257,8 +257,7 @@ function summaryRows(request,presentation){
   ];
   if(Number(request?.revision||1)>1) rows.splice(2,0,['Revision',String(request.revision)]);
   if(request?.form_type==='ECF'){
-    rows.splice(2,0,['Source ERF',request.source_erf_ref||'-']);
-    rows.splice(3,0,['Checker',request.checker_name||'-']);
+    rows.splice(2,0,['Checker',request.checker_name||'-']);
   }
   return rows;
 }

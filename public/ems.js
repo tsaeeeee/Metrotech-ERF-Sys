@@ -1,6 +1,5 @@
 // EMS navigation and ECF interaction extend the existing ERF form and detail UI.
 let emsView='home';
-let emsEligible=[];
 let emsDetail=null;
 
 function emsNavigate(view){
@@ -21,9 +20,8 @@ function emsNavigate(view){
   const canCreate=currentEmployee.role==='REQUESTOR' &&
     (view==='erf'||(view==='ecf'&&currentEmployee.ecfRole==='REQUESTOR'));
   $('#requestForm').classList.toggle('hidden',!canCreate);
-  $('#emsSourceFields').classList.toggle('hidden',view!=='ecf');
-  $('#requestTypeRow')?.classList.toggle('hidden',view==='ecf');
-  $('#profile').parentElement.classList.toggle('hidden',view==='requests');
+  $('#emsClaimFields').classList.toggle('hidden',view!=='ecf');
+  $('#profile').parentElement.classList.toggle('hidden',view==='requests'||view==='ecf');
   if(view==='erf'||view==='ecf'||view==='requests'){
     $('#queueTitle').textContent=view==='requests'?'My Requests':view==='erf'?'Expense Requests':'Expense Claims';
     const data=window.emsBootstrap||{};
@@ -36,33 +34,12 @@ function emsNavigate(view){
     rtApplyUi();
     $('#requestFormTitle').textContent=revisionTarget?'Revise Expense Claim':'Create Expense Claim';
     $('#submitExpenseBtn').textContent=revisionTarget?'Submit Revision':'Submit Claim';
-    emsLoadEligible();
   }else if(view==='erf' && !revisionTarget){
     rtRequestType='EXPENSE';rtApplyUi();
   }
+  $('#evidenceModeNote')?.classList.toggle('hidden',view==='ecf');
   if(view==='tasks') emsRenderTasks();
   if(view==='home') emsLoadDashboard();
-}
-
-async function emsLoadEligible(){
-  if(currentEmployee?.ecfRole!=='REQUESTOR') return;
-  try{
-    const previous=$('#emsSourceErf').value;
-    const {erfs}=await api('/api/ecf/eligible-erfs');
-    emsEligible=erfs;
-    $('#emsSourceErf').innerHTML='<option value="">Select ERF</option>'+erfs.map(erf=>
-      `<option value="${esc(erf.id)}">${esc(erf.ref_no)} · ${rupiah(erf.available)} available</option>`).join('');
-    $('#emsSourceErf').value=revisionTarget?.sourceErfId||previous;
-    $('#emsSourceErf').disabled=Boolean(revisionTarget);
-    emsUpdateSource();
-  }catch(e){msg(e.message,'err')}
-}
-
-function emsUpdateSource(){
-  const source=emsEligible.find(erf=>erf.id===$('#emsSourceErf').value);
-  $('#emsSourceBalance').textContent=source
-    ? `Approved ${rupiah(source.total)} · Reserved ${rupiah(source.reserved)} · Available ${rupiah(source.available)}`
-    : 'Select an approved ERF with available balance.';
 }
 
 function emsRenderTasks(){
@@ -71,7 +48,7 @@ function emsRenderTasks(){
   $('#emsTaskRows').innerHTML=rows.length?rows.map(row=>`
     <div class="ems-task">
       <div><strong>${esc(row.ref_no)}</strong> <span class="status ${esc(row.status)}">${esc(row.status)}</span>
-      <small>${esc(row.employee_name)} · ${row.form_type==='ECF'?'Claim':'Request'}${row.source_erf_ref?` · ${esc(row.source_erf_ref)}`:''}</small></div>
+      <small>${esc(row.employee_name)} · ${row.form_type==='ECF'?'Claim':'Request'}</small></div>
       <strong>${rupiah(row.total)}</strong>
       <button class="btn tiny primary" onclick="openRequest('${row.id}')">Review</button>
     </div>`).join(''):'<div class="empty">No pending tasks.</div>';
@@ -85,9 +62,8 @@ async function emsLoadDashboard(){
       .reduce((sum,row)=>sum+Number(row.amount),0);
     const requested=amount('ERF',['APPROVED']);
     const claimed=amount('ECF',['APPROVED']);
-    const reserved=amount('ECF',['PENDING_CHECK','PENDING_REVIEW','PENDING_APPROVAL']);
-    const metrics=[['Approved ERF',requested],['Approved ECF',claimed],['ECF in progress',reserved],
-      ['Approved ERF minus claimed',requested-claimed]];
+    const inProgress=amount('ECF',['PENDING_CHECK','PENDING_REVIEW','PENDING_APPROVAL']);
+    const metrics=[['Approved ERF',requested],['Approved ECF',claimed],['ECF in progress',inProgress]];
     $('#emsMetrics').innerHTML=metrics.map(([label,value])=>
       `<div><small>${esc(label)}</small><strong>${rupiah(value)}</strong></div>`).join('');
     const months=[...new Set(data.trend.map(row=>row.month))];
@@ -124,19 +100,15 @@ startRevision=async function(id){
   emsNavigate(data.request.form_type==='ECF'?'ecf':'erf');
   await emsOriginalStartRevision(id);
   if(data.request.form_type==='ECF' && revisionTarget){
-    revisionTarget.sourceErfId=data.request.source_erf_id;
     rtRequestType='REIMBURSEMENT';rtApplyUi();
-    $('#requestTypeRow')?.classList.add('hidden');
     $('#requestFormTitle').textContent=`Revise ${data.request.ref_no}`;
     $('#emsServiceOrder').value=data.request.service_order_number||'';
-    await emsLoadEligible();
   }
 };
 
 const emsOriginalCancelRevision=cancelRevision;
 cancelRevision=function(){
   emsOriginalCancelRevision();
-  $('#emsSourceErf').disabled=false;
   $('#emsServiceOrder').value='';
   emsNavigate(emsView);
 };
@@ -147,9 +119,7 @@ submitExpense=async function(){
   if(!payments.length||!sigRequireWorkflowSignature('submit this claim')) return;
   if(payments.some(item=>!(item.evidence||[]).length))
     return msg('Attach evidence for every payment.','err');
-  if(!revisionTarget && !$('#emsSourceErf').value) return msg('Choose an approved source ERF.','err');
   const fd=new FormData();
-  fd.append('sourceErfId',revisionTarget?.sourceErfId||$('#emsSourceErf').value);
   fd.append('serviceOrderNumber',$('#emsServiceOrder').value);
   fd.append('items',JSON.stringify(payments.map(item=>({
     category:item.category,purpose:item.purpose,paymentDate:item.paymentDate,
@@ -176,7 +146,7 @@ openRequest=async function(id){
     emsDetail=request;
     if(request.form_type==='ECF'){
       $('#detailSummary').insertAdjacentHTML('beforeend',[
-        ['Source ERF',request.source_erf_ref],['Service order',request.service_order_number],
+        ['Service order',request.service_order_number],
         ['Payment to',request.payment_to],['Bank',request.bank_name],['Account',request.account_number]
       ].map(([label,value])=>`<div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join(''));
       $('.pdf-label').textContent='Expense Claim Form';

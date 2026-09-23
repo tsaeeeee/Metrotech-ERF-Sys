@@ -89,34 +89,6 @@ function rtInjectStyles(){
   const style=document.createElement('style');
   style.id='requestTypeStyles';
   style.textContent=`
-    .request-type-row{
-      display:flex;align-items:center;justify-content:space-between;gap:18px;
-      margin:14px 0 18px;padding:14px 16px;border:1px solid #e2e8f0;
-      border-radius:14px;background:#f8fafc;
-    }
-    .request-type-copy{display:flex;flex-direction:column;gap:3px;min-width:0}
-    .request-type-copy strong{font-size:14px;color:#0f2744}
-    .request-type-copy small{color:#64748b;font-size:12px}
-    .request-type-control{
-      display:grid;grid-template-columns:1fr 1fr;align-items:center;
-      width:340px;max-width:100%;padding:4px;
-      border-radius:999px;background:#155da8;
-      box-shadow:inset 0 0 0 1px rgba(15,39,68,.08);
-    }
-    .request-type-option{
-      appearance:none;border:0;background:transparent;color:#fff;
-      min-height:40px;padding:8px 18px;border-radius:999px;
-      font:inherit;font-size:12px;font-weight:800;line-height:1.15;
-      white-space:nowrap;cursor:pointer;transition:background .18s ease,color .18s ease,box-shadow .18s ease,transform .12s ease;
-    }
-    .request-type-option:hover:not(:disabled){background:rgba(255,255,255,.11)}
-    .request-type-option:active:not(:disabled){transform:scale(.985)}
-    .request-type-option.active{
-      background:#fff;color:#155da8;
-      box-shadow:0 2px 7px rgba(15,39,68,.18);
-    }
-    .request-type-option:disabled{cursor:not-allowed;opacity:.66}
-    .request-type-control.is-locked{opacity:.76}
     .evidence-mode-note{display:block;margin-top:5px;font-size:11px;color:#64748b}
     .signature-required-notice{
       display:flex;align-items:center;justify-content:space-between;gap:14px;
@@ -242,9 +214,6 @@ function rtInjectStyles(){
       to{transform:rotate(360deg)}
     }
     @media(max-width:700px){
-      .request-type-row{align-items:flex-start;flex-direction:column}
-      .request-type-control{width:100%}
-      .request-type-option{min-height:38px;padding:8px 10px;font-size:11.5px}
       .signature-required-notice{align-items:flex-start;flex-direction:column}
       .signature-mini-preview{align-items:flex-start;flex-direction:column}
       .signature-mini-preview img{max-width:100%}
@@ -409,32 +378,7 @@ function rtSetRequestType(type){
 
 function rtEnsureControl(){
   if(currentEmployee?.role!=='REQUESTOR') return;
-  const form=$('#requestForm');
-  if(!form) return;
   rtInjectStyles();
-
-  if(!$('#requestTypeRow')){
-    const row=document.createElement('div');
-    row.id='requestTypeRow';
-    row.className='request-type-row';
-    row.innerHTML=`
-      <div class="request-type-copy">
-        <strong>Request Type</strong>
-        <small id="requestTypeHint">Choose Expense Request or Reimbursement before adding payments.</small>
-      </div>
-      <div id="requestTypeControl" class="request-type-control" role="group" aria-label="Request Type">
-        <button id="requestTypeExpenseLabel" class="request-type-option" type="button" aria-pressed="true">Expense Request</button>
-        <button id="requestTypeReimbursementLabel" class="request-type-option" type="button" aria-pressed="false">Reimbursement</button>
-      </div>`;
-
-    const paymentForm=form.querySelector('.payment-form');
-    if(paymentForm) form.insertBefore(row,paymentForm);
-    else form.appendChild(row);
-
-    $('#requestTypeExpenseLabel').addEventListener('click',()=>rtSetRequestType('EXPENSE'));
-    $('#requestTypeReimbursementLabel').addEventListener('click',()=>rtSetRequestType('REIMBURSEMENT'));
-  }
-
   rtApplyUi();
 }
 

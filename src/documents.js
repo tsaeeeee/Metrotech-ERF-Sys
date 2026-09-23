@@ -458,7 +458,7 @@ async function buildEcfFormPdf({request,items,outPath}){
   page.drawLine({start:{x:42,y:743},end:{x:553,y:743},color:line,thickness:1});
   const fields=[
     ['Prepared by',request.employee_name],['Employee ID',request.employee_id],
-    ['Department',request.department],['Source ERF',request.source_erf_ref],
+    ['Department',request.department],
     ['Service Order',request.service_order_number],['Payment to',request.payment_to],
     ['Bank',`${request.bank_name} (${request.bank_code})`],['Account number',request.account_number]
   ];
