@@ -2,8 +2,24 @@
 let emsView='home';
 let emsDetail=null;
 
+function emsCloseSidebar(){
+  $('#emsNav').classList.remove('open');
+  $('#emsNavBackdrop').classList.remove('open');
+  $('#emsSidebarToggle').setAttribute('aria-expanded','false');
+  $('#emsSidebarToggle').setAttribute('aria-label','Open navigation');
+}
+
+function emsToggleSidebar(){
+  const open=!$('#emsNav').classList.contains('open');
+  $('#emsNav').classList.toggle('open',open);
+  $('#emsNavBackdrop').classList.toggle('open',open);
+  $('#emsSidebarToggle').setAttribute('aria-expanded',String(open));
+  $('#emsSidebarToggle').setAttribute('aria-label',open?'Close navigation':'Open navigation');
+}
+
 function emsNavigate(view){
   if(!currentEmployee) return;
+  emsCloseSidebar();
   const admin=currentEmployee.role==='ADMIN';
   if(admin && !['home','admin-users','admin-app'].includes(view)) view='admin-users';
   if(!admin && view.startsWith('admin-')) view='home';
