@@ -10,6 +10,7 @@
 <body>
 <nav class="topbar">
   <div class="topbar-brand">
+    <button id="emsSidebarToggle" class="ems-sidebar-toggle" type="button" aria-label="Open navigation" aria-controls="emsNav" aria-expanded="false" onclick="emsToggleSidebar()">☰</button>
     <img class="metro-logo" src="/assets/metrotech-logo.webp" alt="Metrotech">
     <div class="topbar-divider"></div>
     <div class="topbar-title">Expense Management System</div>
@@ -63,6 +64,7 @@
 
 <section id="dashboard" class="hidden">
 <div class="ems-layout">
+<div id="emsNavBackdrop" class="ems-nav-backdrop" onclick="emsCloseSidebar()"></div>
 <nav id="emsNav" class="ems-nav" aria-label="EMS modules">
   <button type="button" data-ems-view="home" onclick="emsNavigate('home')">Dashboard</button>
   <details id="emsTransactionsNav" class="ems-nav-group" open>
