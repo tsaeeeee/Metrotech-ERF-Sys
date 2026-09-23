@@ -62,14 +62,30 @@
 </section>
 
 <section id="dashboard" class="hidden">
+<div class="ems-layout">
 <nav id="emsNav" class="ems-nav" aria-label="EMS modules">
   <button type="button" data-ems-view="home" onclick="emsNavigate('home')">Dashboard</button>
-  <button type="button" data-ems-view="erf" onclick="emsNavigate('erf')">Expense Request · ERF</button>
-  <button type="button" data-ems-view="ecf" onclick="emsNavigate('ecf')">Expense Claim · ECF</button>
-  <button type="button" data-ems-view="requests" onclick="emsNavigate('requests')">My Requests</button>
-  <button type="button" data-ems-view="tasks" onclick="emsNavigate('tasks')">My Tasks <span id="emsTaskCount"></span></button>
-  <button type="button" data-ems-view="profile" onclick="openProfileModal()">Profile</button>
-  <button id="emsAdminNav" class="hidden" type="button" data-ems-view="admin" onclick="emsNavigate('admin')">Admin</button>
+  <details id="emsTransactionsNav" class="ems-nav-group" open>
+    <summary>Transactions</summary>
+    <div class="ems-nav-items">
+      <button type="button" data-ems-view="erf" onclick="emsNavigate('erf')">Expense Request · ERF</button>
+      <button type="button" data-ems-view="ecf" onclick="emsNavigate('ecf')">Expense Claim · ECF</button>
+    </div>
+  </details>
+  <details id="emsActivityNav" class="ems-nav-group" open>
+    <summary>Activity</summary>
+    <div class="ems-nav-items">
+      <button type="button" data-ems-view="requests" onclick="emsNavigate('requests')">My Requests</button>
+      <button type="button" data-ems-view="tasks" onclick="emsNavigate('tasks')">My Tasks <span id="emsTaskCount"></span></button>
+    </div>
+  </details>
+  <details id="emsAdminNav" class="ems-nav-group hidden" open>
+    <summary>Administration</summary>
+    <div class="ems-nav-items">
+      <button id="adminUsersTab" type="button" data-ems-view="admin-users" onclick="emsNavigate('admin-users')">User Management</button>
+      <button id="adminAppTab" type="button" data-ems-view="admin-app" onclick="emsNavigate('admin-app')">App Management</button>
+    </div>
+  </details>
 </nav>
 <main class="ems-main">
 <section id="emsHome" class="hidden">
@@ -161,11 +177,6 @@
 </div>
 
 <section id="adminDashboard" class="hidden">
-  <div class="admin-tabs">
-    <button id="adminUsersTab" class="admin-tab active" type="button" onclick="showAdminSection('users')">User Management</button>
-    <button id="adminAppTab" class="admin-tab" type="button" onclick="showAdminSection('app')">App Management</button>
-  </div>
-
   <div id="adminUserManagementView">
     <div class="card admin-head-card">
       <div class="row">
@@ -347,6 +358,7 @@
   </div>
 </section>
 </main>
+</div>
 </section>
 </div>
 
