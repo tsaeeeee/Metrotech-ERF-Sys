@@ -168,7 +168,8 @@ async function submitFirstSignature(event){
 
 async function loadMe(){
   try{
-    const {employee,requests}=await api('/api/me');
+    const {employee,requests,tasks,myRequests}=await api('/api/me');
+    window.emsBootstrap={requests,tasks,myRequests};
     currentEmployee=employee;
     $('#loginCard').classList.add('hidden');
     $('#dashboard').classList.add('hidden');
@@ -235,18 +236,19 @@ function renderRequests(requests){
   $('#empty').classList.add('hidden');
   $('#table').classList.remove('hidden');
   $('#tbody').innerHTML=requests.map(r=>{
-    const revisable=['REVIEW_REJECTED','APPROVAL_REJECTED','RECALLED'].includes(r.status);
+    const revisable=['CHECK_REJECTED','REVIEW_REJECTED','APPROVAL_REJECTED','RECALLED'].includes(r.status);
     const revise=currentEmployee?.role==='REQUESTOR' && revisable
       ? `<button class="btn tiny warning" onclick="startRevision('${r.id}')">${r.status==='RECALLED'?'Edit & Resubmit':'Revise'}</button>`
       : '';
-    const recall=currentEmployee?.role==='REQUESTOR' && r.status==='PENDING_REVIEW'
+    const recall=currentEmployee?.role==='REQUESTOR' &&
+      (r.status==='PENDING_REVIEW'||r.status==='PENDING_CHECK')
       ? `<button class="btn tiny recall" onclick="recallRequest('${r.id}','${esc(r.ref_no)}')">Recall</button>`
       : '';
     const savePdf=r.status==='APPROVED'
       ? `<button class="btn tiny primary" onclick="downloadFinalPdf('${r.id}')">Save PDF</button>`
       : '';
     return `<tr>
-      <td><strong>${esc(r.ref_no)}</strong>${r.last_rejection_reason?`<div class="reason-mini">${esc(r.last_rejection_reason)}</div>`:''}</td>
+      <td><strong>${esc(r.ref_no)}</strong>${r.source_erf_ref?`<div class="muted">Source: ${esc(r.source_erf_ref)}</div>`:''}${r.last_rejection_reason?`<div class="reason-mini">${esc(r.last_rejection_reason)}</div>`:''}</td>
       <td>${esc(r.employee_name)}</td>
       <td>${String(r.request_date).slice(0,10)}</td>
       <td class="money">${rupiah(r.total)}</td>

@@ -434,6 +434,74 @@ async function buildMockFormPdf({request,items,outPath}) {
 }
 
 export async function buildFormPdf(args) {
+  if(args.request?.form_type==='ECF') return buildEcfFormPdf(args);
   if(PDF_MODE==='google-sheet') return buildGoogleSheetFormPdf(args);
   return buildMockFormPdf(args);
+}
+
+async function buildEcfFormPdf({request,items,outPath}){
+  await ensureParent(outPath);
+  const doc=await PDFDocument.create();
+  const page=doc.addPage([595,842]);
+  const regular=await doc.embedFont(StandardFonts.Helvetica);
+  const bold=await doc.embedFont(StandardFonts.HelveticaBold);
+  const navy=rgb(.035,.20,.39),grey=rgb(.35,.39,.45),line=rgb(.78,.82,.87),pale=rgb(.95,.97,.99);
+  // Standard fonts require WinAnsi; keep a printable representation of user text.
+  const printable=value=>String(value??'').normalize('NFKD').replace(/[^\x20-\x7e]/g,'?');
+  const draw=(value,x,y,size=9,font=regular,color=navy,max=90)=>
+    page.drawText(printable(value).slice(0,max),{x,y,size,font,color});
+  const logo=await embedBrandLogo(doc);
+  if(logo) page.drawImage(logo,{x:42,y:778,width:125,height:125*logo.height/logo.width});
+  draw('EXPENSE CLAIM FORM',185,794,17,bold);
+  draw(request.ref_no,42,756,10,bold);
+  draw(`Date: ${displayDate(request.request_date)}`,370,756,9);
+  page.drawLine({start:{x:42,y:743},end:{x:553,y:743},color:line,thickness:1});
+  const fields=[
+    ['Prepared by',request.employee_name],['Employee ID',request.employee_id],
+    ['Department',request.department],['Source ERF',request.source_erf_ref],
+    ['Service Order',request.service_order_number],['Payment to',request.payment_to],
+    ['Bank',`${request.bank_name} (${request.bank_code})`],['Account number',request.account_number]
+  ];
+  fields.forEach(([label,value],index)=>{
+    const y=721-index*25;
+    page.drawRectangle({x:42,y:y-7,width:511,height:24,color:index%2?pale:rgb(1,1,1),borderColor:line,borderWidth:.5});
+    draw(label,51,y,8,bold,grey,25);
+    draw(value,185,y,9,regular,navy,65);
+  });
+  page.drawRectangle({x:42,y:490,width:511,height:25,color:navy});
+  draw('CATEGORY',50,499,8,bold,rgb(1,1,1));
+  draw('PURPOSE',166,499,8,bold,rgb(1,1,1));
+  draw('DATE',410,499,8,bold,rgb(1,1,1));
+  draw('AMOUNT',476,499,8,bold,rgb(1,1,1));
+  items.slice(0,16).forEach((item,index)=>{
+    const y=473-index*19;
+    page.drawRectangle({x:42,y:y-6,width:511,height:19,borderColor:line,borderWidth:.5});
+    draw(item.category,50,y,7,regular,navy,21);
+    draw(item.purpose,166,y,7,regular,navy,48);
+    draw(displayDate(item.payment_date||item.paymentDate),410,y,7);
+    draw(money(item.amount),476,y,7);
+  });
+  draw(`TOTAL CLAIM: ${money(request.total)}`,370,151,10,bold);
+  const visible=[true,['PENDING_REVIEW','PENDING_APPROVAL','APPROVED'].includes(request.status),
+    ['PENDING_APPROVAL','APPROVED'].includes(request.status),request.status==='APPROVED'];
+  const signatures=[
+    ['Prepared by',request.employee_name,request.requestor_signature],
+    ['Checked by',request.checker_name,request.checker_signature],
+    ['Reviewed by',request.reviewer_name,request.reviewer_signature],
+    ['Approved by',request.approver_name,request.approver_signature]
+  ];
+  for(let i=0;i<signatures.length;i++){
+    const x=42+i*128, [label,name,file]=signatures[i];
+    page.drawRectangle({x,y:48,width:128,height:88,borderColor:line,borderWidth:.6});
+    draw(label,x+7,122,8,bold);
+    draw(name,x+7,58,7,regular,navy,23);
+    if(!visible[i]) continue;
+    const image=await embedSignature(doc,file);
+    if(image){
+      const scale=Math.min(88/image.width,40/image.height);
+      page.drawImage(image,{x:x+20,y:74,width:image.width*scale,height:image.height*scale});
+    }
+  }
+  await fs.writeFile(outPath,await doc.save());
+  return outPath;
 }

@@ -11,6 +11,7 @@ h1{margin:0;color:var(--navy);font-size:26px}h2{margin:0 0 12px;color:var(--navy
 .table-wrap{overflow:auto;margin-top:16px}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{background:#f8fafc;color:var(--muted);font-size:12px}.money{text-align:right;white-space:nowrap}.actions{white-space:nowrap}.file-chip{display:inline-block;background:#f1f5f9;padding:4px 6px;border-radius:6px;font-size:11px;margin:1px}.reason-mini{max-width:260px;margin-top:5px;color:var(--red);font-size:11px}
 .form-footer{display:flex;justify-content:flex-end;align-items:center;gap:18px;margin-top:18px}.total-box{display:flex;gap:12px;align-items:center;font-size:16px}.submit{min-width:155px}
 .status{font-size:11px;font-weight:800;padding:5px 8px;border-radius:999px;background:#fffaeb;color:var(--amber)}.status.APPROVED{background:#ecfdf3;color:var(--green)}.status.PENDING_APPROVAL{background:#eff8ff;color:#175cd3}.status.RECALLED{background:#eef2ff;color:#3730a3}.status.REVIEW_REJECTED,.status.APPROVAL_REJECTED{background:#fff1f0;color:var(--red)}
+.status.CHECK_REJECTED{background:#fff1f0;color:var(--red)}
 .empty{text-align:center;color:var(--muted);padding:30px}.hidden{display:none!important}.notice{padding:11px 13px;border-radius:9px;margin-bottom:14px}.notice.err{background:#fff1f0;color:var(--red)}.notice.ok{background:#ecfdf3;color:var(--green)}
 
 .modal{position:fixed;inset:0;background:rgba(10,25,45,.52);display:flex;align-items:center;justify-content:center;padding:22px;z-index:50}
@@ -25,6 +26,21 @@ h1{margin:0;color:var(--navy);font-size:26px}h2{margin:0 0 12px;color:var(--navy
 @media(max-width:760px){header{align-items:flex-start;flex-direction:column}.header-badges{justify-content:flex-start}.users,.grid,.payment-form,.detail-summary{grid-template-columns:1fr}.card{overflow:auto}.form-footer{align-items:stretch;flex-direction:column}.submit{width:100%}.modal{padding:0}.modal-panel{width:100vw;height:100vh;border-radius:0}.decision-actions{flex-direction:column}.decision-actions .btn{width:100%}.payment-form>.btn{margin-top:0;width:100%}}
 
 .auth-warning{grid-column:1/-1;border:1px solid #f4d19b;background:#fff7e8;color:#7a4b00;border-radius:10px;padding:14px}
+.ems-nav{display:flex;flex-wrap:wrap;gap:5px;padding:8px;background:#e8eef6;border:1px solid var(--line);border-radius:13px;margin-bottom:18px}
+.ems-nav button{border:0;border-radius:8px;padding:10px 12px;background:transparent;color:var(--navy);font-weight:700;cursor:pointer}
+.ems-nav button:hover,.ems-nav button.active{background:#fff;box-shadow:0 1px 5px rgba(20,40,70,.12)}
+.ems-nav span{display:inline-block;min-width:18px;border-radius:9px;background:#e7f0fb;font-size:11px}
+.ems-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:14px}
+.ems-metrics>div{border:1px solid var(--line);border-radius:10px;padding:14px;background:#f8fafc}
+.ems-metrics small,.ems-metrics strong{display:block}.ems-metrics small{color:var(--muted);margin-bottom:7px}.ems-metrics strong{font-size:18px;color:var(--navy)}
+.ems-panels{display:grid;grid-template-columns:1.3fr 1fr;gap:16px}.ems-panels>.card{min-width:0}
+.ems-month{padding:10px 0;border-bottom:1px solid var(--line)}.ems-bar-line{display:grid;grid-template-columns:34px 1fr 122px;gap:8px;align-items:center;font-size:11px;padding:4px 0}
+.ems-bar-line strong{text-align:right}.ems-track{height:12px;background:#edf2f7;border-radius:8px;overflow:hidden}.ems-track i{display:block;height:100%;border-radius:8px;background:var(--blue)}.ems-track i.ecf{background:#e0a436}
+.ems-category,.ems-task{display:flex;gap:12px;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.ems-category small,.ems-task small{display:block;color:var(--muted);font-weight:400}.ems-task>div{flex:1}
+.ems-source-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0 18px}.ems-source-fields p{grid-column:1/-1}
+.ems-source-fields select{width:100%;height:42px;border:1px solid #cbd5e1;border-radius:9px;padding:9px 11px;background:white}
+@media(max-width:760px){.ems-panels,.ems-metrics,.ems-source-fields{grid-template-columns:1fr}.ems-bar-line{grid-template-columns:28px 1fr 100px}.ems-nav button{flex:1 1 45%}}
 .google-login{max-width:420px}
 
 

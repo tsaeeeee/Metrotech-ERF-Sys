@@ -373,24 +373,128 @@ export async function setManagedEmployeeActive(email,active) {
 export async function listRequestsForEmployee(employee) {
   let q, params;
   if (employee.role === 'REQUESTOR') {
-    q = `select id,ref_no,request_date,employee_name,request_type,total,status,revision,last_rejection_reason,updated_at
-         from requests where lower(requester_email)=lower($1)
-         order by updated_at desc limit 50`;
+    q = `select r.id,r.ref_no,r.request_date,r.employee_name,r.request_type,r.form_type,r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at,d.source_erf_id,s.ref_no as source_erf_ref
+         from requests r left join ecf_details d on d.request_id=r.id left join requests s on s.id=d.source_erf_id
+         where lower(r.requester_email)=lower($1)
+         order by r.updated_at desc limit 100`;
     params=[employee.email];
   } else if (employee.role === 'REVIEWER') {
-    q = `select id,ref_no,request_date,employee_name,request_type,total,status,revision,last_rejection_reason,updated_at
-         from requests where lower(reviewer_email)=lower($1) and status='PENDING_REVIEW'
-         order by updated_at asc limit 100`;
+    q = `select r.id,r.ref_no,r.request_date,r.employee_name,r.request_type,r.form_type,r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at,d.source_erf_id,s.ref_no as source_erf_ref
+         from requests r left join ecf_details d on d.request_id=r.id left join requests s on s.id=d.source_erf_id
+         where lower(r.reviewer_email)=lower($1) and r.status='PENDING_REVIEW'
+         order by r.updated_at asc limit 100`;
     params=[employee.email];
   } else if (employee.role === 'APPROVER') {
-    q = `select id,ref_no,request_date,employee_name,request_type,total,status,revision,last_rejection_reason,updated_at
-         from requests where lower(approver_email)=lower($1) and status='PENDING_APPROVAL'
-         order by updated_at asc limit 100`;
+    q = `select r.id,r.ref_no,r.request_date,r.employee_name,r.request_type,r.form_type,r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at,d.source_erf_id,s.ref_no as source_erf_ref
+         from requests r left join ecf_details d on d.request_id=r.id left join requests s on s.id=d.source_erf_id
+         where lower(r.approver_email)=lower($1) and r.status='PENDING_APPROVAL'
+         order by r.updated_at asc limit 100`;
     params=[employee.email];
+  } else if (employee.role === 'ADMIN') {
+    q = `select r.id,r.ref_no,r.request_date,r.employee_name,r.request_type,r.form_type,r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at,d.source_erf_id,s.ref_no as source_erf_ref
+         from requests r left join ecf_details d on d.request_id=r.id left join requests s on s.id=d.source_erf_id
+         order by r.updated_at desc limit 100`;
+    params=[];
   } else {
     return [];
   }
   const { rows } = await pool.query(q,params);
+  return rows;
+}
+
+export async function getEcfRole(email){
+  const {rows}=await pool.query(
+    `select ecf_role from admin_ecf_roles where lower(email)=lower($1) and active=true`,[email]
+  );
+  return rows[0]?.ecf_role||'NONE';
+}
+
+export async function listTasksForEmployee(employee){
+  if(employee.role==='ADMIN') return [];
+  const ecfRole=employee.ecfRole||await getEcfRole(employee.email);
+  const {rows}=await pool.query(
+    `select r.id,r.ref_no,r.form_type,r.request_date,r.employee_name,r.total,r.status,
+       d.source_erf_id,s.ref_no as source_erf_ref
+     from requests r left join ecf_details d on d.request_id=r.id
+       left join requests s on s.id=d.source_erf_id
+     where (r.status='PENDING_CHECK' and $2::boolean
+       and lower(r.requester_email)<>lower($1))
+       or (r.status='PENDING_REVIEW' and lower(r.reviewer_email)=lower($1))
+       or (r.status='PENDING_APPROVAL' and lower(r.approver_email)=lower($1))
+     order by r.updated_at asc limit 100`,[employee.email,ecfRole==='CHECKER']
+  );
+  return rows;
+}
+
+export async function listMyRequests(employee){
+  const {rows}=await pool.query(
+    `select r.id,r.ref_no,r.request_date,r.employee_name,r.request_type,r.form_type,
+       r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at,
+       d.source_erf_id,s.ref_no as source_erf_ref
+     from requests r left join ecf_details d on d.request_id=r.id
+       left join requests s on s.id=d.source_erf_id
+     where lower(r.requester_email)=lower($1) order by r.updated_at desc limit 100`,
+    [employee.email]
+  );
+  return rows;
+}
+
+export async function getEmsDashboard(employee){
+  const scope=employee.role==='ADMIN'?'true':employee.role==='REQUESTOR'
+    ? 'lower(r.requester_email)=lower($1)' : employee.role==='REVIEWER'
+      ? 'lower(r.reviewer_email)=lower($1)' : 'lower(r.approver_email)=lower($1)';
+  const args=employee.role==='ADMIN'?[]:[employee.email];
+  const [totals,trend,categories]=await Promise.all([
+    pool.query(`select r.form_type,r.status,count(*)::integer as count,
+       coalesce(sum(r.total),0) as amount from requests r where ${scope}
+       and (r.form_type='ECF' or r.request_type='EXPENSE')
+       group by r.form_type,r.status`,args),
+    pool.query(`select to_char(r.request_date,'YYYY-MM') as month,r.form_type,
+       sum(r.total) as amount,count(*)::integer as count from requests r
+       where ${scope} and (r.form_type='ECF' or r.request_type='EXPENSE') and r.status='APPROVED'
+         and r.request_date>=date_trunc('month',current_date)-interval '5 months'
+       group by month,r.form_type order by month,r.form_type`,args),
+    pool.query(`select i.category,r.form_type,sum(i.amount) as amount
+       from requests r join request_items i on i.request_id=r.id and i.revision=r.revision
+       where ${scope} and (r.form_type='ECF' or r.request_type='EXPENSE') and r.status='APPROVED'
+         and r.request_date>=date_trunc('month',current_date)
+       group by i.category,r.form_type order by amount desc limit 8`,args)
+  ]);
+  return {totals:totals.rows,trend:trend.rows,categories:categories.rows};
+}
+
+// Every claim writer locks the source row before checking the reserved amount.
+// PostgreSQL numeric keeps the comparison exact; a pending claim reserves its full total.
+async function sourceBalanceTx(client,sourceId,requesterEmail,excludeId=null){
+  const {rows:sourceRows}=await client.query('select * from requests where id=$1 for update',[sourceId]);
+  const source=sourceRows[0];
+  if(!source || source.form_type!=='ERF' || source.request_type!=='EXPENSE' ||
+     source.status!=='APPROVED' ||
+     String(source.requester_email).toLowerCase()!==String(requesterEmail).toLowerCase())
+    throw Object.assign(new Error('Choose one of your approved ERF requests.'),{status:409});
+  const {rows}=await client.query(
+    `select coalesce(sum(c.total),0)::numeric as reserved
+     from ecf_details d join requests c on c.id=d.request_id
+     where d.source_erf_id=$1 and ($2::uuid is null or c.id<>$2)
+       and c.status in ('PENDING_CHECK','PENDING_REVIEW','PENDING_APPROVAL','APPROVED')`,
+    [sourceId,excludeId]
+  );
+  return {source,reserved:rows[0].reserved};
+}
+
+export async function listEligibleErfs(employee){
+  const {rows}=await pool.query(
+    `select r.id,r.ref_no,r.request_date,r.total,
+       coalesce(sum(c.total) filter (where c.status in
+         ('PENDING_CHECK','PENDING_REVIEW','PENDING_APPROVAL','APPROVED')),0) as reserved,
+       r.total-coalesce(sum(c.total) filter (where c.status in
+         ('PENDING_CHECK','PENDING_REVIEW','PENDING_APPROVAL','APPROVED')),0) as available
+     from requests r left join ecf_details d on d.source_erf_id=r.id
+       left join requests c on c.id=d.request_id
+     where lower(r.requester_email)=lower($1) and r.form_type='ERF'
+       and r.request_type='EXPENSE' and r.status='APPROVED'
+     group by r.id order by r.request_date desc,r.ref_no desc`,[employee.email]
+  );
   return rows;
 }
 
@@ -444,6 +548,64 @@ export async function createExpenseRequest(employee, items, timezone='Asia/Jakar
   } finally { client.release(); }
 }
 
+export async function createEcfClaim(employee,items,sourceId,timezone='Asia/Jakarta',serviceOrderNumber=''){
+  const client=await pool.connect();
+  try{
+    await client.query('begin');
+    const role=(await client.query(
+      `select ecf_role from admin_ecf_roles where lower(email)=lower($1) and active=true`,[employee.email]
+    )).rows[0]?.ecf_role;
+    if(role!=='REQUESTOR') throw Object.assign(new Error('ECF Requestor access is required.'),{status:403});
+    const {source,reserved}=await sourceBalanceTx(client,sourceId,employee.email);
+    const total=items.reduce((sum,x)=>sum+Number(x.amount),0);
+    if(!Number.isSafeInteger(total)||total<=0||Number(source.total)-Number(reserved)<total)
+      throw Object.assign(new Error('Claim exceeds the available ERF balance.'),{status:409});
+    const checker=(await client.query(
+      `select e.email,e.name from admin_ecf_roles a join employees e on e.email=a.email
+       where a.ecf_role='CHECKER' and a.active=true limit 1`
+    )).rows[0];
+    if(!checker) throw Object.assign(new Error('Assign an active ECF Checker before submitting claims.'),{status:409});
+    if(checker.email.toLowerCase()===employee.email.toLowerCase())
+      throw Object.assign(new Error('The ECF Checker cannot check their own claim.'),{status:409});
+    const profile=(await client.query(
+      `select * from employee_payment_profiles where lower(employee_email)=lower($1)`,[employee.email]
+    )).rows[0];
+    if(!profile?.payment_to||!profile?.bank_name||!profile?.bank_code||!profile?.account_number)
+      throw Object.assign(new Error('Complete payment information in My Profile first.'),{status:409});
+    const reviewer=await chooseReviewerTx(client);
+    if(!reviewer) throw Object.assign(new Error('An active Reviewer is required.'),{status:409});
+    const approver=await getSingleApproverTx(client);
+    const date=(await client.query(
+      `select timezone($1,now())::date as day,to_char(timezone($1,now()),'YYYYMMDD') as compact`,
+      [timezone]
+    )).rows[0];
+    const seq=(await client.query(
+      `insert into daily_counters(counter_date,request_type,last_sequence) values($1,'ECF',1)
+       on conflict(counter_date,request_type) do update set last_sequence=daily_counters.last_sequence+1
+       returning last_sequence`,[date.day]
+    )).rows[0].last_sequence;
+    const refNo=`ECF-${date.compact.slice(0,4)}-${date.compact.slice(4)}-${String(seq).padStart(4,'0')}`;
+    const request=(await client.query(
+      `insert into requests(ref_no,request_date,requester_email,employee_name,employee_id,department,
+       location,division,request_type,form_type,total,status,revision,reviewer_email,approver_email)
+       values($1,$2,$3,$4,$5,$6,$7,$8,'EXPENSE','ECF',$9,'PENDING_CHECK',1,$10,$11) returning *`,
+      [refNo,date.day,employee.email,employee.name,employee.employee_id,employee.department,
+       employee.location,employee.division,total,reviewer.email,approver.email]
+    )).rows[0];
+    await client.query(
+      `insert into ecf_details(request_id,source_erf_id,service_order_number,payment_to,bank_name,
+       bank_code,account_number,checker_email,checker_name)
+       values($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [request.id,source.id,serviceOrderNumber||'-',profile.payment_to,profile.bank_name,
+       profile.bank_code,profile.account_number,checker.email,checker.name]
+    );
+    await insertItems(client,request.id,1,items);
+    await insertAction(client,request,employee,'SUBMITTED',null,'PENDING_CHECK');
+    await client.query('commit');
+    return request;
+  }catch(e){await client.query('rollback');throw e}finally{client.release()}
+}
+
 async function insertItems(client, requestId, revision, items) {
   for(let i=0;i<items.length;i++){
     const x=items[i];
@@ -469,11 +631,17 @@ export async function getRequestDetail(id) {
     `select r.*,
       req.signature_file as requestor_signature,
       rev.name as reviewer_name, rev.signature_file as reviewer_signature,
-      app.name as approver_name, app.signature_file as approver_signature
+      app.name as approver_name, app.signature_file as approver_signature,
+      d.source_erf_id,d.service_order_number,d.payment_to,d.bank_name,d.bank_code,
+      d.account_number,d.checker_email,d.checker_name,
+      checker.signature_file as checker_signature,source.ref_no as source_erf_ref
      from requests r
      join employees req on req.email=r.requester_email
      join employees rev on rev.email=r.reviewer_email
      join employees app on app.email=r.approver_email
+     left join ecf_details d on d.request_id=r.id
+     left join employees checker on checker.email=d.checker_email
+     left join requests source on source.id=d.source_erf_id
      where r.id=$1`, [id]
   );
   if(!rows[0]) return null;
@@ -512,16 +680,37 @@ export async function transitionRequest(id, actor, stage, decision, reason='') {
     if(reject&&!String(reason).trim()) throw Object.assign(new Error('Rejection reason is required.'),{status:400});
 
     let expected,toStatus,action,ownerEmail;
-    if(stage==='REVIEW'){
+    if(stage==='CHECK'){
+      if(request.form_type!=='ECF') throw Object.assign(new Error('Only ECF has a Checker stage.'),{status:400});
+      const {rows:checks}=await client.query('select checker_email from ecf_details where request_id=$1',[id]);
+      expected='PENDING_CHECK'; ownerEmail=checks[0]?.checker_email;
+      toStatus=approve?'PENDING_REVIEW':'CHECK_REJECTED';
+      action=approve?'CHECK_APPROVED':'CHECK_REJECTED';
+      if(String(actor.email).toLowerCase()===String(request.requester_email).toLowerCase())
+        throw Object.assign(new Error('You cannot check your own claim.'),{status:403});
+      const role=(await client.query(
+        `select ecf_role from admin_ecf_roles where lower(email)=lower($1) and active=true`,[actor.email]
+      )).rows[0]?.ecf_role;
+      if(role!=='CHECKER') throw Object.assign(new Error('ECF Checker access is required.'),{status:403});
+      if(String(ownerEmail).toLowerCase()!==String(actor.email).toLowerCase()){
+        await client.query(
+          `update ecf_details set checker_email=$2,checker_name=$3,updated_at=now()
+           where request_id=$1`,[id,actor.email,actor.name]
+        );
+        ownerEmail=actor.email;
+      }
+    } else if(stage==='REVIEW'){
       expected='PENDING_REVIEW'; ownerEmail=request.reviewer_email;
       toStatus=approve?'PENDING_APPROVAL':'REVIEW_REJECTED';
       action=approve?'REVIEW_APPROVED':'REVIEW_REJECTED';
       if(actor.role!=='REVIEWER') throw Object.assign(new Error('Reviewer role required.'),{status:403});
-    } else {
+    } else if(stage==='APPROVAL'){
       expected='PENDING_APPROVAL'; ownerEmail=request.approver_email;
       toStatus=approve?'APPROVED':'APPROVAL_REJECTED';
       action=approve?'FINAL_APPROVED':'APPROVAL_REJECTED';
       if(actor.role!=='APPROVER') throw Object.assign(new Error('Approver role required.'),{status:403});
+    } else {
+      throw Object.assign(new Error('Invalid workflow stage.'),{status:400});
     }
     if(request.status!==expected) throw Object.assign(new Error(`Request is already ${request.status}.`),{status:409});
     if(String(ownerEmail).toLowerCase()!==String(actor.email).toLowerCase()) throw Object.assign(new Error('This request is assigned to another user.'),{status:403});
@@ -549,15 +738,16 @@ export async function recallExpenseRequest(id, employee) {
       throw Object.assign(new Error('Only Requestor can recall a request.'),{status:403});
     if(String(request.requester_email).toLowerCase()!==String(employee.email).toLowerCase())
       throw Object.assign(new Error('This is not your request.'),{status:403});
-    if(request.status!=='PENDING_REVIEW')
-      throw Object.assign(new Error('Only requests that are still Pending Review can be recalled.'),{status:409});
+    const expected=request.form_type==='ECF'?'PENDING_CHECK':'PENDING_REVIEW';
+    if(request.status!==expected)
+      throw Object.assign(new Error(`Only requests that are still ${expected} can be recalled.`),{status:409});
 
     const {rows:updated}=await client.query(
       `update requests set status='RECALLED',last_rejection_reason='',updated_at=now()
        where id=$1 returning *`, [id]
     );
     const next=updated[0];
-    await insertAction(client,next,employee,'RECALLED','PENDING_REVIEW','RECALLED','Recalled by requestor');
+    await insertAction(client,next,employee,'RECALLED',expected,'RECALLED','Recalled by requestor');
     await client.query('commit');
     return next;
   }catch(e){
@@ -572,17 +762,29 @@ export async function reviseExpenseRequest(id, employee, items) {
   const client=await pool.connect();
   try{
     await client.query('begin');
+    // Lock the source before the claim: all ECF reservations use this lock order.
+    const {rows:sourceIds}=await client.query(
+      'select source_erf_id from ecf_details where request_id=$1',[id]
+    );
+    let balance=null;
+    if(sourceIds[0]?.source_erf_id)
+      balance=await sourceBalanceTx(client,sourceIds[0].source_erf_id,employee.email,id);
     const {rows}=await client.query('select * from requests where id=$1 for update',[id]);
     const request=rows[0];
     if(!request) throw Object.assign(new Error('Request not found.'),{status:404});
     if(String(request.requester_email).toLowerCase()!==String(employee.email).toLowerCase())
       throw Object.assign(new Error('This is not your request.'),{status:403});
-    if(!['REVIEW_REJECTED','APPROVAL_REJECTED','RECALLED'].includes(request.status))
+    if(!['CHECK_REJECTED','REVIEW_REJECTED','APPROVAL_REJECTED','RECALLED'].includes(request.status))
       throw Object.assign(new Error('Only rejected or recalled requests can be revised.'),{status:409});
 
     const oldStatus=request.status;
     const newRevision=Number(request.revision)+1;
     const total=items.reduce((s,x)=>s+Number(x.amount),0);
+    if(request.form_type==='ECF'){
+      if(!balance || !Number.isSafeInteger(total) || total<=0 ||
+         Number(balance.source.total)-Number(balance.reserved)<total)
+        throw Object.assign(new Error('Claim exceeds the available ERF balance.'),{status:409});
+    }
 
     const {rows:reviewerRows}=await client.query(
       `select email from employees
@@ -600,13 +802,13 @@ export async function reviseExpenseRequest(id, employee, items) {
     }
 
     const {rows:updated}=await client.query(
-      `update requests set revision=$2,total=$3,status='PENDING_REVIEW',
+      `update requests set revision=$2,total=$3,status=$5,
        reviewer_email=$4,last_rejection_reason='',form_pdf_path=null,evidence_pdf_path=null,updated_at=now()
-       where id=$1 returning *`, [id,newRevision,total,reviewerEmail]
+       where id=$1 returning *`, [id,newRevision,total,reviewerEmail,request.form_type==='ECF'?'PENDING_CHECK':'PENDING_REVIEW']
     );
     const next=updated[0];
     await insertItems(client,id,newRevision,items);
-    await insertAction(client,next,employee,'REVISED',oldStatus,'PENDING_REVIEW','');
+    await insertAction(client,next,employee,'REVISED',oldStatus,next.status,'');
     await client.query('commit');
     return next;
   }catch(e){await client.query('rollback');throw e}finally{client.release()}

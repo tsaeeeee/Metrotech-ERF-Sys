@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node --import ./src/ecf-profile-preload.js src/server.js",
     "dev": "node --watch --import ./src/ecf-profile-preload.js src/server.js",
-    "test:workflow": "node scripts/workflow-smoke.js"
+    "test:workflow": "node scripts/workflow-smoke.js",
+    "test:ems-http": "node scripts/ems-http-smoke.js"
   },
   "dependencies": {
     "connect-pg-simple": "^10.0.0",

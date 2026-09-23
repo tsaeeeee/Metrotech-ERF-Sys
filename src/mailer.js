@@ -109,6 +109,7 @@ function escapeHtml(value){
 }
 
 function requestCode(request){
+  if(request?.form_type==='ECF') return 'ECF';
   return String(request?.request_type||'').toUpperCase()==='REIMBURSEMENT' ||
     String(request?.ref_no||'').startsWith('RRF-')
     ? 'RRF'
@@ -116,6 +117,7 @@ function requestCode(request){
 }
 
 function requestTypeLabel(request){
+  if(request?.form_type==='ECF') return 'Expense Claim';
   return requestCode(request)==='RRF'?'Reimbursement':'Expense Request';
 }
 
@@ -194,18 +196,29 @@ function eventPresentation(event,request,fallbackText=''){
       cta:'View Approved Request'
     }
   };
+  if(request?.form_type==='ECF'){
+    const claimEvents={
+      SUBMITTED:{title:'A claim needs checking',badge:'Pending Check',message:`${requestor} submitted a claim against ${request.source_erf_ref||'an approved ERF'}.`,cta:'Check Claim'},
+      REVISED:{title:'A revised claim needs checking',badge:'Pending Check',message:`${requestor} resubmitted this claim for checking.`,cta:'Check Claim'},
+      CHECK_APPROVED:{title:'A claim needs review',badge:'Pending Review',message:'The Checker approved this claim. It is ready for review.',cta:'Review Claim'},
+      CHECK_REJECTED:{title:'Your claim needs changes',badge:'Check Rejected',message:`Checker rejected this claim. ${reason||fallbackText}`,cta:'View Claim'}
+    };
+    if(claimEvents[event]) return {...claimEvents[event],badgeBg:'#155da8'};
+  }
   return map[event]||{
-    title:'ERF workflow notification',
+    title:'EMS workflow notification',
     badge:String(request?.status||'Notification').replaceAll('_',' '),
     badgeBg:'#155da8',
     message:String(fallbackText||'There is an update to this request.'),
-    cta:'Open ERF System'
+    cta:'Open EMS'
   };
 }
 
 function workflowSubject(event,request,fallback=''){
   const ref=String(request?.ref_no||'').trim();
   const code=requestCode(request);
+  if(code==='ECF' && ['SUBMITTED','REVISED'].includes(event))
+    return `[ECF] Check Required — ${ref}`;
   const labels={
     SUBMITTED:'Review Required',
     REVISED:'Review Required',
@@ -213,10 +226,12 @@ function workflowSubject(event,request,fallback=''){
     REVIEW_APPROVED:'Approval Required',
     REVIEW_REJECTED:'Request Rejected',
     APPROVAL_REJECTED:'Request Rejected',
-    FINAL_APPROVED:'Final Approved'
+    FINAL_APPROVED:'Final Approved',
+    CHECK_APPROVED:'Review Required',
+    CHECK_REJECTED:'Claim Rejected'
   };
   if(ref && labels[event]) return `[${code}] ${labels[event]} — ${ref}`;
-  return fallback||`[${code}] ERF Workflow Notification`;
+  return fallback||`[${code}] EMS Workflow Notification`;
 }
 
 async function resolveRecipientName(email){
@@ -241,6 +256,10 @@ function summaryRows(request,presentation){
     ['Current Status',presentation.badge]
   ];
   if(Number(request?.revision||1)>1) rows.splice(2,0,['Revision',String(request.revision)]);
+  if(request?.form_type==='ECF'){
+    rows.splice(2,0,['Source ERF',request.source_erf_ref||'-']);
+    rows.splice(3,0,['Checker',request.checker_name||'-']);
+  }
   return rows;
 }
 

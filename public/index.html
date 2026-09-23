@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Metrotech ERF</title>
+<title>Metrotech EMS</title>
 <link rel="icon" type="image/svg+xml" href="/assets/metrotech-favicon.svg">
 <link rel="stylesheet" href="/styles.css">
 </head>
@@ -12,7 +12,7 @@
   <div class="topbar-brand">
     <img class="metro-logo" src="/assets/metrotech-logo.webp" alt="Metrotech">
     <div class="topbar-divider"></div>
-    <div class="topbar-title">Expense Request System</div>
+    <div class="topbar-title">Expense Management System</div>
   </div>
 
   <div id="userMenuWrap" class="user-menu-wrap hidden">
@@ -40,8 +40,8 @@
 
 <section id="loginCard" class="login-shell">
   <div class="login-card">
-    <div class="login-mark">ERF</div>
-    <h2>Sign in to Expense Request</h2>
+    <div class="login-mark">EMS</div>
+    <h2>Sign in to Metrotech EMS</h2>
     <p class="muted">Enter your account to continue.</p>
     <form id="loginForm" class="login-form" onsubmit="submitLogin(event)">
       <div class="field">
@@ -62,6 +62,21 @@
 </section>
 
 <section id="dashboard" class="hidden">
+<nav id="emsNav" class="ems-nav" aria-label="EMS modules">
+  <button type="button" data-ems-view="home" onclick="emsNavigate('home')">Dashboard</button>
+  <button type="button" data-ems-view="erf" onclick="emsNavigate('erf')">Expense Request · ERF</button>
+  <button type="button" data-ems-view="ecf" onclick="emsNavigate('ecf')">Expense Claim · ECF</button>
+  <button type="button" data-ems-view="requests" onclick="emsNavigate('requests')">My Requests</button>
+  <button type="button" data-ems-view="tasks" onclick="emsNavigate('tasks')">My Tasks <span id="emsTaskCount"></span></button>
+  <button type="button" data-ems-view="profile" onclick="openProfileModal()">Profile</button>
+  <button id="emsAdminNav" class="hidden" type="button" data-ems-view="admin" onclick="emsNavigate('admin')">Admin</button>
+</nav>
+<main class="ems-main">
+<section id="emsHome" class="hidden">
+  <div class="card"><h2>EMS Overview</h2><p class="muted">Approved requests and claims, grouped by request month.</p><div id="emsMetrics" class="ems-metrics"></div></div>
+  <div class="ems-panels"><div class="card"><h2>Monthly trend</h2><div id="emsTrend"></div></div><div class="card"><h2>Top categories this month</h2><div id="emsCategories"></div></div></div>
+</section>
+<section id="emsTasks" class="card hidden"><h2>My Tasks</h2><div id="emsTaskRows"></div></section>
 <div id="workflowDashboard">
 <div class="card profile-card">
   <div class="row"><div><h2 id="roleTitle">Dashboard</h2></div></div>
@@ -69,6 +84,11 @@
 </div>
 
 <section id="requestForm" class="card hidden">
+<div id="emsSourceFields" class="ems-source-fields hidden">
+  <div class="field"><label for="emsSourceErf">Approved source ERF</label><select id="emsSourceErf" onchange="emsUpdateSource()"><option value="">Select ERF</option></select><small id="emsSourceBalance" class="muted"></small></div>
+  <div class="field"><label for="emsServiceOrder">Service order number (optional)</label><input id="emsServiceOrder" maxlength="100" placeholder="Service order number"></div>
+  <p class="muted">Complete your bank details in My Profile before submitting a claim. Evidence is required for every payment.</p>
+</div>
 <div class="row">
   <div>
     <h2 id="requestFormTitle">Create Expense Request</h2>
@@ -326,6 +346,7 @@
     </form>
   </div>
 </section>
+</main>
 </section>
 </div>
 
@@ -524,5 +545,6 @@
 
 <script src="/app.js"></script>
 <script src="/ecf-admin.js"></script>
+<script src="/ems.js"></script>
 </body>
 </html>
