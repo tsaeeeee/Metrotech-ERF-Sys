@@ -5,16 +5,18 @@ let emsDetail=null;
 
 function emsNavigate(view){
   if(!currentEmployee) return;
-  if(view==='profile'){openProfileModal();return}
-  emsView=view;
   const admin=currentEmployee.role==='ADMIN';
-  if(admin && !['home','admin'].includes(view)) view=emsView='admin';
-  document.querySelectorAll('[data-ems-view]').forEach(button=>
+  if(admin && !['home','admin-users','admin-app'].includes(view)) view='admin-users';
+  if(!admin && view.startsWith('admin-')) view='home';
+  if(!admin && view==='ecf' && currentEmployee.ecfRole==='NONE') view='erf';
+  emsView=view;
+  document.querySelectorAll('#emsNav [data-ems-view]').forEach(button=>
     button.classList.toggle('active',button.dataset.emsView===view));
+  if(view.startsWith('admin-')) showAdminSection(view==='admin-app'?'app':'users');
   $('#emsHome').classList.toggle('hidden',view!=='home');
   $('#emsTasks').classList.toggle('hidden',view!=='tasks');
   $('#workflowDashboard').classList.toggle('hidden',!['erf','ecf','requests'].includes(view));
-  $('#adminDashboard').classList.toggle('hidden',view!=='admin');
+  $('#adminDashboard').classList.toggle('hidden',!view.startsWith('admin-'));
   $('#requestQueueCard').classList.toggle('hidden',view==='ecf'&&currentEmployee.ecfRole!=='REQUESTOR');
   const canCreate=currentEmployee.role==='REQUESTOR' &&
     (view==='erf'||(view==='ecf'&&currentEmployee.ecfRole==='REQUESTOR'));
@@ -107,10 +109,12 @@ const emsOriginalLoadMe=loadMe;
 loadMe=async function(...args){
   await emsOriginalLoadMe(...args);
   if(!currentEmployee||employeeNeedsSetup()) return;
-  $('#emsAdminNav').classList.toggle('hidden',currentEmployee.role!=='ADMIN');
-  $('#emsNav [data-ems-view="ecf"]').classList.toggle('hidden',
-    currentEmployee.role==='REQUESTOR'&&currentEmployee.ecfRole==='NONE');
-  emsNavigate(currentEmployee.role==='ADMIN'&&emsView!=='home'?'admin':emsView);
+  const admin=currentEmployee.role==='ADMIN';
+  $('#emsTransactionsNav').classList.toggle('hidden',admin);
+  $('#emsActivityNav').classList.toggle('hidden',admin);
+  $('#emsAdminNav').classList.toggle('hidden',!admin);
+  $('#emsNav [data-ems-view="ecf"]').classList.toggle('hidden',currentEmployee.ecfRole==='NONE');
+  emsNavigate(emsView);
 };
 
 const emsOriginalStartRevision=startRevision;
