@@ -1,6 +1,64 @@
 // EMS navigation and ECF interaction extend the existing ERF form and detail UI.
 let emsView='home';
 let emsDetail=null;
+let emsFormView=null;
+let emsDraftOwner=null;
+let emsDrafts={};
+let emsSubmitting=false;
+
+function emsStoreDraft(){
+  if(!emsFormView) return;
+  emsDrafts[emsFormView]={
+    payments:payments.map(item=>({...item,evidence:[...(item.evidence||[])]})),
+    editingIndex,
+    revisionTarget:revisionTarget?{...revisionTarget}:null,
+    requestType:rtRequestType,
+    category:$('#category').value,
+    purpose:$('#purpose').value,
+    paymentDate:$('#paymentDate').value,
+    amount:$('#amount').value,
+    evidence:selectedFiles(),
+    serviceOrderNumber:$('#emsServiceOrder').value
+  };
+}
+
+function emsRestoreDraft(view){
+  const draft=emsDrafts[view];
+  emsFormView=view;
+  payments=(draft?.payments||[]).map(item=>({...item,evidence:[...item.evidence]}));
+  editingIndex=draft?.editingIndex??-1;
+  revisionTarget=draft?.revisionTarget?{...draft.revisionTarget}:null;
+  rtRequestType=draft?.requestType||(view==='ecf'?'REIMBURSEMENT':'EXPENSE');
+  if(draft?.category) selectCategory(draft.category);
+  else resetCategory();
+  $('#purpose').value=draft?.purpose||'';
+  $('#paymentDate').value=draft?.paymentDate||new Date().toISOString().slice(0,10);
+  $('#amount').value=draft?.amount||'';
+  const evidence=new DataTransfer();
+  (draft?.evidence||[]).forEach(file=>evidence.items.add(file));
+  $('#evidence').files=evidence.files;
+  $('#emsServiceOrder').value=draft?.serviceOrderNumber||'';
+  $('#addPaymentBtn').textContent=editingIndex>=0?'Update Payment':'+ Add Payment';
+  renderPayments();
+  renderRevisionState();
+  syncEvidenceInfo();
+}
+
+function emsResetSessionState(){
+  emsView='home';
+  emsFormView=null;
+  emsDraftOwner=null;
+  emsDrafts={};
+  payments=[];
+  editingIndex=-1;
+  revisionTarget=null;
+  rtRequestType='EXPENSE';
+  $('#emsServiceOrder').value='';
+  renderPayments();
+  resetPaymentForm();
+  renderRevisionState();
+  emsCloseSidebar();
+}
 
 function emsCloseSidebar(){
   $('#emsNav').classList.remove('open');
@@ -19,11 +77,16 @@ function emsToggleSidebar(){
 
 function emsNavigate(view){
   if(!currentEmployee) return;
+  if(emsSubmitting && view!==emsView) return;
   emsCloseSidebar();
   const admin=currentEmployee.role==='ADMIN';
   if(admin && !['home','admin-users','admin-app'].includes(view)) view='admin-users';
   if(!admin && view.startsWith('admin-')) view='home';
   if(!admin && view==='ecf' && currentEmployee.ecfRole==='NONE') view='erf';
+  if(!admin && ['erf','ecf'].includes(view) && view!==emsFormView){
+    emsStoreDraft();
+    emsRestoreDraft(view);
+  }
   emsView=view;
   document.querySelectorAll('#emsNav [data-ems-view]').forEach(button=>
     button.classList.toggle('active',button.dataset.emsView===view));
@@ -32,7 +95,7 @@ function emsNavigate(view){
   $('#emsTasks').classList.toggle('hidden',view!=='tasks');
   $('#workflowDashboard').classList.toggle('hidden',!['erf','ecf','requests'].includes(view));
   $('#adminDashboard').classList.toggle('hidden',!view.startsWith('admin-'));
-  $('#requestQueueCard').classList.toggle('hidden',view==='ecf'&&currentEmployee.ecfRole!=='REQUESTOR');
+  $('#requestQueueCard').classList.remove('hidden');
   const canCreate=currentEmployee.role==='REQUESTOR' &&
     (view==='erf'||(view==='ecf'&&currentEmployee.ecfRole==='REQUESTOR'));
   $('#requestForm').classList.toggle('hidden',!canCreate);
@@ -41,17 +104,20 @@ function emsNavigate(view){
   if(view==='erf'||view==='ecf'||view==='requests'){
     $('#queueTitle').textContent=view==='requests'?'My Requests':view==='erf'?'Expense Requests':'Expense Claims';
     const data=window.emsBootstrap||{};
+    const source=view==='ecf'&&currentEmployee.ecfRole!=='REQUESTOR'
+      ? data.tasks||[] : data.requests||[];
     const rows=view==='requests'?data.myRequests||[]:
-      (data.requests||[]).filter(row=>row.form_type===(view==='ecf'?'ECF':'ERF'));
+      source.filter(row=>row.form_type===(view==='ecf'?'ECF':'ERF'));
     renderRequests(rows);
   }
   if(view==='ecf'){
     rtRequestType='REIMBURSEMENT';
     rtApplyUi();
-    $('#requestFormTitle').textContent=revisionTarget?'Revise Expense Claim':'Create Expense Claim';
+    if(!revisionTarget) $('#requestFormTitle').textContent='Create Expense Claim';
     $('#submitExpenseBtn').textContent=revisionTarget?'Submit Revision':'Submit Claim';
-  }else if(view==='erf' && !revisionTarget){
-    rtRequestType='EXPENSE';rtApplyUi();
+  }else if(view==='erf'){
+    if(!revisionTarget) rtRequestType='EXPENSE';
+    rtApplyUi();
   }
   $('#evidenceModeNote')?.classList.toggle('hidden',view==='ecf');
   if(view==='tasks') emsRenderTasks();
@@ -106,11 +172,18 @@ loadMe=async function(...args){
   $('#emsActivityNav').classList.toggle('hidden',admin);
   $('#emsAdminNav').classList.toggle('hidden',!admin);
   $('#emsNav [data-ems-view="ecf"]').classList.toggle('hidden',currentEmployee.ecfRole==='NONE');
+  const tasks=window.emsBootstrap?.tasks||[];
+  $('#emsTaskCount').textContent=tasks.length?String(tasks.length):'';
+  if(emsDraftOwner!==currentEmployee.email){
+    emsResetSessionState();
+    emsDraftOwner=currentEmployee.email;
+  }
   emsNavigate(emsView);
 };
 
 const emsOriginalStartRevision=startRevision;
 startRevision=async function(id){
+  if(emsSubmitting) return;
   const data=await api(`/api/requests/${id}`).catch(e=>{msg(e.message,'err');return null});
   if(!data) return;
   emsNavigate(data.request.form_type==='ECF'?'ecf':'erf');
@@ -131,7 +204,15 @@ cancelRevision=function(){
 
 const emsOriginalSubmitExpense=submitExpense;
 submitExpense=async function(){
-  if(emsView!=='ecf') return emsOriginalSubmitExpense();
+  if(emsSubmitting) return;
+  if(!['erf','ecf'].includes(emsView)) return;
+  if(revisionTarget && revisionTarget.formType!==(emsView==='ecf'?'ECF':'ERF'))
+    return msg('Open this revision from My Requests before submitting.','err');
+  if(emsView!=='ecf'){
+    emsSubmitting=true;
+    try{return await emsOriginalSubmitExpense()}
+    finally{emsSubmitting=false}
+  }
   if(!payments.length||!sigRequireWorkflowSignature('submit this claim')) return;
   if(payments.some(item=>!(item.evidence||[]).length))
     return msg('Attach evidence for every payment.','err');
@@ -144,6 +225,7 @@ submitExpense=async function(){
   payments.forEach((item,index)=>(item.evidence||[]).filter(file=>file instanceof File)
     .forEach(file=>fd.append(`evidence_${index}`,file,file.name)));
   const button=$('#submitExpenseBtn');button.disabled=true;button.textContent='Submitting…';
+  emsSubmitting=true;
   try{
     const result=await api(revisionTarget?`/api/requests/${revisionTarget.id}/revise`:'/api/ecf/claims',
       {method:'POST',body:fd});
@@ -151,6 +233,7 @@ submitExpense=async function(){
     await loadMe();
     msg(`${result.refNo} submitted. Waiting for Checker.`);
   }catch(e){msg(e.message,'err');button.disabled=false;button.textContent='Submit Claim'}
+  finally{emsSubmitting=false}
 };
 
 const emsOriginalOpenRequest=openRequest;
@@ -192,3 +275,17 @@ sendDecision=async function(decision){
 
 const emsOriginalCloseDetail=closeDetail;
 closeDetail=function(){emsDetail=null;emsOriginalCloseDetail()};
+
+const emsOriginalLogout=logout;
+logout=async function(...args){
+  await emsOriginalLogout(...args);
+  emsResetSessionState();
+  window.emsBootstrap=null;
+  emsDetail=null;
+  ['#emsTransactionsNav','#emsActivityNav','#emsAdminNav'].forEach(selector=>
+    $(selector).classList.add('hidden'));
+};
+
+// One entry point, after app.js, request-type.js and the ECF extensions.
+loadAuthMode();
+loadMe();

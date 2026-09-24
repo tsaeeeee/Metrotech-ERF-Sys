@@ -55,7 +55,12 @@ jobs:
           node --check public/ems.js
           node --check scripts/workflow-smoke.js
           node --check scripts/ems-http-smoke.js
+          node --check scripts/ems-ui-smoke.js
       - name: Test workflow state machine
         run: npm run test:workflow
       - name: Test EMS HTTP workflow
         run: npm run test:ems-http
+      - name: Install browser for UI regression checks
+        run: npx playwright install --with-deps chromium
+      - name: Test role navigation and isolated form drafts
+        run: npm run test:ui

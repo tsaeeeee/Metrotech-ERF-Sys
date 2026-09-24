@@ -86,6 +86,24 @@ try{
   assert((await request('/api/requests',{method:'POST',body:{requestType:'REIMBURSEMENT'},cookie:requestorCookie})).status===400,
     'New reimbursement submissions must use the separate ECF flow.');
 
+  assert((await request(`/api/requests/${id}/recall`,{method:'POST',body:{},cookie:requestorCookie})).data.status==='RECALLED',
+    'Requestor must be able to recall a claim before checking.');
+  const revision=new FormData();
+  revision.set('serviceOrderNumber','SO-HTTP-REVISED');
+  revision.set('items',JSON.stringify([{
+    category:'Testing',purpose:'Revised claim',paymentDate:'2026-09-23',amount:25000,sourceLineNo:1
+  }]));
+  const revised=await request(`/api/requests/${id}/revise`,{method:'POST',body:revision,cookie:requestorCookie});
+  assert(revised.status===200&&revised.data.status==='PENDING_CHECK',
+    `ECF revision failed: ${JSON.stringify(revised.data)}`);
+  const revisedDetail=await request(`/api/requests/${id}`,{cookie:requestorCookie});
+  assert(revisedDetail.data.request.service_order_number==='SO-HTTP-REVISED',
+    'ECF revision must persist the edited Service Order number.');
+  assert(revisedDetail.data.request.account_number===detail.data.request.account_number,
+    'ECF revision must preserve the submitted payment-profile snapshot.');
+  assert(revisedDetail.data.items[0].evidence_names.includes('proof.pdf'),
+    'ECF revision must retain existing evidence.');
+
   const checkerCookie=await login('workflow-checker');
   const tasks=await request('/api/me',{cookie:checkerCookie});
   assert(tasks.data.tasks.some(row=>row.id===id),'Checker must see pending claim in My Tasks.');

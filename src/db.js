@@ -373,25 +373,25 @@ export async function setManagedEmployeeActive(email,active) {
 export async function listRequestsForEmployee(employee) {
   let q, params;
   if (employee.role === 'REQUESTOR') {
-    q = `select r.id,r.ref_no,r.request_date,r.employee_name,r.request_type,r.form_type,r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at
+    q = `select r.id,r.ref_no,r.requester_email,r.request_date,r.employee_name,r.request_type,r.form_type,r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at
          from requests r
          where lower(r.requester_email)=lower($1)
          order by r.updated_at desc limit 100`;
     params=[employee.email];
   } else if (employee.role === 'REVIEWER') {
-    q = `select r.id,r.ref_no,r.request_date,r.employee_name,r.request_type,r.form_type,r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at
+    q = `select r.id,r.ref_no,r.requester_email,r.request_date,r.employee_name,r.request_type,r.form_type,r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at
          from requests r
          where lower(r.reviewer_email)=lower($1) and r.status='PENDING_REVIEW'
          order by r.updated_at asc limit 100`;
     params=[employee.email];
   } else if (employee.role === 'APPROVER') {
-    q = `select r.id,r.ref_no,r.request_date,r.employee_name,r.request_type,r.form_type,r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at
+    q = `select r.id,r.ref_no,r.requester_email,r.request_date,r.employee_name,r.request_type,r.form_type,r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at
          from requests r
          where lower(r.approver_email)=lower($1) and r.status='PENDING_APPROVAL'
          order by r.updated_at asc limit 100`;
     params=[employee.email];
   } else if (employee.role === 'ADMIN') {
-    q = `select r.id,r.ref_no,r.request_date,r.employee_name,r.request_type,r.form_type,r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at
+    q = `select r.id,r.ref_no,r.requester_email,r.request_date,r.employee_name,r.request_type,r.form_type,r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at
          from requests r
          order by r.updated_at desc limit 100`;
     params=[];
@@ -413,7 +413,8 @@ export async function listTasksForEmployee(employee){
   if(employee.role==='ADMIN') return [];
   const ecfRole=employee.ecfRole||await getEcfRole(employee.email);
   const {rows}=await pool.query(
-    `select r.id,r.ref_no,r.form_type,r.request_date,r.employee_name,r.total,r.status
+    `select r.id,r.ref_no,r.requester_email,r.form_type,r.request_type,r.request_date,r.employee_name,
+       r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at
      from requests r
      where (r.status='PENDING_CHECK' and $2::boolean
        and lower(r.requester_email)<>lower($1))
@@ -426,7 +427,7 @@ export async function listTasksForEmployee(employee){
 
 export async function listMyRequests(employee){
   const {rows}=await pool.query(
-    `select r.id,r.ref_no,r.request_date,r.employee_name,r.request_type,r.form_type,
+    `select r.id,r.ref_no,r.requester_email,r.request_date,r.employee_name,r.request_type,r.form_type,
        r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at
      from requests r
      where lower(r.requester_email)=lower($1) order by r.updated_at desc limit 100`,
@@ -716,7 +717,7 @@ export async function recallExpenseRequest(id, employee) {
   }
 }
 
-export async function reviseExpenseRequest(id, employee, items) {
+export async function reviseExpenseRequest(id, employee, items, {serviceOrderNumber}={}) {
   const client=await pool.connect();
   try{
     await client.query('begin');
@@ -755,6 +756,12 @@ export async function reviseExpenseRequest(id, employee, items) {
        where id=$1 returning *`, [id,newRevision,total,reviewerEmail,request.form_type==='ECF'?'PENDING_CHECK':'PENDING_REVIEW']
     );
     const next=updated[0];
+    if(request.form_type==='ECF' && serviceOrderNumber!==undefined){
+      await client.query(
+        `update ecf_details set service_order_number=$2,updated_at=now() where request_id=$1`,
+        [id,String(serviceOrderNumber||'').trim().slice(0,100)||'-']
+      );
+    }
     await insertItems(client,id,newRevision,items);
     await insertAction(client,next,employee,'REVISED',oldStatus,next.status,'');
     await client.query('commit');
