@@ -238,8 +238,9 @@ function renderRequests(requests){
   $('#empty').classList.add('hidden');
   $('#table').classList.remove('hidden');
   $('#tbody').innerHTML=requests.map(r=>{
-    const ownRequest=(currentEmployee?.role==='REQUESTOR' ||
-      (r.form_type==='ECF' && currentEmployee?.role==='NONE' && currentEmployee?.ecfRole==='REQUESTOR')) &&
+    const ownRequest=(r.form_type==='ECF'
+      ? currentEmployee?.ecfRole==='REQUESTOR'
+      : currentEmployee?.role==='REQUESTOR') &&
       String(r.requester_email||'').toLowerCase()===String(currentEmployee.email).toLowerCase();
     const revisable=['CHECK_REJECTED','REVIEW_REJECTED','APPROVAL_REJECTED','RECALLED'].includes(r.status);
     const revise=ownRequest && revisable

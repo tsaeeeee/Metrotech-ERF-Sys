@@ -133,6 +133,7 @@ try{
   const admin=await session(employee('ADMIN','NONE'));
   await assertAdmin(admin.page);
   assert.equal(await admin.page.locator('#roleTitle').innerText(),'Admin Dashboard');
+  assert(!await admin.page.locator('#profile').isVisible(),'Admin has no employee details on Dashboard.');
   await admin.page.reload();
   await admin.page.locator('#emsHome').waitFor({state:'visible'});
   await assertAdmin(admin.page);
@@ -174,12 +175,12 @@ try{
   for(const [role,ecfRole,title,erf,ecf,requests,tasks] of [
     ['REQUESTOR','NONE','Requestor Dashboard',true,false,true,false],
     ['REQUESTOR','REQUESTOR','Requestor Dashboard',true,true,true,false],
-    ['REQUESTOR','CHECKER','Requestor & Checker Dashboard',true,true,true,true],
+    ['REQUESTOR','CHECKER','Requestor & Checker Dashboard',true,false,true,true],
     ['NONE','REQUESTOR','ECF Requestor Dashboard',false,true,true,false],
-    ['NONE','CHECKER','Checker Dashboard',false,true,false,true],
+    ['NONE','CHECKER','Checker Dashboard',false,false,false,true],
     ['NONE','NONE','Dashboard',false,false,false,false],
-    ['REVIEWER','REVIEWER','Reviewer Dashboard',true,true,false,true],
-    ['APPROVER','APPROVER','Approver Dashboard',true,true,false,true]
+    ['REVIEWER','REVIEWER','Reviewer Dashboard',false,false,false,true],
+    ['APPROVER','APPROVER','Approver Dashboard',false,false,false,true]
   ]){
     const actor=await session(employee(role,ecfRole));
     assert(!await actor.page.locator('#emsAdminNav').isVisible());
@@ -188,30 +189,35 @@ try{
       assert((await actor.page.locator('#roleTitle').boundingBox()).y <
         (await actor.page.getByText('EMS Overview',{exact:true}).boundingBox()).y,
         'Role title must be above EMS Overview.');
+      assert.equal(await actor.page.locator('#emsHome #profile').count(),1);
+      assert.equal(await actor.page.locator('#workflowDashboard #profile').count(),0);
+      const profile=actor.page.locator('#emsHome #profile');
+      assert(await profile.isVisible(),'Employee details belong on Dashboard.');
+      assert((await profile.innerText()).includes('UI-001'));
+      assert((await profile.innerText()).includes('Operations'));
+      assert((await profile.boundingBox()).y <
+        (await actor.page.getByText('EMS Overview',{exact:true}).boundingBox()).y,
+        'Employee details must precede EMS Overview.');
+      assert.equal(await actor.page.locator('#emsTransactionsNav').isVisible(),erf||ecf);
       assert.equal(await actor.page.locator('[data-ems-view="erf"]').isVisible(),erf);
       assert.equal(await actor.page.locator('[data-ems-view="ecf"]').isVisible(),ecf);
       assert.equal(await actor.page.locator('[data-ems-view="requests"]').isVisible(),requests);
       assert.equal(await actor.page.locator('[data-ems-view="tasks"]').isVisible(),tasks);
       await actor.page.waitForFunction(()=>document.querySelector('#emsMetrics').textContent.trim()!=='');
       const metricLabels=await actor.page.locator('#emsMetrics').innerText();
-      assert.equal(metricLabels.includes('Approved ERF'),erf,
+      assert.equal(metricLabels.includes('Approved ERF'),role!=='NONE',
         'Dashboard must follow ERF access.');
-      assert.equal(metricLabels.includes('Approved ECF'),ecf,
+      assert.equal(metricLabels.includes('Approved ECF'),ecfRole!=='NONE',
         'Dashboard must follow ECF access.');
       if(ecf){
         await actor.page.locator('[data-ems-view="ecf"]').click();
-        assert(await actor.page.locator('#requestQueueCard').isVisible(),`${ecfRole} needs an ECF queue.`);
-        if(tasks){
-          assert((await actor.page.locator('#tbody').innerText()).includes('ECF-task'));
-          assert(!await actor.page.locator('#requestForm').isVisible(),`${ecfRole} cannot create claims.`);
-          assert.equal(await actor.page.locator('#tbody .recall').count(),0);
-        }else{
-          assert(await actor.page.locator('#requestForm').isVisible(),`${ecfRole} can create claims.`);
-        }
+        assert(await actor.page.locator('#requestQueueCard').isVisible(),'ECF Requestor needs an ECF queue.');
+        assert(await actor.page.locator('#requestForm').isVisible(),'ECF Requestor can create claims.');
       }
       if(tasks){
         await actor.page.locator('[data-ems-view="tasks"]').click();
         assert((await actor.page.locator('#emsTaskRows').innerText()).includes('ECF-task'));
+        assert(!await actor.page.locator('#requestForm').isVisible(),'Work happens in Activity, without a transaction form.');
       }
       if(attempt===0){await actor.page.reload();await actor.page.locator('#emsHome').waitFor({state:'visible'})}
     }
