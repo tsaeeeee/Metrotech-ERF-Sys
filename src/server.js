@@ -664,7 +664,9 @@ app.post('/api/requests/:id/revise',requireUser,upload.any(),async(req,res,next)
       return res.status(403).json({error:'ECF Requestor access required.'});
 
     const {items,files}=await parseRevisionItemsAndFiles(req,currentDetail);
-    const request=await reviseExpenseRequest(req.params.id,req.employee,items);
+    const request=await reviseExpenseRequest(req.params.id,req.employee,items,{
+      serviceOrderNumber:req.body.serviceOrderNumber
+    });
     await persistOriginals(request.id,request.revision,files);
     const {detail}=await generateSubmissionDocs(request.id,files);
     await sendWorkflowMail({

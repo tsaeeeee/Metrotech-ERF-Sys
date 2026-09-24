@@ -67,14 +67,14 @@
 <div id="emsNavBackdrop" class="ems-nav-backdrop" onclick="emsCloseSidebar()"></div>
 <nav id="emsNav" class="ems-nav" aria-label="EMS modules">
   <button type="button" data-ems-view="home" onclick="emsNavigate('home')">Dashboard</button>
-  <details id="emsTransactionsNav" class="ems-nav-group" open>
+  <details id="emsTransactionsNav" class="ems-nav-group hidden" open>
     <summary>Transactions</summary>
     <div class="ems-nav-items">
       <button type="button" data-ems-view="erf" onclick="emsNavigate('erf')">Expense Request · ERF</button>
       <button type="button" data-ems-view="ecf" onclick="emsNavigate('ecf')">Expense Claim · ECF</button>
     </div>
   </details>
-  <details id="emsActivityNav" class="ems-nav-group" open>
+  <details id="emsActivityNav" class="ems-nav-group hidden" open>
     <summary>Activity</summary>
     <div class="ems-nav-items">
       <button type="button" data-ems-view="requests" onclick="emsNavigate('requests')">My Requests</button>

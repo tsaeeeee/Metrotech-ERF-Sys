@@ -236,13 +236,15 @@ function renderRequests(requests){
   $('#empty').classList.add('hidden');
   $('#table').classList.remove('hidden');
   $('#tbody').innerHTML=requests.map(r=>{
+    const ownRequest=currentEmployee?.role==='REQUESTOR' &&
+      String(r.requester_email||'').toLowerCase()===String(currentEmployee.email).toLowerCase();
     const revisable=['CHECK_REJECTED','REVIEW_REJECTED','APPROVAL_REJECTED','RECALLED'].includes(r.status);
-    const revise=currentEmployee?.role==='REQUESTOR' && revisable
+    const revise=ownRequest && revisable
       ? `<button class="btn tiny warning" onclick="startRevision('${r.id}')">${r.status==='RECALLED'?'Edit & Resubmit':'Revise'}</button>`
       : '';
-    const recall=currentEmployee?.role==='REQUESTOR' &&
-      (r.status==='PENDING_REVIEW'||r.status==='PENDING_CHECK')
-      ? `<button class="btn tiny recall" onclick="recallRequest('${r.id}','${esc(r.ref_no)}')">Recall</button>`
+    const recall=ownRequest &&
+      r.status===(r.form_type==='ECF'?'PENDING_CHECK':'PENDING_REVIEW')
+      ? `<button class="btn tiny recall" onclick="recallRequest('${r.id}','${esc(r.ref_no)}','${r.form_type==='ECF'?'ECF':'ERF'}')">Recall</button>`
       : '';
     const savePdf=r.status==='APPROVED'
       ? `<button class="btn tiny primary" onclick="downloadFinalPdf('${r.id}')">Save PDF</button>`
@@ -889,7 +891,7 @@ async function startRevision(id){
     const recalled=data.request.status==='RECALLED';
     const reason=data.request.last_rejection_reason||'Please revise this request.';
 
-    revisionTarget={id,refNo};
+    revisionTarget={id,refNo,recalled,reason,formType:data.request.form_type||'ERF'};
     payments=(data.items||[]).map(item=>({
       category:String(item.category||''),
       purpose:String(item.purpose||''),
@@ -902,32 +904,36 @@ async function startRevision(id){
     renderPayments();
     resetPaymentForm();
 
-    $('#requestFormTitle').textContent=`${recalled?'Edit & Resubmit':'Revise'} ${refNo}`;
-    $('#revisionBanner').classList.remove('hidden');
-    $('#revisionBanner').innerHTML=recalled
-      ? `<strong>Recalled:</strong> Edit the existing payment data below and resubmit. Existing evidence is kept unless you replace it.`
-      : `<strong>Rejected:</strong> ${esc(reason)} <span>Edit the existing payment data below and resubmit. Existing evidence is kept unless you replace it.</span>`;
-    $('#cancelRevisionBtn').classList.remove('hidden');
-    $('#submitExpenseBtn').textContent='Submit Revision';
+    renderRevisionState();
     $('#requestForm').scrollIntoView({behavior:'smooth'});
   }catch(e){msg(e.message,'err')}
 }
 
-async function recallRequest(id,refNo){
-  if(!confirm(`Recall ${refNo}? It will be removed from the Reviewer queue until you resubmit it.`)) return;
+async function recallRequest(id,refNo,formType='ERF'){
+  const stage=formType==='ECF'?'Checker':'Reviewer';
+  if(!confirm(`Recall ${refNo}? It will be removed from the ${stage} queue until you resubmit it.`)) return;
   try{
     const r=await api(`/api/requests/${id}/recall`,{method:'POST',body:'{}'});
-    msg(`${r.refNo} recalled successfully. Reviewer can no longer action it until you resubmit.`,'ok');
+    msg(`${r.refNo} recalled successfully. ${stage} can no longer action it until you resubmit.`,'ok');
     await loadMe();
   }catch(e){msg(e.message,'err')}
 }
 
+function renderRevisionState(){
+  $('#revisionBanner').classList.toggle('hidden',!revisionTarget);
+  $('#cancelRevisionBtn').classList.toggle('hidden',!revisionTarget);
+  $('#requestFormTitle').textContent=revisionTarget
+    ? `${revisionTarget.recalled?'Edit & Resubmit':'Revise'} ${revisionTarget.refNo}`
+    : 'Create Expense Request';
+  $('#submitExpenseBtn').textContent=revisionTarget?'Submit Revision':'Submit Expense';
+  $('#revisionBanner').innerHTML=!revisionTarget?'':revisionTarget.recalled
+    ? '<strong>Recalled:</strong> Edit the existing payment data below and resubmit. Existing evidence is kept unless you replace it.'
+    : `<strong>Rejected:</strong> ${esc(revisionTarget.reason)} <span>Edit the existing payment data below and resubmit. Existing evidence is kept unless you replace it.</span>`;
+}
+
 function cancelRevision(){
   revisionTarget=null; payments=[]; editingIndex=-1; renderPayments(); resetPaymentForm();
-  $('#requestFormTitle').textContent='Create Expense Request';
-  $('#revisionBanner').classList.add('hidden');
-  $('#cancelRevisionBtn').classList.add('hidden');
-  $('#submitExpenseBtn').textContent='Submit Expense';
+  renderRevisionState();
 }
 
 async function submitExpense(){
@@ -1120,5 +1126,4 @@ async function logout(){
   setTimeout(()=>$('#loginUsername')?.focus(),0);
 }
 
-loadAuthMode();
-loadMe();
+// EMS starts authentication after all UI extensions have been installed.

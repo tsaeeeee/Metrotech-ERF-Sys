@@ -778,7 +778,4 @@ renderPdfDocument=async function(url,targetSelector){
   }
 };
 
-// The first loadMe() call starts at the end of the base app.js before this extension
-// is evaluated, so run lightweight follow-up syncs once login state settles.
-setTimeout(()=>{rtEnsureControl();sigSyncWorkflowUi();},350);
-setTimeout(()=>{rtEnsureControl();sigSyncWorkflowUi();},1200);
+// Initial account loading runs from ems.js after every extension is installed.
