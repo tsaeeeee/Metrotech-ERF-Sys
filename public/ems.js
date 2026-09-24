@@ -82,10 +82,10 @@ function emsNavigate(view){
   const admin=currentEmployee.role==='ADMIN';
   if(admin && !['home','admin-users','admin-app'].includes(view)) view='admin-users';
   if(!admin && view.startsWith('admin-')) view='home';
-  if(!admin && view==='erf' && currentEmployee.role==='NONE')
-    view=currentEmployee.ecfRole==='NONE'?'home':'ecf';
-  if(!admin && view==='ecf' && currentEmployee.ecfRole==='NONE')
-    view=currentEmployee.role==='NONE'?'home':'erf';
+  if(!admin && view==='erf' && currentEmployee.role!=='REQUESTOR')
+    view=currentEmployee.ecfRole==='REQUESTOR'?'ecf':'home';
+  if(!admin && view==='ecf' && currentEmployee.ecfRole!=='REQUESTOR')
+    view=currentEmployee.role==='REQUESTOR'?'erf':'home';
   if(!admin && view==='requests' && currentEmployee.role!=='REQUESTOR' &&
     !(currentEmployee.role==='NONE' && currentEmployee.ecfRole==='REQUESTOR')) view='home';
   if(!admin && view==='tasks' && !['REVIEWER','APPROVER'].includes(currentEmployee.role)
@@ -107,7 +107,6 @@ function emsNavigate(view){
     (view==='ecf' && currentEmployee.ecfRole==='REQUESTOR');
   $('#requestForm').classList.toggle('hidden',!canCreate);
   $('#emsClaimFields').classList.toggle('hidden',view!=='ecf');
-  $('#profile').parentElement.classList.toggle('hidden',view==='requests'||view==='ecf');
   if(view==='erf'||view==='ecf'||view==='requests'){
     $('#queueTitle').textContent=view==='requests'?'My Requests':view==='erf'?'Expense Requests':'Expense Claims';
     const data=window.emsBootstrap||{};
@@ -187,13 +186,14 @@ loadMe=async function(...args){
   const canWork=['REVIEWER','APPROVER'].includes(currentEmployee.role) ||
     currentEmployee.ecfRole==='CHECKER';
   $('#emsTransactionsNav').classList.toggle('hidden',admin ||
-    (currentEmployee.role==='NONE' && currentEmployee.ecfRole==='NONE'));
+    (currentEmployee.role!=='REQUESTOR' && currentEmployee.ecfRole!=='REQUESTOR'));
   $('#emsActivityNav').classList.toggle('hidden',admin || (!canRequest && !canWork));
   $('#emsNav [data-ems-view="requests"]').classList.toggle('hidden',!canRequest);
   $('#emsNav [data-ems-view="tasks"]').classList.toggle('hidden',!canWork);
   $('#emsAdminNav').classList.toggle('hidden',!admin);
-  $('#emsNav [data-ems-view="erf"]').classList.toggle('hidden',currentEmployee.role==='NONE');
-  $('#emsNav [data-ems-view="ecf"]').classList.toggle('hidden',currentEmployee.ecfRole==='NONE');
+  $('#emsNav [data-ems-view="erf"]').classList.toggle('hidden',currentEmployee.role!=='REQUESTOR');
+  $('#emsNav [data-ems-view="ecf"]').classList.toggle('hidden',currentEmployee.ecfRole!=='REQUESTOR');
+  $('#profile').classList.toggle('hidden',admin);
   $('#roleTitle').textContent=admin?'Admin Dashboard':
     currentEmployee.role==='REVIEWER'?'Reviewer Dashboard':
     currentEmployee.role==='APPROVER'?'Approver Dashboard':
