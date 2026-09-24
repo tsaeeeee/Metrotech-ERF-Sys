@@ -82,7 +82,14 @@ function emsNavigate(view){
   const admin=currentEmployee.role==='ADMIN';
   if(admin && !['home','admin-users','admin-app'].includes(view)) view='admin-users';
   if(!admin && view.startsWith('admin-')) view='home';
-  if(!admin && view==='ecf' && currentEmployee.ecfRole==='NONE') view='erf';
+  if(!admin && view==='erf' && currentEmployee.role==='NONE')
+    view=currentEmployee.ecfRole==='NONE'?'home':'ecf';
+  if(!admin && view==='ecf' && currentEmployee.ecfRole==='NONE')
+    view=currentEmployee.role==='NONE'?'home':'erf';
+  if(!admin && view==='requests' && currentEmployee.role!=='REQUESTOR' &&
+    !(currentEmployee.role==='NONE' && currentEmployee.ecfRole==='REQUESTOR')) view='home';
+  if(!admin && view==='tasks' && !['REVIEWER','APPROVER'].includes(currentEmployee.role)
+    && currentEmployee.ecfRole!=='CHECKER') view='home';
   if(!admin && ['erf','ecf'].includes(view) && view!==emsFormView){
     emsStoreDraft();
     emsRestoreDraft(view);
@@ -96,8 +103,8 @@ function emsNavigate(view){
   $('#workflowDashboard').classList.toggle('hidden',!['erf','ecf','requests'].includes(view));
   $('#adminDashboard').classList.toggle('hidden',!view.startsWith('admin-'));
   $('#requestQueueCard').classList.remove('hidden');
-  const canCreate=currentEmployee.role==='REQUESTOR' &&
-    (view==='erf'||(view==='ecf'&&currentEmployee.ecfRole==='REQUESTOR'));
+  const canCreate=(view==='erf' && currentEmployee.role==='REQUESTOR') ||
+    (view==='ecf' && currentEmployee.ecfRole==='REQUESTOR');
   $('#requestForm').classList.toggle('hidden',!canCreate);
   $('#emsClaimFields').classList.toggle('hidden',view!=='ecf');
   $('#profile').parentElement.classList.toggle('hidden',view==='requests'||view==='ecf');
@@ -145,13 +152,20 @@ async function emsLoadDashboard(){
     const requested=amount('ERF',['APPROVED']);
     const claimed=amount('ECF',['APPROVED']);
     const inProgress=amount('ECF',['PENDING_CHECK','PENDING_REVIEW','PENDING_APPROVAL']);
-    const metrics=[['Approved ERF',requested],['Approved ECF',claimed],['ECF in progress',inProgress]];
+    const erfAccess=currentEmployee.role!=='NONE';
+    const ecfAccess=currentEmployee.role==='ADMIN' || currentEmployee.ecfRole!=='NONE';
+    const metrics=[
+      ...(erfAccess?[['Approved ERF',requested]]:[]),
+      ...(ecfAccess?[['Approved ECF',claimed],['ECF in progress',inProgress]]:[])
+    ];
+    $('#emsMetrics').style.gridTemplateColumns=`repeat(${Math.max(1,metrics.length)},minmax(0,1fr))`;
     $('#emsMetrics').innerHTML=metrics.map(([label,value])=>
-      `<div><small>${esc(label)}</small><strong>${rupiah(value)}</strong></div>`).join('');
+      `<div><small>${esc(label)}</small><strong>${rupiah(value)}</strong></div>`).join('') ||
+      '<div class="empty">No modules assigned yet.</div>';
     const months=[...new Set(data.trend.map(row=>row.month))];
     const max=Math.max(1,...data.trend.map(row=>Number(row.amount)));
     $('#emsTrend').innerHTML=months.length?months.map(month=>{
-      const bars=['ERF','ECF'].map(type=>{
+      const bars=[...(erfAccess?['ERF']:[]),...(ecfAccess?['ECF']:[])].map(type=>{
         const value=Number(data.trend.find(row=>row.month===month&&row.form_type===type)?.amount||0);
         return `<div class="ems-bar-line"><span>${type}</span><div class="ems-track"><i class="${type.toLowerCase()}" style="width:${Math.round(value/max*100)}%"></i></div><strong>${rupiah(value)}</strong></div>`;
       }).join('');
@@ -168,10 +182,27 @@ loadMe=async function(...args){
   await emsOriginalLoadMe(...args);
   if(!currentEmployee||employeeNeedsSetup()) return;
   const admin=currentEmployee.role==='ADMIN';
-  $('#emsTransactionsNav').classList.toggle('hidden',admin);
-  $('#emsActivityNav').classList.toggle('hidden',admin);
+  const canRequest=currentEmployee.role==='REQUESTOR' ||
+    (currentEmployee.role==='NONE' && currentEmployee.ecfRole==='REQUESTOR');
+  const canWork=['REVIEWER','APPROVER'].includes(currentEmployee.role) ||
+    currentEmployee.ecfRole==='CHECKER';
+  $('#emsTransactionsNav').classList.toggle('hidden',admin ||
+    (currentEmployee.role==='NONE' && currentEmployee.ecfRole==='NONE'));
+  $('#emsActivityNav').classList.toggle('hidden',admin || (!canRequest && !canWork));
+  $('#emsNav [data-ems-view="requests"]').classList.toggle('hidden',!canRequest);
+  $('#emsNav [data-ems-view="tasks"]').classList.toggle('hidden',!canWork);
   $('#emsAdminNav').classList.toggle('hidden',!admin);
+  $('#emsNav [data-ems-view="erf"]').classList.toggle('hidden',currentEmployee.role==='NONE');
   $('#emsNav [data-ems-view="ecf"]').classList.toggle('hidden',currentEmployee.ecfRole==='NONE');
+  $('#roleTitle').textContent=admin?'Admin Dashboard':
+    currentEmployee.role==='REVIEWER'?'Reviewer Dashboard':
+    currentEmployee.role==='APPROVER'?'Approver Dashboard':
+    currentEmployee.ecfRole==='CHECKER' && currentEmployee.role==='REQUESTOR'
+      ? 'Requestor & Checker Dashboard':
+    currentEmployee.ecfRole==='CHECKER'?'Checker Dashboard':
+    currentEmployee.role==='NONE'
+      ? currentEmployee.ecfRole==='REQUESTOR'?'ECF Requestor Dashboard':'Dashboard'
+      : 'Requestor Dashboard';
   const tasks=window.emsBootstrap?.tasks||[];
   $('#emsTaskCount').textContent=tasks.length?String(tasks.length):'';
   if(emsDraftOwner!==currentEmployee.email){
