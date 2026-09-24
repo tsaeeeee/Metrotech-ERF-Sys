@@ -178,7 +178,9 @@ async function loadMe(){
       .split(/\s+/).filter(Boolean).slice(0,2).map(x=>x[0]).join('').toUpperCase();
     $('#userAvatar').textContent=initials||'U';
     $('#userMenuName').textContent=employee.name||employee.email;
-    $('#userMenuRole').textContent=employee.role;
+    $('#userMenuRole').textContent=employee.role==='NONE'
+      ? employee.ecfRole==='NONE'?'No Access':`ECF ${employee.ecfRole==='CHECKER'?'Checker':'Requestor'}`
+      : employee.role;
     $('#userMenuFullName').textContent=employee.name||employee.email;
     $('#userMenuEmail').textContent=employee.email;
 
@@ -203,7 +205,7 @@ async function loadMe(){
       return;
     }
 
-    $('#roleTitle').textContent=employee.role==='REQUESTOR'?'Requestor Dashboard':employee.role==='REVIEWER'?'Reviewer Dashboard':'Approver Dashboard';
+    $('#roleTitle').textContent=employee.role==='REQUESTOR'?'Requestor Dashboard':employee.role==='REVIEWER'?'Reviewer Dashboard':employee.role==='APPROVER'?'Approver Dashboard':'Checker Dashboard';
     $('#queueTitle').textContent=employee.role==='REQUESTOR'?'My Requests':employee.role==='REVIEWER'?'Pending Review':'Pending Approval';
     $('#requestForm').classList.toggle('hidden',employee.role!=='REQUESTOR');
 
@@ -236,7 +238,8 @@ function renderRequests(requests){
   $('#empty').classList.add('hidden');
   $('#table').classList.remove('hidden');
   $('#tbody').innerHTML=requests.map(r=>{
-    const ownRequest=currentEmployee?.role==='REQUESTOR' &&
+    const ownRequest=(currentEmployee?.role==='REQUESTOR' ||
+      (r.form_type==='ECF' && currentEmployee?.role==='NONE' && currentEmployee?.ecfRole==='REQUESTOR')) &&
       String(r.requester_email||'').toLowerCase()===String(currentEmployee.email).toLowerCase();
     const revisable=['CHECK_REJECTED','REVIEW_REJECTED','APPROVAL_REJECTED','RECALLED'].includes(r.status);
     const revise=ownRequest && revisable
@@ -284,7 +287,9 @@ function openProfileModal(){
     ['Department',currentEmployee.department],
     ['Location',currentEmployee.location],
     ['Division',currentEmployee.division],
-    ['Role',currentEmployee.role]
+    ['Role',currentEmployee.role==='NONE'
+      ? `ERF: No Access · ECF: ${currentEmployee.ecfRole==='CHECKER'?'Checker':currentEmployee.ecfRole==='REQUESTOR'?'Requestor':'No Access'}`
+      : currentEmployee.role]
   ];
   $('#lockedProfileGrid').innerHTML=fields.map(([label,value])=>`
     <div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>
@@ -564,7 +569,7 @@ function renderAdminUsers(){
       <td>${esc(u.email)}</td>
       <td>${esc(u.employee_id)}</td>
       <td>${esc(u.department)}</td>
-      <td><span class="role-chip">${esc(u.role)}</span></td>
+      <td><span class="role-chip">${esc(u.role==='NONE'?'No Access':u.role)}</span></td>
       <td>${u.has_signature?'<span class="signature-state ready">Uploaded</span>':'<span class="signature-state">Not uploaded</span>'}</td>
       <td>${u.must_change_password && u.must_upload_signature
         ? '<span class="signature-state">Password & signature required</span>'
@@ -659,7 +664,7 @@ function openAdminUserModal(encodedEmail=''){
   $('#adminLocation').value=user?.location||'';
   $('#adminDivision').value=user?.division||'';
   const roleValue=user?.role||'REQUESTOR';
-  const roleLabel=roleValue==='REVIEWER'?'Reviewer':roleValue==='APPROVER'?'Approver':'Requestor';
+  const roleLabel=roleValue==='REVIEWER'?'Reviewer':roleValue==='APPROVER'?'Approver':roleValue==='NONE'?'No Access':'Requestor';
   selectAdminRole(roleValue,roleLabel);
   $('#adminActive').checked=user?.active!==false;
   $('#adminActiveField').classList.toggle('hidden',!user);

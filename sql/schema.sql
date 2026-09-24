@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS employees (
   department text NOT NULL,
   location text NOT NULL,
   division text NOT NULL,
-  role text NOT NULL CHECK (role IN ('REQUESTOR','REVIEWER','APPROVER','ADMIN')),
+  role text NOT NULL CHECK (role IN ('NONE','REQUESTOR','REVIEWER','APPROVER','ADMIN')),
   signature_file text NOT NULL DEFAULT '',
   active boolean NOT NULL DEFAULT true,
   username text,
@@ -46,7 +46,7 @@ BEGIN
     VALUES(NEW.email,'ECF','REQUESTOR',true,now())
     ON CONFLICT (employee_email,form_type,role_code) DO UPDATE
     SET active=true,updated_at=now();
-  ELSIF NEW.role<>'REQUESTOR' OR NEW.active=false THEN
+  ELSIF NEW.role NOT IN ('REQUESTOR','NONE') OR NEW.active=false THEN
     DELETE FROM employee_form_roles
     WHERE lower(employee_email)=lower(NEW.email)
       AND form_type='ECF';
@@ -227,8 +227,8 @@ SELECT
   CASE
     WHEN e.role='REVIEWER' THEN 'REVIEWER'
     WHEN e.role='APPROVER' THEN 'APPROVER'
-    WHEN e.role='REQUESTOR' AND bool_or(fr.role_code='CHECKER' AND fr.active) THEN 'CHECKER'
-    WHEN e.role='REQUESTOR' AND bool_or(fr.role_code='REQUESTOR' AND fr.active) THEN 'REQUESTOR'
+    WHEN e.role IN ('REQUESTOR','NONE') AND bool_or(fr.role_code='CHECKER' AND fr.active) THEN 'CHECKER'
+    WHEN e.role IN ('REQUESTOR','NONE') AND bool_or(fr.role_code='REQUESTOR' AND fr.active) THEN 'REQUESTOR'
     ELSE 'NONE'
   END AS ecf_role,
   (e.role IN ('REVIEWER','APPROVER')) AS ecf_role_inherited
@@ -270,10 +270,10 @@ BEGIN
       MESSAGE='Reviewer and Approver ECF access is inherited from ERF Access.';
   END IF;
 
-  IF target.role<>'REQUESTOR' THEN
+  IF target.role NOT IN ('REQUESTOR','NONE') THEN
     RAISE EXCEPTION USING
       ERRCODE='P0001',
-      MESSAGE='Only employees with ERF Access Requestor can receive ECF Requestor or Checker access.';
+      MESSAGE='Only employees with ERF Access Requestor or No Access can receive ECF Requestor or Checker access.';
   END IF;
 
   IF normalized_role NOT IN ('REQUESTOR','CHECKER','NONE') THEN

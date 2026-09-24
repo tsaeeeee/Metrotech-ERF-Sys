@@ -11,8 +11,8 @@ process.env.APPROVER_NAME ||= 'Ervan Mardianto';
 
 const {
   pool,getEmployee,createExpenseRequest,transitionRequest,
-  reviseExpenseRequest,recallExpenseRequest,createManagedEmployee,setManagedEmployeeActive,
-  createEcfClaim,listTasksForEmployee,getEmsDashboard,getEcfRole,
+  reviseExpenseRequest,recallExpenseRequest,createManagedEmployee,updateManagedEmployee,setManagedEmployeeActive,
+  createEcfClaim,listRequestsForEmployee,listMyRequests,listTasksForEmployee,getEmsDashboard,getEcfRole,
   getRequestDetail
 }=await import('../src/db.js');
 
@@ -26,7 +26,7 @@ function items(label){
 try{
   const schema=await fs.readFile(new URL('../sql/schema.sql',import.meta.url),'utf8');
   await pool.query(schema);
-  for(const file of ['015-ems-foundation.sql','016-ems-claim-flow.sql']){
+  for(const file of ['015-ems-foundation.sql','016-ems-claim-flow.sql','017-independent-erf-access.sql']){
     const migration=await fs.readFile(new URL(`../sql/migrations/${file}`,import.meta.url),'utf8');
     await pool.query(migration);
   }
@@ -129,6 +129,14 @@ try{
       'Finance','REQUESTOR','/tmp/ci-checker-signature.png',true,'workflow-checker',crypt('ci-only',gen_salt('bf',10)))`);
   const checker=await getEmployee('checker-test@metrotech.local');
   await saveAppSettings({ecfRoleAssignment:{email:checker.email,role:'CHECKER'}},bootstrapAdmin.email);
+  await updateManagedEmployee(checker.email,{
+    name:checker.name,username:checker.username,employeeId:checker.employee_id,
+    department:checker.department,location:checker.location,division:checker.division,
+    role:'NONE',active:true
+  });
+  const ecfOnlyChecker=await getEmployee(checker.email);
+  assert(ecfOnlyChecker.role==='NONE' && await getEcfRole(checker.email)==='CHECKER',
+    'Removing ERF access must keep an existing ECF Checker assignment.');
   await pool.query(`insert into employee_payment_profiles
     (employee_email,payment_to,bank_name,bank_code,account_number)
     values($1,'Workflow Requestor','Bank Central Asia','BCA','123456789')`,[requestor.email]);
@@ -155,13 +163,13 @@ try{
   assert(pdf.getPageCount()===1,'ECF should generate its own signed form page.');
   await fs.rm(pdfPath,{force:true});
   assert((await getEcfRole(checker.email))==='CHECKER','Assigned Checker must retain access.');
-  assert((await listTasksForEmployee(checker)).some(row=>row.id===claim.id),
+  assert((await listTasksForEmployee(ecfOnlyChecker)).some(row=>row.id===claim.id),
     'Checker must see the claim in My Tasks.');
-  await transitionRequest(claim.id,checker,'CHECK','REJECT','Please revise evidence.');
+  await transitionRequest(claim.id,ecfOnlyChecker,'CHECK','REJECT','Please revise evidence.');
   await reviseExpenseRequest(claim.id,requestor,claimItems(170000));
   assert((await pool.query('select status from requests where id=$1',[claim.id])).rows[0].status==='PENDING_CHECK',
     'Revised claim returns to Checker without an ERF balance check.');
-  await transitionRequest(claim.id,checker,'CHECK','APPROVE');
+  await transitionRequest(claim.id,ecfOnlyChecker,'CHECK','APPROVE');
   const reviewerForClaim=await getEmployee(claim.reviewer_email);
   await transitionRequest(claim.id,reviewerForClaim,'REVIEW','APPROVE');
   await transitionRequest(claim.id,approver,'APPROVAL','APPROVE');
@@ -203,6 +211,35 @@ try{
     duplicateApproverBlocked=e.status===409;
   }
   assert(duplicateApproverBlocked,'A second active Approver must be blocked.');
+
+  const ecfOnly=await createManagedEmployee({
+    name:'ECF Only Requestor',email:'ecf-only-test@metrotech.local',username:'workflow-ecf-only',
+    password:'ci-only',employeeId:'TEST-007',department:'Operations',location:'Jakarta',
+    division:'Service',role:'NONE'
+  });
+  await saveAppSettings({ecfRoleAssignment:{email:ecfOnly.email,role:'REQUESTOR'}},bootstrapAdmin.email);
+  await pool.query(`update employees set signature_file='/tmp/ci-ecf-only-signature.png',
+      must_change_password=false,must_upload_signature=false where email=$1`,[ecfOnly.email]);
+  await pool.query(`insert into employee_payment_profiles
+    (employee_email,payment_to,bank_name,bank_code,account_number)
+    values($1,'ECF Only Requestor','Bank Central Asia','BCA','1122334455')`,[ecfOnly.email]);
+  const ecfOnlyAccount=await getEmployee(ecfOnly.email);
+  ecfOnlyAccount.ecfRole=await getEcfRole(ecfOnly.email);
+  assert(ecfOnlyAccount.role==='NONE' && ecfOnlyAccount.ecfRole==='REQUESTOR',
+    'An ECF-only Requestor needs an independent ECF grant.');
+  const ownClaim=await createEcfClaim(ecfOnlyAccount,items('ECF only'), 'Asia/Jakarta');
+  assert((await listMyRequests(ecfOnlyAccount)).some(row=>row.id===ownClaim.id),
+    'An ECF-only Requestor must see their own claim in My Requests.');
+  assert((await listRequestsForEmployee(ecfOnlyAccount)).every(row=>row.form_type==='ECF'),
+    'No ERF requests should be exposed to an ECF-only account.');
+  assert((await getEmsDashboard(ecfOnlyAccount)).totals.every(row=>row.form_type==='ECF'),
+    'An ECF-only dashboard must not show ERF totals.');
+  await saveAppSettings({ecfRoleAssignment:{email:requestor.email,role:'NONE'}},bootstrapAdmin.email);
+  const erfOnlyAccount=await getEmployee(requestor.email);
+  erfOnlyAccount.ecfRole=await getEcfRole(requestor.email);
+  assert((await listMyRequests(erfOnlyAccount)).every(row=>row.form_type==='ERF'),
+    'An ERF-only Requestor must not receive ECF requests.');
+  await saveAppSettings({ecfRoleAssignment:{email:requestor.email,role:'REQUESTOR'}},bootstrapAdmin.email);
 
   console.log('WORKFLOW_SMOKE_OK');
 } finally {

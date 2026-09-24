@@ -106,6 +106,8 @@ try{
 
   const checkerCookie=await login('workflow-checker');
   const tasks=await request('/api/me',{cookie:checkerCookie});
+  assert(tasks.data.employee.role==='NONE' && tasks.data.employee.ecfRole==='CHECKER',
+    'ECF Checker must still work with no ERF access.');
   assert(tasks.data.tasks.some(row=>row.id===id),'Checker must see pending claim in My Tasks.');
   assert((await request(`/api/requests/${id}/check`,{
     method:'POST',body:{decision:'APPROVE'},cookie:checkerCookie
@@ -121,6 +123,39 @@ try{
   })).data.status==='APPROVED','Approver must finalize claim.');
   const final=await request(`/api/requests/${id}/form/download`,{cookie:requestorCookie});
   assert(final.status===200,'Requestor must be able to download approved ECF packet.');
+
+  const ecfOnlyCookie=await login('workflow-ecf-only');
+  const ecfOnlyMe=await request('/api/me',{cookie:ecfOnlyCookie});
+  assert(ecfOnlyMe.data.employee.role==='NONE' && ecfOnlyMe.data.employee.ecfRole==='REQUESTOR',
+    'ECF-only Requestor needs ECF access with no ERF access.');
+  assert(ecfOnlyMe.data.requests.every(row=>row.form_type==='ECF') &&
+    ecfOnlyMe.data.myRequests.every(row=>row.form_type==='ECF'),
+    'ECF-only Requestor must not receive ERF requests.');
+  assert((await request('/api/requests',{method:'POST',body:{requestType:'EXPENSE'},
+    cookie:ecfOnlyCookie})).status===403,'ECF-only Requestor must be denied ERF creation.');
+  const claimForm=new FormData();
+  claimForm.set('items',JSON.stringify([{
+    category:'Testing',purpose:'ECF-only claim',paymentDate:'2026-09-23',amount:12000
+  }]));
+  claimForm.set('evidence_0',new Blob([await evidence.save()],{type:'application/pdf'}),'proof.pdf');
+  const ecfOnlyClaim=await request('/api/ecf/claims',{
+    method:'POST',body:claimForm,cookie:ecfOnlyCookie
+  });
+  assert(ecfOnlyClaim.status===201,'ECF-only Requestor must be able to submit claims.');
+  const ecfOnlyId=ecfOnlyClaim.data.requestId;
+  assert((await request(`/api/requests/${ecfOnlyId}/recall`,{
+    method:'POST',body:{},cookie:ecfOnlyCookie
+  })).data.status==='RECALLED','ECF-only Requestor must be able to recall their claim.');
+  const ecfOnlyRevision=new FormData();
+  ecfOnlyRevision.set('items',JSON.stringify([{
+    category:'Testing',purpose:'ECF-only revision',paymentDate:'2026-09-23',
+    amount:14000,sourceLineNo:1
+  }]));
+  const ecfOnlyRevised=await request(`/api/requests/${ecfOnlyId}/revise`,{
+    method:'POST',body:ecfOnlyRevision,cookie:ecfOnlyCookie
+  });
+  assert(ecfOnlyRevised.status===200 && ecfOnlyRevised.data.status==='PENDING_CHECK',
+    'ECF-only Requestor must be able to revise their recalled claim.');
   console.log('EMS_HTTP_SMOKE_OK');
 }catch(error){
   console.error(error,output.slice(-3000));

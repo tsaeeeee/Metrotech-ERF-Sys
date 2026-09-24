@@ -32,11 +32,6 @@ function ecfInjectAdminStyles(){
     .ecf-access-checker{background:#fff4db;color:#8a5600}
     .ecf-access-reviewer,.ecf-access-approver{background:#eef7ef;color:#28633a}
     .ecf-access-none{background:#f2f4f7;color:#667085}
-    .ecf-access-field select{
-      width:100%;min-height:42px;padding:9px 11px;border:1px solid #d7dee8;
-      border-radius:10px;background:#fff;color:#172033;font:inherit;
-    }
-    .ecf-access-field select:disabled{background:#f8fafc;color:#667085;cursor:not-allowed}
     .ecf-access-field small{display:block;margin-top:5px;line-height:1.4}
     .ecf-access-inherited{
       display:flex;align-items:center;min-height:42px;padding:9px 11px;
@@ -124,16 +119,52 @@ function ecfEnsureAccessField(){
   field.className='field ecf-access-field';
   field.innerHTML=`
     <label>ECF Access</label>
-    <select id="adminEcfAccess">
-      <option value="REQUESTOR">Requestor</option>
-      <option value="CHECKER">Checker</option>
-      <option value="NONE">No Access</option>
-    </select>
+    <input id="adminEcfAccess" type="hidden" value="REQUESTOR">
+    <div id="adminEcfAccessSelect" class="custom-select">
+      <button id="adminEcfAccessButton" class="custom-select-trigger" type="button"
+        aria-haspopup="listbox" aria-expanded="false" onclick="ecfToggleAccessMenu()">
+        <span id="adminEcfAccessLabel">Requestor</span>
+        <span class="custom-select-chevron">⌄</span>
+      </button>
+      <div id="adminEcfAccessMenu" class="custom-select-menu hidden" role="listbox">
+        <button type="button" data-value="REQUESTOR" onclick="ecfSelectAccessRole('REQUESTOR')">Requestor</button>
+        <button type="button" data-value="CHECKER" onclick="ecfSelectAccessRole('CHECKER')">Checker</button>
+        <button type="button" data-value="NONE" onclick="ecfSelectAccessRole('NONE')">No Access</button>
+      </div>
+    </div>
     <div id="adminEcfInherited" class="ecf-access-inherited hidden"></div>
     <small id="adminEcfAccessHint" class="muted">Expense Claim Form access. ERF Access remains unchanged.</small>`;
   erfAccessField.insertAdjacentElement('afterend',field);
   return field;
 }
+
+function ecfCloseAccessMenu(){
+  $('#adminEcfAccessMenu')?.classList.add('hidden');
+  $('#adminEcfAccessSelect')?.classList.remove('open');
+  $('#adminEcfAccessButton')?.setAttribute('aria-expanded','false');
+}
+
+function ecfToggleAccessMenu(){
+  const menu=$('#adminEcfAccessMenu');
+  if(!menu || $('#adminEcfAccessButton').disabled) return;
+  const open=menu.classList.contains('hidden');
+  menu.classList.toggle('hidden',!open);
+  $('#adminEcfAccessSelect').classList.toggle('open',open);
+  $('#adminEcfAccessButton').setAttribute('aria-expanded',String(open));
+}
+
+function ecfSelectAccessRole(role){
+  $('#adminEcfAccess').value=role;
+  $('#adminEcfAccessLabel').textContent=ecfRoleLabel(role);
+  document.querySelectorAll('#adminEcfAccessMenu button').forEach(button=>
+    button.classList.toggle('selected',button.dataset.value===role));
+  ecfCloseAccessMenu();
+}
+
+document.addEventListener('click',event=>{
+  const select=$('#adminEcfAccessSelect');
+  if(select && !select.contains(event.target)) ecfCloseAccessMenu();
+});
 
 function ecfCurrentEditingUser(){
   return editingAdminEmail
@@ -145,7 +176,8 @@ function ecfSyncAccessField({preserve=false}={}){
   const field=ecfEnsureAccessField();
   if(!field) return;
 
-  const select=document.getElementById('adminEcfAccess');
+  const select=document.getElementById('adminEcfAccessSelect');
+  const button=document.getElementById('adminEcfAccessButton');
   const inherited=document.getElementById('adminEcfInherited');
   const hint=document.getElementById('adminEcfAccessHint');
   const primary=String(document.getElementById('adminRole')?.value||'REQUESTOR').toUpperCase();
@@ -156,6 +188,7 @@ function ecfSyncAccessField({preserve=false}={}){
 
   if(primary==='REVIEWER' || primary==='APPROVER'){
     select.classList.add('hidden');
+    ecfCloseAccessMenu();
     inherited.classList.remove('hidden');
     inherited.textContent=`${ecfRoleLabel(primary)} — inherited from ERF Access`;
     hint.textContent='ECF Access follows ERF Access automatically for Reviewer and Approver.';
@@ -164,19 +197,19 @@ function ecfSyncAccessField({preserve=false}={}){
 
   inherited.classList.add('hidden');
   select.classList.remove('hidden');
-  select.disabled=!active;
+  button.disabled=!active;
 
   if(!active){
-    select.value='NONE';
+    ecfSelectAccessRole('NONE');
     hint.textContent='Inactive users do not have active ECF Access.';
     return;
   }
 
   if(!preserve){
-    const current=user && user.role==='REQUESTOR'
+    const current=user && ['REQUESTOR','NONE'].includes(user.role)
       ? String(user.ecf_role||'REQUESTOR').toUpperCase()
       : 'REQUESTOR';
-    select.value=['REQUESTOR','CHECKER','NONE'].includes(current)?current:'REQUESTOR';
+    ecfSelectAccessRole(['REQUESTOR','CHECKER','NONE'].includes(current)?current:'REQUESTOR');
   }
   hint.textContent='Requestor, Checker, or No Access applies only to ECF. ERF Access stays unchanged.';
 }
@@ -247,7 +280,7 @@ saveAdminUser=async function(event){
   const targetEmail=originalEmail||body.email;
   let replaceChecker=false;
 
-  if(body.role==='REQUESTOR' && body.active && selectedEcfRole==='CHECKER'){
+  if(['REQUESTOR','NONE'].includes(body.role) && body.active && selectedEcfRole==='CHECKER'){
     const checker=ecfActiveChecker(targetEmail);
     if(checker){
       const confirmed=window.confirm(
@@ -271,7 +304,7 @@ saveAdminUser=async function(event){
       await api('/api/admin/users',{method:'POST',body:JSON.stringify(body)});
     }
 
-    if(body.role==='REQUESTOR' && body.active){
+    if(['REQUESTOR','NONE'].includes(body.role) && body.active){
       await ecfSaveRoleAssignment(targetEmail,selectedEcfRole,replaceChecker);
     }
 

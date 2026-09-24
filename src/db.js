@@ -127,8 +127,8 @@ export async function listManagedEmployees() {
 
 function validateManagedRole(role){
   const next=String(role||'').trim().toUpperCase();
-  if(!['REQUESTOR','REVIEWER','APPROVER'].includes(next))
-    throw Object.assign(new Error('Role must be Requestor, Reviewer, or Approver.'),{status:400});
+  if(!['NONE','REQUESTOR','REVIEWER','APPROVER'].includes(next))
+    throw Object.assign(new Error('ERF Access must be No Access, Requestor, Reviewer, or Approver.'),{status:400});
   return next;
 }
 
@@ -372,12 +372,13 @@ export async function setManagedEmployeeActive(email,active) {
 
 export async function listRequestsForEmployee(employee) {
   let q, params;
-  if (employee.role === 'REQUESTOR') {
+  if (employee.role === 'REQUESTOR' || employee.role === 'NONE') {
     q = `select r.id,r.ref_no,r.requester_email,r.request_date,r.employee_name,r.request_type,r.form_type,r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at
          from requests r
          where lower(r.requester_email)=lower($1)
+           and ((r.form_type='ERF' and $2::boolean) or (r.form_type='ECF' and $3::boolean))
          order by r.updated_at desc limit 100`;
-    params=[employee.email];
+    params=[employee.email,employee.role==='REQUESTOR',employee.ecfRole!=='NONE'];
   } else if (employee.role === 'REVIEWER') {
     q = `select r.id,r.ref_no,r.requester_email,r.request_date,r.employee_name,r.request_type,r.form_type,r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at
          from requests r
@@ -430,30 +431,36 @@ export async function listMyRequests(employee){
     `select r.id,r.ref_no,r.requester_email,r.request_date,r.employee_name,r.request_type,r.form_type,
        r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at
      from requests r
-     where lower(r.requester_email)=lower($1) order by r.updated_at desc limit 100`,
-    [employee.email]
+     where lower(r.requester_email)=lower($1)
+       and ((r.form_type='ERF' and $2::boolean) or (r.form_type='ECF' and $3::boolean))
+     order by r.updated_at desc limit 100`,
+    [employee.email,employee.role==='REQUESTOR',employee.ecfRole!=='NONE']
   );
   return rows;
 }
 
 export async function getEmsDashboard(employee){
-  const scope=employee.role==='ADMIN'?'true':employee.role==='REQUESTOR'
+  const scope=employee.role==='ADMIN'?'true':['REQUESTOR','NONE'].includes(employee.role)
     ? 'lower(r.requester_email)=lower($1)' : employee.role==='REVIEWER'
       ? 'lower(r.reviewer_email)=lower($1)' : 'lower(r.approver_email)=lower($1)';
+  const formScope=employee.ecfRole==='NONE' && employee.role==='NONE'?'false':
+    employee.role==='NONE'?"r.form_type='ECF'":
+    employee.role==='REQUESTOR' && employee.ecfRole==='NONE'?"r.form_type='ERF'":
+    "(r.form_type='ECF' or r.request_type='EXPENSE')";
   const args=employee.role==='ADMIN'?[]:[employee.email];
   const [totals,trend,categories]=await Promise.all([
     pool.query(`select r.form_type,r.status,count(*)::integer as count,
        coalesce(sum(r.total),0) as amount from requests r where ${scope}
-       and (r.form_type='ECF' or r.request_type='EXPENSE')
+       and ${formScope}
        group by r.form_type,r.status`,args),
     pool.query(`select to_char(r.request_date,'YYYY-MM') as month,r.form_type,
        sum(r.total) as amount,count(*)::integer as count from requests r
-       where ${scope} and (r.form_type='ECF' or r.request_type='EXPENSE') and r.status='APPROVED'
+       where ${scope} and ${formScope} and r.status='APPROVED'
          and r.request_date>=date_trunc('month',current_date)-interval '5 months'
        group by month,r.form_type order by month,r.form_type`,args),
     pool.query(`select i.category,r.form_type,sum(i.amount) as amount
        from requests r join request_items i on i.request_id=r.id and i.revision=r.revision
-       where ${scope} and (r.form_type='ECF' or r.request_type='EXPENSE') and r.status='APPROVED'
+       where ${scope} and ${formScope} and r.status='APPROVED'
          and r.request_date>=date_trunc('month',current_date)
        group by i.category,r.form_type order by amount desc limit 8`,args)
   ]);
@@ -693,7 +700,9 @@ export async function recallExpenseRequest(id, employee) {
     const {rows}=await client.query('select * from requests where id=$1 for update',[id]);
     const request=rows[0];
     if(!request) throw Object.assign(new Error('Request not found.'),{status:404});
-    if(employee.role!=='REQUESTOR')
+    if(request.form_type==='ECF'
+      ? !['REQUESTOR','NONE'].includes(employee.role)
+      : employee.role!=='REQUESTOR')
       throw Object.assign(new Error('Only Requestor can recall a request.'),{status:403});
     if(String(request.requester_email).toLowerCase()!==String(employee.email).toLowerCase())
       throw Object.assign(new Error('This is not your request.'),{status:403});

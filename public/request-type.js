@@ -248,7 +248,7 @@ function sigSyncWorkflowUi(){
     notice?.remove();
   }
 
-  if(currentEmployee.role==='REQUESTOR' && missing){
+  if((currentEmployee.role==='REQUESTOR' || currentEmployee.ecfRole==='REQUESTOR') && missing){
     const submit=$('#submitExpenseBtn');
     if(submit) submit.disabled=true;
   }

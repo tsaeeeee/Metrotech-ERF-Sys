@@ -199,6 +199,9 @@ function requireAdmin(req,res,next){
 function canAccess(employee,request){
   if(request.form_type==='ECF' && employee.ecfRole==='CHECKER' &&
      request.status==='PENDING_CHECK') return true;
+  if(request.form_type==='ECF' && employee.ecfRole==='NONE') return false;
+  if(request.form_type==='ECF' && employee.role==='NONE' && employee.ecfRole!=='NONE')
+    return String(request.requester_email).toLowerCase()===String(employee.email).toLowerCase();
   if(employee.role==='REQUESTOR') return String(request.requester_email).toLowerCase()===String(employee.email).toLowerCase();
   if(employee.role==='REVIEWER') return String(request.reviewer_email).toLowerCase()===String(employee.email).toLowerCase();
   if(employee.role==='APPROVER') return String(request.approver_email).toLowerCase()===String(employee.email).toLowerCase();
@@ -639,7 +642,12 @@ app.post('/api/ecf/claims',requireUser,upload.any(),async(req,res,next)=>{
 
 app.post('/api/requests/:id/recall',requireUser,async(req,res,next)=>{
   try{
-    if(req.employee.role!=='REQUESTOR') return res.status(403).json({error:'Only Requestor can recall a request.'});
+    const current=await getRequestDetail(req.params.id);
+    if(!current) return res.status(404).json({error:'Request not found'});
+    if(current.request.form_type==='ECF'
+      ? !['REQUESTOR','NONE'].includes(req.employee.role) || req.employee.ecfRole!=='REQUESTOR'
+      : req.employee.role!=='REQUESTOR')
+      return res.status(403).json({error:'Requestor access required to recall this request.'});
     const request=await recallExpenseRequest(req.params.id,req.employee);
     const detail=await regenerateForm(request.id);
     await sendWorkflowMail({
@@ -655,13 +663,13 @@ app.post('/api/requests/:id/recall',requireUser,async(req,res,next)=>{
 
 app.post('/api/requests/:id/revise',requireUser,upload.any(),async(req,res,next)=>{
   try{
-    if(req.employee.role!=='REQUESTOR') return res.status(403).json({error:'Only Requestor can revise a request.'});
-
     const currentDetail=await getRequestDetail(req.params.id);
     if(!currentDetail) return res.status(404).json({error:'Request not found'});
+    if(currentDetail.request.form_type==='ECF'
+      ? !['REQUESTOR','NONE'].includes(req.employee.role) || req.employee.ecfRole!=='REQUESTOR'
+      : req.employee.role!=='REQUESTOR')
+      return res.status(403).json({error:'Requestor access required to revise this request.'});
     if(!canAccess(req.employee,currentDetail.request)) return res.status(403).json({error:'Access denied'});
-    if(currentDetail.request.form_type==='ECF' && req.employee.ecfRole!=='REQUESTOR')
-      return res.status(403).json({error:'ECF Requestor access required.'});
 
     const {items,files}=await parseRevisionItemsAndFiles(req,currentDetail);
     const request=await reviseExpenseRequest(req.params.id,req.employee,items,{
