@@ -101,7 +101,7 @@
       </div>
     </div>
   </div>
-  <div class="field purpose"><label>Purpose</label><input id="purpose" placeholder="Describe"></div>
+  <div class="field purpose"><label>Purpose</label><textarea id="purpose" rows="2" placeholder="Describe"></textarea></div>
   <div class="field"><label>Payment Date</label><input id="paymentDate" type="date"></div>
   <div class="field"><label>Amount (IDR)</label><input id="amount" type="number" min="1" step="1" placeholder="0"></div>
   <div class="field evidence-field">
@@ -137,6 +137,17 @@
 <tbody id="tbody"></tbody>
 </table>
 </div>
+</div>
+
+<div id="decisionHistoryCard" class="card hidden">
+  <div class="row"><div><h2 id="decisionHistoryTitle">My Activity</h2></div><button class="btn ghost" onclick="loadMe()">Refresh</button></div>
+  <div id="decisionHistoryEmpty" class="empty">No decisions yet.</div>
+  <div class="table-wrap">
+    <table id="decisionHistoryTable" class="request-list-table hidden">
+      <thead><tr><th>Ref No</th><th>Requestor</th><th>Date</th><th class="money">Total</th><th class="status-col">Status</th><th class="rev-col">Rev</th><th class="action-col"></th></tr></thead>
+      <tbody id="decisionHistoryBody"></tbody>
+    </table>
+  </div>
 </div>
 </div>
 

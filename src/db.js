@@ -394,6 +394,42 @@ export async function listRequestsForEmployee(employee) {
   return rows;
 }
 
+const decisionActions={
+  REVIEWER:['REVIEW_APPROVED','REVIEW_REJECTED'],
+  APPROVER:['FINAL_APPROVED','APPROVAL_REJECTED']
+};
+
+export async function hasDecisionHistory(requestId,employee) {
+  const actions=decisionActions[employee.role];
+  if(!actions) return false;
+  const {rows}=await pool.query(
+    `select exists(select 1 from workflow_actions
+      where request_id=$1 and lower(actor_email)=lower($2)
+        and actor_role=$3 and action=any($4::text[])) as participated`,
+    [requestId,employee.email,employee.role,actions]
+  );
+  return rows[0]?.participated===true;
+}
+
+export async function listDecisionHistory(employee) {
+  const actions=decisionActions[employee.role];
+  if(!actions) return [];
+  const activeStatus=employee.role==='REVIEWER'?'PENDING_REVIEW':'PENDING_APPROVAL';
+  const assigneeColumn=employee.role==='REVIEWER'?'reviewer_email':'approver_email';
+  const {rows}=await pool.query(
+    `select r.id,r.ref_no,r.request_date,r.employee_name,r.request_type,r.total,
+            r.status,r.revision,r.last_rejection_reason,r.updated_at
+     from requests r
+     where exists(select 1 from workflow_actions a
+       where a.request_id=r.id and lower(a.actor_email)=lower($1)
+         and a.actor_role=$2 and a.action=any($3::text[]))
+       and not (r.status=$4 and lower(r.${assigneeColumn})=lower($1))
+     order by r.updated_at desc limit 100`,
+    [employee.email,employee.role,actions,activeStatus]
+  );
+  return rows;
+}
+
 export async function createExpenseRequest(employee, items, timezone='Asia/Jakarta', requestType='EXPENSE') {
   const normalizedType=String(requestType||'EXPENSE').trim().toUpperCase();
   if(!['EXPENSE','REIMBURSEMENT'].includes(normalizedType))

@@ -2,9 +2,9 @@ name: Web CI
 
 on:
   push:
-    branches: [web]
+    branches: [web, production-erf]
   pull_request:
-    branches: [web]
+    branches: [web, production-erf]
 
 jobs:
   syntax:
@@ -49,5 +49,8 @@ jobs:
           node --check public/app.js
           node --check public/request-type.js
           node --check scripts/workflow-smoke.js
+          node --check scripts/pdf-wrap-smoke.js
       - name: Test workflow state machine
         run: npm run test:workflow
+      - name: Test PDF long descriptions
+        run: node scripts/pdf-wrap-smoke.js

@@ -57,6 +57,24 @@ function centeredX(font,text,size,left,width){
   return left+(width-font.widthOfTextAtSize(String(text||''),size))/2;
 }
 
+function wrapPdfText(value,font,size,maxWidth){
+  const lines=[];
+  for(const paragraph of String(value||'').split(/\r?\n/)){
+    let line='';
+    for(const word of paragraph.split(/\s+/).filter(Boolean)){
+      const candidate=line?`${line} ${word}`:word;
+      if(font.widthOfTextAtSize(candidate,size)<=maxWidth){line=candidate;continue}
+      if(line){lines.push(line);line=''}
+      for(const char of word){
+        if(line && font.widthOfTextAtSize(line+char,size)>maxWidth){lines.push(line);line=''}
+        line+=char;
+      }
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
 async function embedBrandLogo(doc){
   try{
     const webp=await fs.readFile(BRAND_LOGO_PATH);
@@ -252,6 +270,16 @@ async function buildGoogleSheetFormPdf({request,items,outPath}){
       requestBody:{valueInputOption:'USER_ENTERED',data}
     });
 
+    // The template's fixed row height hides long descriptions in exported PDFs.
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId:tempId,
+      requestBody:{requests:[
+        {repeatCell:{range:{sheetId:gid,startRowIndex:15,endRowIndex:31,startColumnIndex:4,endColumnIndex:5},
+          cell:{userEnteredFormat:{wrapStrategy:'WRAP'}},fields:'userEnteredFormat.wrapStrategy'}},
+        {autoResizeDimensions:{dimensions:{sheetId:gid,dimension:'ROWS',startIndex:15,endIndex:31}}}
+      ]}
+    });
+
     const tokenResponse=await authClient.getAccessToken();
     const token=typeof tokenResponse==='string'?tokenResponse:tokenResponse?.token;
     if(!token) throw new Error('Could not obtain Google access token.');
@@ -284,7 +312,7 @@ async function buildGoogleSheetFormPdf({request,items,outPath}){
 async function buildMockFormPdf({request,items,outPath}) {
   await ensureParent(outPath);
   const doc=await PDFDocument.create();
-  const page=doc.addPage([595,842]);
+  let page=doc.addPage([595,842]);
   const bold=await doc.embedFont(StandardFonts.HelveticaBold);
   const normal=await doc.embedFont(StandardFonts.Helvetica);
 
@@ -357,36 +385,64 @@ async function buildMockFormPdf({request,items,outPath}) {
 
   // Expense table
   const tableTop=600;
-  const rowH=20;
   const x0=42;
   const widths=[28,100,214,75,94];
   const heads=['No.','Category','Purpose of Payment','Payment Date','Amount (IDR)'];
-  let cx=x0;
-  page.drawRectangle({x:x0,y:tableTop,width:511,height:24,color:navy});
-  for(let i=0;i<heads.length;i++){
-    page.drawText(heads[i],{x:cx+5,y:tableTop+8,size:7,font:bold,color:white});
-    cx+=widths[i];
+  function drawTableHeader(top){
+    let cx=x0;
+    page.drawRectangle({x:x0,y:top,width:511,height:24,color:navy});
+    for(let i=0;i<heads.length;i++){
+      page.drawText(heads[i],{x:cx+5,y:top+8,size:7,font:bold,color:white});
+      cx+=widths[i];
+    }
   }
+  drawTableHeader(tableTop);
 
-  let y=tableTop-rowH;
+  let top=tableTop;
   for(let r=0;r<16;r++){
-    let x=x0;
-    for(const w of widths){
-      page.drawRectangle({x,y,width:w,height:rowH,borderWidth:.5,borderColor:line});
-      x+=w;
-    }
     const it=items[r];
-    if(it){
-      page.drawText(String(r+1),{x:x0+9,y:y+6,size:7.5,font:normal,color:grey});
-      page.drawText(String(it.category||'').slice(0,22),{x:x0+widths[0]+5,y:y+6,size:7.3,font:normal,color:navy});
-      page.drawText(String(it.purpose||'').slice(0,48),{x:x0+widths[0]+widths[1]+5,y:y+6,size:7.3,font:normal,color:navy});
-      page.drawText(displayDate(it.payment_date || it.paymentDate),{x:x0+widths[0]+widths[1]+widths[2]+5,y:y+6,size:7.2,font:normal,color:navy});
-      page.drawText(money(it.amount).replace('Rp ','Rp'),{x:x0+widths[0]+widths[1]+widths[2]+widths[3]+5,y:y+6,size:7.1,font:normal,color:navy});
-    }
-    y-=rowH;
+    const lines=it?wrapPdfText(it.purpose,normal,7.3,widths[2]-10):[''];
+    let offset=0;
+    do{
+      const remaining=lines.length-offset;
+      const available=Math.floor((top-210-8)/9);
+      if(available<1 || (!it && top-20<210)){
+        page=doc.addPage([595,842]);
+        drawTableHeader(770);
+        top=770;
+        continue;
+      }
+      const count=it?Math.min(remaining,available):1;
+      const rowH=Math.max(20,count*9+8);
+      const y=top-rowH;
+      let x=x0;
+      for(const w of widths){
+        page.drawRectangle({x,y,width:w,height:rowH,borderWidth:.5,borderColor:line});
+        x+=w;
+      }
+      if(it){
+        if(offset===0){
+          page.drawText(String(r+1),{x:x0+9,y:top-14,size:7.5,font:normal,color:grey});
+          page.drawText(String(it.category||'').slice(0,22),{x:x0+widths[0]+5,y:top-14,size:7.3,font:normal,color:navy});
+          page.drawText(displayDate(it.payment_date || it.paymentDate),{x:x0+widths[0]+widths[1]+widths[2]+5,y:top-14,size:7.2,font:normal,color:navy});
+          page.drawText(money(it.amount).replace('Rp ','Rp'),{x:x0+widths[0]+widths[1]+widths[2]+widths[3]+5,y:top-14,size:7.1,font:normal,color:navy});
+        }
+        lines.slice(offset,offset+count).forEach((line,i)=>{
+          if(line) page.drawText(line,{x:x0+widths[0]+widths[1]+5,y:top-14-i*9,size:7.3,font:normal,color:navy});
+        });
+      }
+      top=y;
+      offset+=count;
+    }while(it && offset<lines.length);
   }
 
   // Total
+  if(top-20<185){
+    page=doc.addPage([595,842]);
+    drawTableHeader(770);
+    top=770;
+  }
+  const y=top-20;
   page.drawRectangle({x:x0,y:y,width:417,height:23,color:pale,borderWidth:.65,borderColor:line});
   page.drawRectangle({x:x0+417,y:y,width:94,height:23,borderWidth:.65,borderColor:line});
   page.drawText('TOTAL',{x:x0+365,y:y+7,size:8,font:bold,color:navy});
