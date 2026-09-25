@@ -748,6 +748,7 @@ function closeCategoryMenu(){
 function selectCategory(value){
   $('#category').value=value;
   $('#categoryLabel').textContent=value;
+  $('#categoryButton').title=value;
   $('#categoryLabel').classList.remove('custom-select-placeholder');
   document.querySelectorAll('#categoryMenu button').forEach(btn=>{
     btn.classList.toggle('selected',btn.dataset.value===value);
@@ -759,6 +760,7 @@ function selectCategory(value){
 function resetCategory(){
   $('#category').value='';
   $('#categoryLabel').textContent='Select category';
+  $('#categoryButton').removeAttribute('title');
   $('#categoryLabel').classList.add('custom-select-placeholder');
   document.querySelectorAll('#categoryMenu button').forEach(btn=>btn.classList.remove('selected'));
   closeCategoryMenu();
@@ -1027,6 +1029,21 @@ async function renderPdfDocument(url,targetSelector){
   }
 }
 
+function renderDetailSummary(r){
+  const assignee=key=>String(r[`${key}_name`]||'').trim()||String(r[`${key}_email`]||'').trim()||'—';
+  const fields=[
+    ['Request Date',String(r.request_date).slice(0,10)], ['Employee ID',r.employee_id],
+    ['Department',r.department], ['Location',r.location],
+    ['Division',r.division], ['Total',rupiah(r.total)],
+    ['Reviewer',assignee('reviewer')], ['Approver',assignee('approver')]
+  ];
+  const rows=[];
+  for(let i=0;i<fields.length;i+=2){
+    rows.push(`<tr>${fields.slice(i,i+2).map(([label,value])=>`<th scope="row">${esc(label)}</th><td>${esc(value??'—')}</td>`).join('')}</tr>`);
+  }
+  $('#detailSummary').innerHTML=`<table class="detail-summary-table" aria-label="Request summary"><tbody>${rows.join('')}</tbody></table>`;
+}
+
 async function openRequest(id){
   clearMsg();
   try{
@@ -1035,14 +1052,7 @@ async function openRequest(id){
     const r=data.request;
     $('#detailRef').textContent=r.ref_no;
     $('#detailMeta').textContent=`${r.employee_name} · Revision ${r.revision} · ${r.status}`;
-    $('#detailSummary').innerHTML=[
-      ['Request Date',String(r.request_date).slice(0,10)],
-      ['Employee ID',r.employee_id],
-      ['Department',r.department],
-      ['Location',r.location],
-      ['Division',r.division],
-      ['Total',rupiah(r.total)]
-    ].map(([a,b])=>`<div><span>${esc(a)}</span><strong>${esc(b)}</strong></div>`).join('');
+    renderDetailSummary(r);
 
     $('#detailItems').innerHTML=data.items.map(it=>`<tr>
       <td>${it.line_no}</td><td>${esc(it.category)}</td><td>${esc(it.purpose)}</td>
