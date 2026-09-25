@@ -101,7 +101,7 @@
       </div>
     </div>
   </div>
-  <div class="field purpose"><label>Purpose</label><textarea id="purpose" rows="2" placeholder="Describe"></textarea></div>
+  <div class="field purpose"><label>Purpose</label><input id="purpose" type="text" placeholder="Describe"></div>
   <div class="field"><label>Payment Date</label><input id="paymentDate" type="date"></div>
   <div class="field"><label>Amount (IDR)</label><input id="amount" type="number" min="1" step="1" placeholder="0"></div>
   <div class="field evidence-field">
@@ -482,6 +482,22 @@
       </div>
     </form>
   </div>
+</div>
+
+<div id="approvalRecallModal" class="modal hidden" onclick="if(event.target===this) closeApprovalRecall()" onkeydown="approvalRecallKeydown(event)">
+  <form class="approval-recall-panel" role="dialog" aria-modal="true" aria-labelledby="approvalRecallTitle" aria-describedby="approvalRecallDescription" onsubmit="submitApprovalRecall(event)">
+    <h2 id="approvalRecallTitle">Recall approval</h2>
+    <p id="approvalRecallDescription" class="muted">Return this request to the Requestor for revision. It will require a new review and approval. The previous approved PDF stays in the audit trail.</p>
+    <div class="field">
+      <label for="approvalRecallReason">Reason <span aria-hidden="true">*</span></label>
+      <textarea id="approvalRecallReason" rows="4" required placeholder="Explain why this approval needs to be recalled" oninput="document.getElementById('approvalRecallSubmit').disabled=!this.value.trim()"></textarea>
+    </div>
+    <p id="approvalRecallError" class="approval-recall-error" role="alert"></p>
+    <div class="approval-recall-actions">
+      <button id="approvalRecallCancel" class="btn ghost" type="button" onclick="closeApprovalRecall()">Cancel</button>
+      <button id="approvalRecallSubmit" class="btn danger" type="submit" disabled>Recall</button>
+    </div>
+  </form>
 </div>
 
 <div id="detailModal" class="modal hidden" onclick="modalBackdrop(event)">

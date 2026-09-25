@@ -1,14 +1,19 @@
 import pg from 'pg';
+import {archiveApprovedPacket} from './approval-archive.js';
 const { Pool } = pg;
 
-export const pool = new Pool({
+const databaseConfig={
   host: process.env.POSTGRES_HOST || 'db',
   port: Number(process.env.POSTGRES_PORT || 5432),
   database: process.env.POSTGRES_DB || 'metrotech_erf',
   user: process.env.POSTGRES_USER || 'metrotech_erf',
   password: process.env.POSTGRES_PASSWORD,
   max: 10
-});
+};
+export const pool = new Pool(databaseConfig);
+
+// Separate connections prevent lock waiters from starving workflow queries.
+export const workflowLockPool=new Pool({...databaseConfig,max:4});
 
 export async function pingDb() {
   const { rows } = await pool.query('select now() as now');
@@ -418,7 +423,7 @@ export async function listDecisionHistory(employee) {
   const assigneeColumn=employee.role==='REVIEWER'?'reviewer_email':'approver_email';
   const {rows}=await pool.query(
     `select r.id,r.ref_no,r.request_date,r.employee_name,r.request_type,r.total,
-            r.status,r.revision,r.last_rejection_reason,r.updated_at
+            r.status,r.revision,r.last_rejection_reason,r.updated_at,r.approver_email,r.reviewer_email
      from requests r
      where exists(select 1 from workflow_actions a
        where a.request_id=r.id and lower(a.actor_email)=lower($1)
@@ -520,7 +525,7 @@ export async function getRequestDetail(id) {
     [id,request.revision]
   )).rows;
   const actions=(await pool.query(
-    `select actor_name,actor_role,action,from_status,to_status,reason,created_at
+    `select revision,actor_name,actor_role,action,from_status,to_status,reason,created_at
      from workflow_actions where request_id=$1 order by created_at,id`, [id]
   )).rows;
   return {request,items,actions};
@@ -602,6 +607,60 @@ export async function recallExpenseRequest(id, employee) {
   }finally{
     client.release();
   }
+}
+
+export async function recallReviewedExpenseRequest(id,employee,reason){
+  if(employee.role!=='REVIEWER')
+    throw Object.assign(new Error('Only the assigned Reviewer can recall a reviewed request.'),{status:403});
+  const note=String(reason||'').trim();
+  if(!note) throw Object.assign(new Error('A recall reason is required.'),{status:400});
+  const client=await pool.connect();
+  try{
+    await client.query('begin');
+    const {rows}=await client.query('select * from requests where id=$1 for update',[id]);
+    const request=rows[0];
+    if(!request) throw Object.assign(new Error('Request not found.'),{status:404});
+    if(String(request.reviewer_email).toLowerCase()!==String(employee.email).toLowerCase())
+      throw Object.assign(new Error('This request is assigned to another Reviewer.'),{status:403});
+    if(request.status!=='PENDING_APPROVAL')
+      throw Object.assign(new Error('Reviewer can recall only while the request is Pending Approval.'),{status:409});
+    const {rows:updated}=await client.query(
+      `update requests set status='RECALLED',last_rejection_reason=$2,
+       form_pdf_path=null,updated_at=now() where id=$1 returning *`,[id,note]
+    );
+    const next=updated[0];
+    await insertAction(client,next,employee,'REVIEW_RECALLED','PENDING_APPROVAL','RECALLED',note);
+    await client.query('commit');
+    return next;
+  }catch(e){await client.query('rollback');throw e}finally{client.release()}
+}
+
+export async function recallApprovedExpenseRequest(id,employee,reason){
+  if(employee.role!=='APPROVER')
+    throw Object.assign(new Error('Only the assigned Approver can recall an approved request.'),{status:403});
+  const note=String(reason||'').trim();
+  if(!note) throw Object.assign(new Error('A recall reason is required.'),{status:400});
+  const client=await pool.connect();
+  try{
+    await client.query('begin');
+    const {rows}=await client.query('select * from requests where id=$1 for update',[id]);
+    const request=rows[0];
+    if(!request) throw Object.assign(new Error('Request not found.'),{status:404});
+    if(String(request.approver_email).toLowerCase()!==String(employee.email).toLowerCase())
+      throw Object.assign(new Error('This request is assigned to another Approver.'),{status:403});
+    if(request.status!=='APPROVED')
+      throw Object.assign(new Error('Only Approved requests can have their approval recalled.'),{status:409});
+    // Archive successfully before changing status. Failure leaves approval intact.
+    await archiveApprovedPacket(request);
+    const {rows:updated}=await client.query(
+      `update requests set status='RECALLED',last_rejection_reason=$2,
+       form_pdf_path=null,updated_at=now() where id=$1 returning *`,[id,note]
+    );
+    const next=updated[0];
+    await insertAction(client,next,employee,'APPROVAL_RECALLED','APPROVED','RECALLED',note);
+    await client.query('commit');
+    return next;
+  }catch(e){await client.query('rollback');throw e}finally{client.release()}
 }
 
 export async function reviseExpenseRequest(id, employee, items) {

@@ -101,6 +101,9 @@ try{
   assert(!(await hasDecisionHistory(first.id,reviewer2)),'Unrelated reviewer cannot read the request.');
   assert((await listDecisionHistory(requestor)).length===0,'Requestor has no decision history.');
 
+  const {testApprovalRecall}=await import('./approval-recall-smoke.js');
+  await testApprovalRecall({request:finalApproved,requestor,reviewer,reviewer2,approver,admin:bootstrapAdmin});
+
   const recalledRequest=await createExpenseRequest(requestor,items('Recall flow'));
   const recalled=await recallExpenseRequest(recalledRequest.id,requestor);
   assert(recalled.status==='RECALLED','Recall must enter RECALLED.');
