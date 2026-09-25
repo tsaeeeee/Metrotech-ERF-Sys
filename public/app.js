@@ -168,7 +168,7 @@ async function submitFirstSignature(event){
 
 async function loadMe(){
   try{
-    const {employee,requests}=await api('/api/me');
+    const {employee,requests,history=[]}=await api('/api/me');
     currentEmployee=employee;
     $('#loginCard').classList.add('hidden');
     $('#dashboard').classList.add('hidden');
@@ -204,6 +204,12 @@ async function loadMe(){
 
     $('#roleTitle').textContent=employee.role==='REQUESTOR'?'Requestor Dashboard':employee.role==='REVIEWER'?'Reviewer Dashboard':'Approver Dashboard';
     $('#queueTitle').textContent=employee.role==='REQUESTOR'?'My Requests':employee.role==='REVIEWER'?'Pending Review':'Pending Approval';
+    const showHistory=['REVIEWER','APPROVER'].includes(employee.role);
+    $('#decisionHistoryCard').classList.toggle('hidden',!showHistory);
+    if(showHistory){
+      $('#decisionHistoryTitle').textContent=employee.role==='REVIEWER'?'Review History':'Approval History';
+      renderRequests(history,'decisionHistoryTable','decisionHistoryBody','decisionHistoryEmpty');
+    }
     $('#requestForm').classList.toggle('hidden',employee.role!=='REQUESTOR');
 
     const fields=[
@@ -226,15 +232,15 @@ async function loadMe(){
   }
 }
 
-function renderRequests(requests){
+function renderRequests(requests,tableId='table',bodyId='tbody',emptyId='empty'){
   if(!requests.length){
-    $('#empty').classList.remove('hidden');
-    $('#table').classList.add('hidden');
+    $(`#${emptyId}`).classList.remove('hidden');
+    $(`#${tableId}`).classList.add('hidden');
     return;
   }
-  $('#empty').classList.add('hidden');
-  $('#table').classList.remove('hidden');
-  $('#tbody').innerHTML=requests.map(r=>{
+  $(`#${emptyId}`).classList.add('hidden');
+  $(`#${tableId}`).classList.remove('hidden');
+  $(`#${bodyId}`).innerHTML=requests.map(r=>{
     const revisable=['REVIEW_REJECTED','APPROVAL_REJECTED','RECALLED'].includes(r.status);
     const revise=currentEmployee?.role==='REQUESTOR' && revisable
       ? `<button class="btn tiny warning" onclick="startRevision('${r.id}')">${r.status==='RECALLED'?'Edit & Resubmit':'Revise'}</button>`
@@ -1056,8 +1062,9 @@ async function openRequest(id){
     const formUrl=data.documents.form?`/api/requests/${id}/form?t=${stamp}`:null;
     const evidenceUrl=data.documents.evidence?`/api/requests/${id}/evidence?t=${stamp}`:null;
 
-    const actionable=(currentEmployee.role==='REVIEWER'&&r.status==='PENDING_REVIEW') ||
-      (currentEmployee.role==='APPROVER'&&r.status==='PENDING_APPROVAL');
+    const email=String(currentEmployee.email).toLowerCase();
+    const actionable=(currentEmployee.role==='REVIEWER'&&r.status==='PENDING_REVIEW'&&String(r.reviewer_email).toLowerCase()===email) ||
+      (currentEmployee.role==='APPROVER'&&r.status==='PENDING_APPROVAL'&&String(r.approver_email).toLowerCase()===email);
     $('#decisionPanel').classList.toggle('hidden',!actionable);
     $('#detailSavePdfBtn').classList.toggle('hidden',r.status!=='APPROVED');
     $('#decisionReason').value='';

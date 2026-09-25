@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import {
   pool,pingDb,getEmployee,authenticateLocalUser,changeEmployeePassword,updateEmployeeSignature,listManagedEmployees,
   createManagedEmployee,updateManagedEmployee,setManagedEmployeeActive,ensureBootstrapAdminCredentials,
-  listRequestsForEmployee,createExpenseRequest,
+  listRequestsForEmployee,listDecisionHistory,hasDecisionHistory,createExpenseRequest,
   getRequestDetail,setDocumentPaths,transitionRequest,recallExpenseRequest,reviseExpenseRequest
 } from './db.js';
 import { buildEvidencePdf,buildFormPdf } from './documents.js';
@@ -199,6 +199,10 @@ function canAccess(employee,request){
   if(employee.role==='REVIEWER') return String(request.reviewer_email).toLowerCase()===String(employee.email).toLowerCase();
   if(employee.role==='APPROVER') return String(request.approver_email).toLowerCase()===String(employee.email).toLowerCase();
   return false;
+}
+
+async function canViewRequest(employee,request){
+  return canAccess(employee,request) || await hasDecisionHistory(request.id,employee);
 }
 
 function normalizeRequestType(value){
@@ -437,8 +441,10 @@ async function cleanupApprovedRequestFiles(detail){
 }
 
 app.get('/api/me',requireUser,async(req,res)=>{
-  const requests=await listRequestsForEmployee(req.employee);
-  res.json({employee:req.employee,requests,setupRequired:employeeNeedsSetup(req.employee)});
+  const [requests,history]=await Promise.all([
+    listRequestsForEmployee(req.employee),listDecisionHistory(req.employee)
+  ]);
+  res.json({employee:req.employee,requests,history,setupRequired:employeeNeedsSetup(req.employee)});
 });
 
 app.put('/api/profile/password',requireUser,async(req,res,next)=>{
@@ -653,7 +659,7 @@ app.get('/api/requests/:id',requireUser,async(req,res,next)=>{
   try{
     const detail=await getRequestDetail(req.params.id);
     if(!detail) return res.status(404).json({error:'Request not found'});
-    if(!canAccess(req.employee,detail.request)) return res.status(403).json({error:'Access denied'});
+    if(!await canViewRequest(req.employee,detail.request)) return res.status(403).json({error:'Access denied'});
     const {form_pdf_path,evidence_pdf_path,...safeRequest}=detail.request;
     res.json({
       request:safeRequest,
@@ -667,7 +673,7 @@ app.get('/api/requests/:id',requireUser,async(req,res,next)=>{
 app.get('/api/requests/:id/form',requireUser,async(req,res,next)=>{
   try{
     const detail=await getRequestDetail(req.params.id);
-    if(!detail||!canAccess(req.employee,detail.request)) return res.status(404).end();
+    if(!detail||!await canViewRequest(req.employee,detail.request)) return res.status(404).end();
     if(!detail.request.form_pdf_path) return res.status(404).json({error:'Request packet PDF is not available.'});
     res.sendFile(path.resolve(detail.request.form_pdf_path));
   }catch(e){next(e)}
@@ -676,7 +682,7 @@ app.get('/api/requests/:id/form',requireUser,async(req,res,next)=>{
 app.get('/api/requests/:id/form/download',requireUser,async(req,res,next)=>{
   try{
     const detail=await getRequestDetail(req.params.id);
-    if(!detail||!canAccess(req.employee,detail.request)) return res.status(404).end();
+    if(!detail||!await canViewRequest(req.employee,detail.request)) return res.status(404).end();
     if(detail.request.status!=='APPROVED')
       return res.status(409).json({error:'Final PDF is available after full approval.'});
     if(!detail.request.form_pdf_path)
@@ -688,7 +694,7 @@ app.get('/api/requests/:id/form/download',requireUser,async(req,res,next)=>{
 app.get('/api/requests/:id/evidence',requireUser,async(req,res,next)=>{
   try{
     const detail=await getRequestDetail(req.params.id);
-    if(!detail||!canAccess(req.employee,detail.request)) return res.status(404).end();
+    if(!detail||!await canViewRequest(req.employee,detail.request)) return res.status(404).end();
     if(!detail.request.evidence_pdf_path) return res.status(404).json({error:'Evidence PDF is not available.'});
     res.sendFile(path.resolve(detail.request.evidence_pdf_path));
   }catch(e){next(e)}

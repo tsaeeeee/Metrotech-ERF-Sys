@@ -88,6 +88,16 @@ h1{margin:0;color:var(--navy);font-size:26px}h2{margin:0 0 12px;color:var(--navy
 #table .actions .btn:first-child{margin-left:0}
 
 .payment-form{margin-top:14px}
+.field #purpose{width:100%;min-height:42px;border:1px solid #cbd5e1;border-radius:9px;padding:9px 11px;font:inherit;background:#fff;resize:vertical;overflow-wrap:anywhere}
+#paymentBody td:nth-child(3),#detailItems td:nth-child(3){overflow-wrap:anywhere;white-space:pre-wrap}
+#decisionHistoryTable th,#decisionHistoryTable td{vertical-align:middle}
+#decisionHistoryTable .money{text-align:right}
+#decisionHistoryTable .status-col{text-align:center;width:150px}
+#decisionHistoryTable .rev-col{text-align:center;width:64px}
+#decisionHistoryTable .action-col{text-align:right;width:190px}
+#decisionHistoryTable tbody tr{height:52px}
+#decisionHistoryTable .actions .btn{margin-left:4px}
+#decisionHistoryTable .actions .btn:first-child{margin-left:0}
 .table-wrap{margin-top:14px}
 .form-footer{margin-top:14px}
 

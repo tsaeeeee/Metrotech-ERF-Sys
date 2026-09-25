@@ -10,7 +10,8 @@ process.env.APPROVER_NAME ||= 'Ervan Mardianto';
 
 const {
   pool,getEmployee,createExpenseRequest,transitionRequest,
-  reviseExpenseRequest,recallExpenseRequest,createManagedEmployee,setManagedEmployeeActive
+  reviseExpenseRequest,recallExpenseRequest,createManagedEmployee,setManagedEmployeeActive,
+  listRequestsForEmployee,listDecisionHistory,hasDecisionHistory
 }=await import('../src/db.js');
 
 function assert(condition,message){
@@ -91,6 +92,14 @@ try{
 
   const finalApproved=await transitionRequest(first.id,approver,'APPROVAL','APPROVE','');
   assert(finalApproved.status==='APPROVED','Final approval must enter APPROVED.');
+  assert(!(await listRequestsForEmployee(reviewer)).some(r=>r.id===first.id),'Completed review must leave pending queue.');
+  assert(!(await listRequestsForEmployee(approver)).some(r=>r.id===first.id),'Completed approval must leave pending queue.');
+  assert((await listDecisionHistory(reviewer)).some(r=>r.id===first.id),'Reviewer must see own completed decision.');
+  assert((await listDecisionHistory(approver)).some(r=>r.id===first.id),'Approver must see own completed decision.');
+  assert(!(await listDecisionHistory(reviewer2)).some(r=>r.id===first.id),'Another reviewer must not see the history.');
+  assert(await hasDecisionHistory(first.id,reviewer),'Historic reviewer can read the request.');
+  assert(!(await hasDecisionHistory(first.id,reviewer2)),'Unrelated reviewer cannot read the request.');
+  assert((await listDecisionHistory(requestor)).length===0,'Requestor has no decision history.');
 
   const recalledRequest=await createExpenseRequest(requestor,items('Recall flow'));
   const recalled=await recallExpenseRequest(recalledRequest.id,requestor);
