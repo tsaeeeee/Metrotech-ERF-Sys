@@ -100,6 +100,8 @@ function emsNavigate(view){
   if(view.startsWith('admin-')) showAdminSection(view==='admin-app'?'app':'users');
   $('#emsHome').classList.toggle('hidden',view!=='home');
   $('#emsTasks').classList.toggle('hidden',view!=='tasks');
+  $('#emsTasks').appendChild($('#decisionHistoryCard'));
+  $('#decisionHistoryCard').classList.toggle('hidden',view!=='tasks'||!['REVIEWER','APPROVER'].includes(currentEmployee.role));
   $('#workflowDashboard').classList.toggle('hidden',!['erf','ecf','requests'].includes(view));
   $('#adminDashboard').classList.toggle('hidden',!view.startsWith('admin-'));
   $('#requestQueueCard').classList.remove('hidden');

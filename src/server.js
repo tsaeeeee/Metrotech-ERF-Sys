@@ -8,14 +8,15 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import {
-  pool,pingDb,getEmployee,authenticateLocalUser,changeEmployeePassword,updateEmployeeSignature,listManagedEmployees,
+  pool,workflowLockPool,pingDb,getEmployee,authenticateLocalUser,changeEmployeePassword,updateEmployeeSignature,listManagedEmployees,
   createManagedEmployee,updateManagedEmployee,setManagedEmployeeActive,ensureBootstrapAdminCredentials,
-  listRequestsForEmployee,listTasksForEmployee,listMyRequests,getEcfRole,getEmsDashboard,
+  listRequestsForEmployee,listDecisionHistory,hasDecisionHistory,listTasksForEmployee,listMyRequests,getEcfRole,getEmsDashboard,
   createExpenseRequest,createEcfClaim,
-  getRequestDetail,setDocumentPaths,transitionRequest,recallExpenseRequest,reviseExpenseRequest
+  getRequestDetail,setDocumentPaths,transitionRequest,recallExpenseRequest,recallReviewedExpenseRequest,recallApprovedExpenseRequest,reviseExpenseRequest
 } from './db.js';
 import { buildEvidencePdf,buildFormPdf } from './documents.js';
 import { buildRequestPacket } from './request-packet.js';
+import {approvalArchivePath} from './approval-archive.js';
 import { sendWorkflowMail,testSmtp } from './mailer.js';
 import { configureAuth,googleAuthReady,passport } from './auth.js';
 import {
@@ -208,6 +209,10 @@ function canAccess(employee,request){
   return false;
 }
 
+async function canViewRequest(employee,request){
+  return canAccess(employee,request) || (request.form_type==='ERF' && await hasDecisionHistory(request.id,employee));
+}
+
 function normalizeRequestType(value){
   const type=String(value||'EXPENSE').trim().toUpperCase();
   if(!['EXPENSE','REIMBURSEMENT'].includes(type))
@@ -357,7 +362,7 @@ async function parseRevisionItemsAndFiles(req,detail){
           evidenceNames=(sourceItem.evidence_names||[]).length
             ? sourceItem.evidence_names
             : itemFiles.map(f=>f.originalname);
-        }else if(evidenceRequired){
+        }else if(evidenceRequired||(sourceItem.evidence_names||[]).length){
           throw Object.assign(new Error(
             `Existing evidence for Payment #${i+1} is unavailable. Please attach evidence again.`
           ),{status:400});
@@ -418,37 +423,33 @@ async function regenerateForm(requestId){
   return await getRequestDetail(requestId);
 }
 
-async function cleanupApprovedRequestFiles(detail){
-  const request=detail.request;
-  const root=path.join(DATA_DIR,String(request.id));
-  const keepRevision=`r${request.revision}`;
-  const packetPath=request.form_pdf_path;
-  const packetName=path.basename(String(packetPath||'request-packet.pdf'));
-
-  let rootEntries=[];
-  try{rootEntries=await fs.readdir(root,{withFileTypes:true})}catch{return}
-
-  for(const entry of rootEntries){
-    if(entry.name===keepRevision) continue;
-    await fs.rm(path.join(root,entry.name),{recursive:true,force:true});
-  }
-
-  const currentDir=path.join(root,keepRevision);
-  let currentEntries=[];
-  try{currentEntries=await fs.readdir(currentDir,{withFileTypes:true})}catch{}
-  for(const entry of currentEntries){
-    if(entry.name===packetName) continue;
-    await fs.rm(path.join(currentDir,entry.name),{recursive:true,force:true});
-  }
-
-  await setDocumentPaths(request.id,packetPath,'');
+// Serialize status changes and their document writes across app instances.
+function withRequestWorkflowLock(handler){
+  return async(req,res,next)=>{
+    let client;
+    let locked=false;
+    try{
+      client=await workflowLockPool.connect();
+      await client.query('select pg_advisory_lock(hashtextextended($1,0))',[String(req.params.id)]);
+      locked=true;
+      await handler(req,res,next);
+    }catch(e){next(e)}finally{
+      if(client){
+        try{
+          if(locked) await client.query('select pg_advisory_unlock(hashtextextended($1,0))',[String(req.params.id)]);
+          client.release();
+        }catch(e){client.release(true);console.error(e)}
+      }
+    }
+  };
 }
 
 app.get('/api/me',requireUser,async(req,res)=>{
+  const history=await listDecisionHistory(req.employee);
   const requests=await listRequestsForEmployee(req.employee);
   const tasks=await listTasksForEmployee(req.employee);
   const myRequests=await listMyRequests(req.employee);
-  res.json({employee:req.employee,requests,tasks,myRequests,setupRequired:employeeNeedsSetup(req.employee)});
+  res.json({employee:req.employee,requests,tasks,myRequests,history,setupRequired:employeeNeedsSetup(req.employee)});
 });
 
 app.get('/api/ems/dashboard',requireUser,async(req,res,next)=>{
@@ -640,28 +641,40 @@ app.post('/api/ecf/claims',requireUser,upload.any(),async(req,res,next)=>{
   }catch(e){next(e)}
 });
 
-app.post('/api/requests/:id/recall',requireUser,async(req,res,next)=>{
+app.post('/api/requests/:id/recall',requireUser,withRequestWorkflowLock(async(req,res,next)=>{
   try{
+    const approvedRecall=req.employee.role==='APPROVER';
+    const reviewedRecall=req.employee.role==='REVIEWER';
+    const decisionRecall=approvedRecall||reviewedRecall;
+    if(!decisionRecall){
     const current=await getRequestDetail(req.params.id);
     if(!current) return res.status(404).json({error:'Request not found'});
     if(current.request.form_type==='ECF'
       ? !['REQUESTOR','NONE'].includes(req.employee.role) || req.employee.ecfRole!=='REQUESTOR'
       : req.employee.role!=='REQUESTOR')
       return res.status(403).json({error:'Requestor access required to recall this request.'});
-    const request=await recallExpenseRequest(req.params.id,req.employee);
-    const detail=await regenerateForm(request.id);
+    }
+    const request=approvedRecall
+      ? await recallApprovedExpenseRequest(req.params.id,req.employee,req.body?.reason)
+      : reviewedRecall
+        ? await recallReviewedExpenseRequest(req.params.id,req.employee,req.body?.reason)
+        : await recallExpenseRequest(req.params.id,req.employee);
+    const detail=approvedRecall?await getRequestDetail(request.id):await regenerateForm(request.id);
     await sendWorkflowMail({
-      event:'RECALLED',
+      event:approvedRecall?'APPROVAL_RECALLED':reviewedRecall?'REVIEW_RECALLED':'RECALLED',
       request:detail.request,
-      to:detail.request.form_type==='ECF'?detail.request.checker_email:detail.request.reviewer_email,
-      subject:`[${requestCode(detail.request)}] ${detail.request.ref_no} recalled by requestor`,
-      text:`${detail.request.ref_no} was recalled by ${req.employee.name} and no longer requires review.`
+      to:decisionRecall?detail.request.requester_email:detail.request.form_type==='ECF'?detail.request.checker_email:detail.request.reviewer_email,
+      cc:approvedRecall?[detail.request.reviewer_email,(await getRuntimeAppSettings()).finalApprovedCc]:reviewedRecall?detail.request.approver_email:undefined,
+      subject:`[${requestCode(detail.request)}] ${detail.request.ref_no} ${approvedRecall?'approval recalled':reviewedRecall?'review recalled':'recalled by requestor'}`,
+      text:decisionRecall
+        ? `${detail.request.ref_no} ${approvedRecall?'approval':'review'} was recalled by ${req.employee.name}. Reason: ${request.last_rejection_reason}. The previous approval is no longer current. Requestor must revise and resubmit for a new review and approval.`
+        : `${detail.request.ref_no} was recalled by ${req.employee.name} and no longer requires review.`
     });
     res.json({ok:true,status:detail.request.status,refNo:detail.request.ref_no});
   }catch(e){next(e)}
-});
+}));
 
-app.post('/api/requests/:id/revise',requireUser,upload.any(),async(req,res,next)=>{
+app.post('/api/requests/:id/revise',requireUser,upload.any(),withRequestWorkflowLock(async(req,res,next)=>{
   try{
     const currentDetail=await getRequestDetail(req.params.id);
     if(!currentDetail) return res.status(404).json({error:'Request not found'});
@@ -687,27 +700,44 @@ app.post('/api/requests/:id/revise',requireUser,upload.any(),async(req,res,next)
       requestType:detail.request.request_type
     });
   }catch(e){next(e)}
-});
+}));
 
 app.get('/api/requests/:id',requireUser,async(req,res,next)=>{
   try{
     const detail=await getRequestDetail(req.params.id);
     if(!detail) return res.status(404).json({error:'Request not found'});
-    if(!canAccess(req.employee,detail.request)) return res.status(403).json({error:'Access denied'});
+    if(!await canViewRequest(req.employee,detail.request)) return res.status(403).json({error:'Access denied'});
     const {form_pdf_path,evidence_pdf_path,...safeRequest}=detail.request;
+    const originalsDir=path.join(DATA_DIR,String(detail.request.id),`r${detail.request.revision}`,'evidence-original');
+    let originals=[];
+    try{originals=await fs.readdir(originalsDir)}catch(e){if(e.code!=='ENOENT') throw e}
+    const items=detail.items.map(item=>({...item,evidenceReusable:
+      originals.filter(name=>name.startsWith(`${String(item.line_no).padStart(2,'0')}-`)).length===(item.evidence_names||[]).length
+    }));
     res.json({
       request:safeRequest,
-      items:detail.items,
+      items,
       actions:detail.actions,
       documents:{packet:!!form_pdf_path,form:!!form_pdf_path,evidence:!!evidence_pdf_path}
     });
   }catch(e){next(e)}
 });
 
+app.get('/api/requests/:id/approval-archive/:revision',requireUser,async(req,res,next)=>{
+  try{
+    const detail=await getRequestDetail(req.params.id);
+    if(!detail||!await canViewRequest(req.employee,detail.request)) return res.status(404).end();
+    const revision=Number(req.params.revision);
+    if(!Number.isInteger(revision)||!detail.actions.some(a=>a.action==='APPROVAL_RECALLED'&&Number(a.revision)===revision))
+      return res.status(404).end();
+    res.download(path.resolve(approvalArchivePath({...detail.request,revision})),`${detail.request.ref_no}-r${revision}-SUPERSEDED.pdf`);
+  }catch(e){next(e)}
+});
+
 app.get('/api/requests/:id/form',requireUser,async(req,res,next)=>{
   try{
     const detail=await getRequestDetail(req.params.id);
-    if(!detail||!canAccess(req.employee,detail.request)) return res.status(404).end();
+    if(!detail||!await canViewRequest(req.employee,detail.request)) return res.status(404).end();
     if(!detail.request.form_pdf_path) return res.status(404).json({error:'Request packet PDF is not available.'});
     res.sendFile(path.resolve(detail.request.form_pdf_path));
   }catch(e){next(e)}
@@ -716,7 +746,7 @@ app.get('/api/requests/:id/form',requireUser,async(req,res,next)=>{
 app.get('/api/requests/:id/form/download',requireUser,async(req,res,next)=>{
   try{
     const detail=await getRequestDetail(req.params.id);
-    if(!detail||!canAccess(req.employee,detail.request)) return res.status(404).end();
+    if(!detail||!await canViewRequest(req.employee,detail.request)) return res.status(404).end();
     if(detail.request.status!=='APPROVED')
       return res.status(409).json({error:'Final PDF is available after full approval.'});
     if(!detail.request.form_pdf_path)
@@ -728,13 +758,13 @@ app.get('/api/requests/:id/form/download',requireUser,async(req,res,next)=>{
 app.get('/api/requests/:id/evidence',requireUser,async(req,res,next)=>{
   try{
     const detail=await getRequestDetail(req.params.id);
-    if(!detail||!canAccess(req.employee,detail.request)) return res.status(404).end();
+    if(!detail||!await canViewRequest(req.employee,detail.request)) return res.status(404).end();
     if(!detail.request.evidence_pdf_path) return res.status(404).json({error:'Evidence PDF is not available.'});
     res.sendFile(path.resolve(detail.request.evidence_pdf_path));
   }catch(e){next(e)}
 });
 
-app.post('/api/requests/:id/review',requireUser,async(req,res,next)=>{
+app.post('/api/requests/:id/review',requireUser,withRequestWorkflowLock(async(req,res,next)=>{
   try{
     const request=await transitionRequest(req.params.id,req.employee,'REVIEW',req.body.decision,req.body.reason||'');
     const detail=await regenerateForm(request.id);
@@ -749,7 +779,7 @@ app.post('/api/requests/:id/review',requireUser,async(req,res,next)=>{
     });
     res.json({ok:true,status:detail.request.status});
   }catch(e){next(e)}
-});
+}));
 
 app.post('/api/requests/:id/check',requireUser,async(req,res,next)=>{
   try{
@@ -765,10 +795,10 @@ app.post('/api/requests/:id/check',requireUser,async(req,res,next)=>{
   }catch(e){next(e)}
 });
 
-app.post('/api/requests/:id/approve',requireUser,async(req,res,next)=>{
+app.post('/api/requests/:id/approve',requireUser,withRequestWorkflowLock(async(req,res,next)=>{
   try{
     const request=await transitionRequest(req.params.id,req.employee,'APPROVAL',req.body.decision,req.body.reason||'');
-    let detail=await regenerateForm(request.id);
+    const detail=await regenerateForm(request.id);
     const approved=detail.request.status==='APPROVED';
     const code=requestCode(detail.request);
     const attachments=approved?[
@@ -784,14 +814,11 @@ app.post('/api/requests/:id/approve',requireUser,async(req,res,next)=>{
       attachments
     });
 
-    if(approved){
-      await cleanupApprovedRequestFiles(detail);
-      detail=await getRequestDetail(request.id);
-    }
+    // Keep revision documents and original evidence for future recalls and audit.
 
     res.json({ok:true,status:detail.request.status});
   }catch(e){next(e)}
-});
+}));
 
 app.get('/app.js',async(req,res,next)=>{
   try{

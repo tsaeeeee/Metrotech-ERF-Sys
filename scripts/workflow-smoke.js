@@ -13,7 +13,7 @@ const {
   pool,getEmployee,createExpenseRequest,transitionRequest,
   reviseExpenseRequest,recallExpenseRequest,createManagedEmployee,updateManagedEmployee,setManagedEmployeeActive,
   createEcfClaim,listRequestsForEmployee,listMyRequests,listTasksForEmployee,getEmsDashboard,getEcfRole,
-  getRequestDetail
+  getRequestDetail,listDecisionHistory,hasDecisionHistory
 }=await import('../src/db.js');
 
 function assert(condition,message){
@@ -121,6 +121,17 @@ try{
 
   const finalApproved=await transitionRequest(first.id,approver,'APPROVAL','APPROVE','');
   assert(finalApproved.status==='APPROVED','Final approval must enter APPROVED.');
+  assert(!(await listRequestsForEmployee(reviewer)).some(r=>r.id===first.id),'Completed review must leave pending queue.');
+  assert(!(await listRequestsForEmployee(approver)).some(r=>r.id===first.id),'Completed approval must leave pending queue.');
+  assert((await listDecisionHistory(reviewer)).some(r=>r.id===first.id),'Reviewer must see own completed decision.');
+  assert((await listDecisionHistory(approver)).some(r=>r.id===first.id),'Approver must see own completed decision.');
+  assert(!(await listDecisionHistory(reviewer2)).some(r=>r.id===first.id),'Another reviewer must not see the history.');
+  assert(await hasDecisionHistory(first.id,reviewer),'Historic reviewer can read the request.');
+  assert(!(await hasDecisionHistory(first.id,reviewer2)),'Unrelated reviewer cannot read the request.');
+  assert((await listDecisionHistory(requestor)).length===0,'Requestor has no decision history.');
+
+  const {testApprovalRecall}=await import('./approval-recall-smoke.js');
+  await testApprovalRecall({request:finalApproved,requestor,reviewer,reviewer2,approver,admin:bootstrapAdmin});
 
   // A separate Checker owns the first ECF stage. Claims are independent of ERF.
   await pool.query(`insert into employees(

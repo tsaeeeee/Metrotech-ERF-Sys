@@ -17,13 +17,19 @@ h1{margin:0;color:var(--navy);font-size:26px}h2{margin:0 0 12px;color:var(--navy
 .modal{position:fixed;inset:0;background:rgba(10,25,45,.52);display:flex;align-items:center;justify-content:center;padding:22px;z-index:50}
 .modal-panel{width:min(1380px,96vw);height:min(92vh,980px);overflow:auto;background:#fff;border-radius:16px;box-shadow:0 20px 70px rgba(0,0,0,.25);padding:20px}
 .modal-head{position:sticky;top:-20px;z-index:3;background:#fff;display:flex;justify-content:space-between;align-items:center;padding:6px 0 14px;border-bottom:1px solid var(--line)}
-.detail-summary{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin:16px 0}.detail-summary div{border:1px solid var(--line);background:#f8fafc;border-radius:9px;padding:10px}.detail-summary span,.detail-summary strong{display:block}.detail-summary span{font-size:11px;color:var(--muted);margin-bottom:4px}
+.detail-summary{margin:16px 0}
+.detail-summary-table{table-layout:fixed;font-size:13px}
+.detail-summary-table th,.detail-summary-table td{padding:6px 10px;background:transparent;overflow-wrap:anywhere;vertical-align:top}
+.detail-summary-table th{width:16%;font-weight:400}
+.detail-summary-table td{width:34%;font-weight:600}
+@media(max-width:600px){.detail-summary-table tr{display:grid;grid-template-columns:110px minmax(0,1fr)}.detail-summary-table th,.detail-summary-table td{width:auto}}
+
 .detail-section{margin-top:20px}.pdf-split{display:grid;grid-template-columns:1fr 1fr;gap:14px}.pdf-split>div{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#f8fafc}.pdf-label{padding:9px 12px;font-size:12px;font-weight:800;color:var(--navy);border-bottom:1px solid var(--line)}
 .audit{border:1px solid var(--line);border-radius:12px;padding:14px}.audit-row{display:grid;grid-template-columns:14px 1fr;gap:10px;padding:7px 0}.audit-dot{width:9px;height:9px;margin-top:5px;background:var(--navy);border-radius:50%}.audit-row strong,.audit-row span,.audit-row small{display:block}.audit-row span,.audit-row small{color:var(--muted);font-size:11px}.audit-row p{color:var(--red);margin:5px 0}
 .decision-panel{position:sticky;bottom:-20px;margin:22px -20px -20px;padding:16px 20px;background:#fff;border-top:1px solid var(--line);box-shadow:0 -8px 18px rgba(20,40,70,.05)}.decision-panel label{display:block;font-weight:800;margin-bottom:7px}.decision-panel textarea{width:100%;resize:vertical;border:1px solid #cbd5e1;border-radius:9px;padding:10px;font:inherit}.decision-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:10px}
 
-@media(max-width:1000px){.payment-form{grid-template-columns:1fr 1fr}.grid{grid-template-columns:repeat(2,1fr)}.detail-summary{grid-template-columns:repeat(3,1fr)}.pdf-split{grid-template-columns:1fr}}
-@media(max-width:760px){header{align-items:flex-start;flex-direction:column}.header-badges{justify-content:flex-start}.users,.grid,.payment-form,.detail-summary{grid-template-columns:1fr}.card{overflow:auto}.form-footer{align-items:stretch;flex-direction:column}.submit{width:100%}.modal{padding:0}.modal-panel{width:100vw;height:100vh;border-radius:0}.decision-actions{flex-direction:column}.decision-actions .btn{width:100%}.payment-form>.btn{margin-top:0;width:100%}}
+@media(max-width:1000px){.payment-form{grid-template-columns:1fr 1fr}.grid{grid-template-columns:repeat(2,1fr)}.pdf-split{grid-template-columns:1fr}}
+@media(max-width:760px){header{align-items:flex-start;flex-direction:column}.header-badges{justify-content:flex-start}.users,.grid,.payment-form{grid-template-columns:1fr}.card{overflow:auto}.form-footer{align-items:stretch;flex-direction:column}.submit{width:100%}.modal{padding:0}.modal-panel{width:100vw;height:100vh;border-radius:0}.decision-actions{flex-direction:column}.decision-actions .btn{width:100%}.payment-form>.btn{margin-top:0;width:100%}}
 
 .auth-warning{grid-column:1/-1;border:1px solid #f4d19b;background:#fff7e8;color:#7a4b00;border-radius:10px;padding:14px}
 .shell:has(#dashboard:not(.hidden)){max-width:none;padding-left:244px;padding-right:24px}
@@ -123,6 +129,16 @@ h1{margin:0;color:var(--navy);font-size:26px}h2{margin:0 0 12px;color:var(--navy
 #table .actions .btn:first-child{margin-left:0}
 
 .payment-form{margin-top:14px}
+#paymentBody td:not(:last-child),#detailItems td{overflow-wrap:anywhere;white-space:pre-wrap}
+#paymentBody .file-chip,#detailItems .file-chip{max-width:100%;white-space:normal;overflow-wrap:anywhere}
+#decisionHistoryTable th,#decisionHistoryTable td{vertical-align:middle}
+#decisionHistoryTable .money{text-align:right}
+#decisionHistoryTable .status-col{text-align:center;width:150px}
+#decisionHistoryTable .rev-col{text-align:center;width:64px}
+#decisionHistoryTable .action-col{text-align:right;width:190px}
+#decisionHistoryTable tbody tr{height:52px}
+#decisionHistoryTable .actions .btn{margin-left:4px}
+#decisionHistoryTable .actions .btn:first-child{margin-left:0}
 .table-wrap{margin-top:14px}
 .form-footer{margin-top:14px}
 
@@ -1057,3 +1073,15 @@ h1{margin:0;color:var(--navy);font-size:26px}h2{margin:0 0 12px;color:var(--navy
   .first-setup-head{align-items:flex-start}
   .first-setup-footer{align-items:flex-start;flex-direction:column}
 }
+
+/* Keep payment controls aligned while full values remain available in the menu and table. */
+#categoryLabel{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#categoryButton .custom-select-chevron{flex-shrink:0}
+
+.approval-recall-panel{width:min(480px,100%);max-height:90vh;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:16px;padding:24px;box-shadow:0 20px 70px rgba(0,0,0,.25)}
+.approval-recall-panel .field{margin-top:20px}
+.approval-recall-panel textarea{width:100%;border:1px solid #cbd5e1;border-radius:9px;padding:10px 11px;font:inherit;resize:vertical;min-height:100px}
+.approval-recall-panel textarea:focus{outline:2px solid var(--blue);outline-offset:2px}
+.approval-recall-error{color:var(--red);font-size:13px;margin-top:10px}
+.approval-recall-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+@media(max-width:760px){#approvalRecallModal{padding:16px}}
