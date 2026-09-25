@@ -270,11 +270,11 @@ async function buildGoogleSheetFormPdf({request,items,outPath}){
       requestBody:{valueInputOption:'USER_ENTERED',data}
     });
 
-    // The template's fixed row height hides long descriptions in exported PDFs.
+    // Let all payment columns grow with their content in the temporary sheet.
     await sheets.spreadsheets.batchUpdate({
       spreadsheetId:tempId,
       requestBody:{requests:[
-        {repeatCell:{range:{sheetId:gid,startRowIndex:15,endRowIndex:31,startColumnIndex:4,endColumnIndex:5},
+        {repeatCell:{range:{sheetId:gid,startRowIndex:15,endRowIndex:31},
           cell:{userEnteredFormat:{wrapStrategy:'WRAP'}},fields:'userEnteredFormat.wrapStrategy'}},
         {autoResizeDimensions:{dimensions:{sheetId:gid,dimension:'ROWS',startIndex:15,endIndex:31}}}
       ]}
@@ -401,10 +401,17 @@ async function buildMockFormPdf({request,items,outPath}) {
   let top=tableTop;
   for(let r=0;r<16;r++){
     const it=items[r];
-    const lines=it?wrapPdfText(it.purpose,normal,7.3,widths[2]-10):[''];
+    const values=it?[
+      String(r+1),String(it.category||''),String(it.purpose||''),
+      displayDate(it.payment_date || it.paymentDate),money(it.amount).replace('Rp ','Rp')
+    ]:['','','','',''];
+    const sizes=[7.5,7.3,7.3,7.2,7.1];
+    const colors=[grey,navy,navy,navy,navy];
+    const lines=values.map((value,i)=>wrapPdfText(value,normal,sizes[i],widths[i]-10));
+    const maxLines=Math.max(...lines.map(cell=>cell.length));
     let offset=0;
     do{
-      const remaining=lines.length-offset;
+      const remaining=maxLines-offset;
       const available=Math.floor((top-210-8)/9);
       if(available<1 || (!it && top-20<210)){
         page=doc.addPage([595,842]);
@@ -421,32 +428,32 @@ async function buildMockFormPdf({request,items,outPath}) {
         x+=w;
       }
       if(it){
-        if(offset===0){
-          page.drawText(String(r+1),{x:x0+9,y:top-14,size:7.5,font:normal,color:grey});
-          page.drawText(String(it.category||'').slice(0,22),{x:x0+widths[0]+5,y:top-14,size:7.3,font:normal,color:navy});
-          page.drawText(displayDate(it.payment_date || it.paymentDate),{x:x0+widths[0]+widths[1]+widths[2]+5,y:top-14,size:7.2,font:normal,color:navy});
-          page.drawText(money(it.amount).replace('Rp ','Rp'),{x:x0+widths[0]+widths[1]+widths[2]+widths[3]+5,y:top-14,size:7.1,font:normal,color:navy});
-        }
-        lines.slice(offset,offset+count).forEach((line,i)=>{
-          if(line) page.drawText(line,{x:x0+widths[0]+widths[1]+5,y:top-14-i*9,size:7.3,font:normal,color:navy});
+        let columnX=x0;
+        lines.forEach((cell,i)=>{
+          cell.slice(offset,offset+count).forEach((line,lineIndex)=>{
+            if(line) page.drawText(line,{x:columnX+5,y:top-14-lineIndex*9,size:sizes[i],font:normal,color:colors[i]});
+          });
+          columnX+=widths[i];
         });
       }
       top=y;
       offset+=count;
-    }while(it && offset<lines.length);
+    }while(it && offset<maxLines);
   }
 
   // Total
-  if(top-20<185){
+  const totalLines=wrapPdfText(money(request.total).replace('Rp ','Rp'),bold,8,widths[4]-12);
+  const totalHeight=Math.max(23,totalLines.length*10+8);
+  if(top+3-totalHeight<185){
     page=doc.addPage([595,842]);
     drawTableHeader(770);
     top=770;
   }
-  const y=top-20;
-  page.drawRectangle({x:x0,y:y,width:417,height:23,color:pale,borderWidth:.65,borderColor:line});
-  page.drawRectangle({x:x0+417,y:y,width:94,height:23,borderWidth:.65,borderColor:line});
-  page.drawText('TOTAL',{x:x0+365,y:y+7,size:8,font:bold,color:navy});
-  page.drawText(money(request.total).replace('Rp ','Rp'),{x:x0+423,y:y+7,size:8,font:bold,color:navy});
+  const y=top+3-totalHeight;
+  page.drawRectangle({x:x0,y:y,width:417,height:totalHeight,color:pale,borderWidth:.65,borderColor:line});
+  page.drawRectangle({x:x0+417,y:y,width:94,height:totalHeight,borderWidth:.65,borderColor:line});
+  page.drawText('TOTAL',{x:x0+365,y:top-13,size:8,font:bold,color:navy});
+  totalLines.forEach((line,i)=>page.drawText(line,{x:x0+423,y:top-13-i*10,size:8,font:bold,color:navy}));
 
   // Signature area
   const sigY=72;
