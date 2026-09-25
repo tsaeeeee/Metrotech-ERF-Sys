@@ -423,7 +423,7 @@ export async function listDecisionHistory(employee) {
   const assigneeColumn=employee.role==='REVIEWER'?'reviewer_email':'approver_email';
   const {rows}=await pool.query(
     `select r.id,r.ref_no,r.request_date,r.employee_name,r.request_type,r.total,
-            r.status,r.revision,r.last_rejection_reason,r.updated_at,r.approver_email
+            r.status,r.revision,r.last_rejection_reason,r.updated_at,r.approver_email,r.reviewer_email
      from requests r
      where exists(select 1 from workflow_actions a
        where a.request_id=r.id and lower(a.actor_email)=lower($1)
@@ -607,6 +607,32 @@ export async function recallExpenseRequest(id, employee) {
   }finally{
     client.release();
   }
+}
+
+export async function recallReviewedExpenseRequest(id,employee,reason){
+  if(employee.role!=='REVIEWER')
+    throw Object.assign(new Error('Only the assigned Reviewer can recall a reviewed request.'),{status:403});
+  const note=String(reason||'').trim();
+  if(!note) throw Object.assign(new Error('A recall reason is required.'),{status:400});
+  const client=await pool.connect();
+  try{
+    await client.query('begin');
+    const {rows}=await client.query('select * from requests where id=$1 for update',[id]);
+    const request=rows[0];
+    if(!request) throw Object.assign(new Error('Request not found.'),{status:404});
+    if(String(request.reviewer_email).toLowerCase()!==String(employee.email).toLowerCase())
+      throw Object.assign(new Error('This request is assigned to another Reviewer.'),{status:403});
+    if(request.status!=='PENDING_APPROVAL')
+      throw Object.assign(new Error('Reviewer can recall only while the request is Pending Approval.'),{status:409});
+    const {rows:updated}=await client.query(
+      `update requests set status='RECALLED',last_rejection_reason=$2,
+       form_pdf_path=null,updated_at=now() where id=$1 returning *`,[id,note]
+    );
+    const next=updated[0];
+    await insertAction(client,next,employee,'REVIEW_RECALLED','PENDING_APPROVAL','RECALLED',note);
+    await client.query('commit');
+    return next;
+  }catch(e){await client.query('rollback');throw e}finally{client.release()}
 }
 
 export async function recallApprovedExpenseRequest(id,employee,reason){

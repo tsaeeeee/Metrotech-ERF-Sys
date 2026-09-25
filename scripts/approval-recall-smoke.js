@@ -56,7 +56,7 @@ export async function testApprovalRecall({request,requestor,reviewer,reviewer2,a
       ...(body===undefined?{}:{body:body instanceof FormData?body:JSON.stringify(body)})
     });
     assert.equal((await call(requestorCookie,'/recall','POST',{reason:'Unauthorized'})).status,409);
-    assert.equal((await call(reviewerCookie,'/recall','POST',{reason:'Unauthorized'})).status,403);
+    assert.equal((await call(reviewerCookie,'/recall','POST',{reason:'Already final approved'})).status,409);
     assert.equal((await call(approverCookie,'/recall','POST',{reason:'  '})).status,400);
     const attempts=await Promise.all([1,2].map(()=>call(approverCookie,'/recall','POST',{reason:'Correct the amount'})));
     assert.deepEqual(attempts.map(r=>r.status).sort(),[200,409]);
@@ -93,6 +93,31 @@ export async function testApprovalRecall({request,requestor,reviewer,reviewer2,a
     const assignedReviewer=revised.request.reviewer_email===reviewer.email?reviewerCookie:reviewer2Cookie;
     const reviewed=await call(assignedReviewer,'/review','POST',{decision:'APPROVE'});
     assert.equal(reviewed.status,200,await reviewed.text());
+    const otherReviewer=assignedReviewer===reviewerCookie?reviewer2Cookie:reviewerCookie;
+    assert.equal((await call(otherReviewer,'/recall','POST',{reason:'Wrong reviewer'})).status,403);
+    assert.equal((await call(assignedReviewer,'/recall','POST',{reason:'  '})).status,400);
+    assert.equal((await call(requestorCookie,'/recall','POST',{})).status,409);
+    const reviewRecalls=await Promise.all([1,2].map(()=>call(assignedReviewer,'/recall','POST',{reason:'Correct reviewed details'})));
+    assert.deepEqual(reviewRecalls.map(r=>r.status).sort(),[200,409]);
+    const recalledReview=await getRequestDetail(request.id);
+    assert.equal(recalledReview.request.status,'RECALLED');
+    const reviewAudit=recalledReview.actions.filter(a=>a.action==='REVIEW_RECALLED');
+    assert.equal(reviewAudit.length,1);
+    assert.equal(reviewAudit[0].actor_role,'REVIEWER');
+    assert.equal(reviewAudit[0].reason,'Correct reviewed details');
+    assert.equal(reviewAudit[0].from_status,'PENDING_APPROVAL');
+    const queue=await fetch(`${base}/api/me`,{headers:{cookie:approverCookie}}).then(r=>r.json());
+    assert(!queue.requests.some(r=>r.id===request.id));
+    assert.equal((await call(approverCookie,'/approve','POST',{decision:'APPROVE'})).status,409);
+    const resubmit=new FormData();resubmit.set('items',JSON.stringify(values));
+    const resubmitted=await call(requestorCookie,'/revise','POST',resubmit);
+    assert.equal(resubmitted.status,200,await resubmitted.text());
+    const rerevised=await getRequestDetail(request.id);
+    assert.equal(rerevised.request.status,'PENDING_REVIEW');
+    const newReviewer=rerevised.request.reviewer_email===reviewer.email?reviewerCookie:reviewer2Cookie;
+    assert.equal((await call(newReviewer,'/recall','POST',{reason:'Not reviewed yet'})).status,409);
+    const reviewedAgain=await call(newReviewer,'/review','POST',{decision:'APPROVE'});
+    assert.equal(reviewedAgain.status,200,await reviewedAgain.text());
     const approved=await call(approverCookie,'/approve','POST',{decision:'APPROVE'});
     assert.equal(approved.status,200,await approved.text());
     const second=await (await call(requestorCookie,'')).json();
@@ -101,11 +126,14 @@ export async function testApprovalRecall({request,requestor,reviewer,reviewer2,a
     const secondRecall=await call(approverCookie,'/recall','POST',{reason:'Second correction'});
     assert.equal(secondRecall.status,200,await secondRecall.text());
     assert.deepEqual(await fs.readFile(approvalArchivePath(request)),original);
-    const secondArchive=await call(requestorCookie,`/approval-archive/${request.revision+1}`);
+    const secondArchive=await call(requestorCookie,`/approval-archive/${second.request.revision}`);
     assert.equal(secondArchive.status,200);
     const emails=await pool.query("select mail_to,mail_cc from email_log where request_id=$1 and event='APPROVAL_RECALLED'",[request.id]);
     assert.equal(emails.rows.length,2);
     assert(emails.rows.every(row=>row.mail_to.includes(requestor.email)&&row.mail_cc.includes(reviewer.email)));
+    const reviewEmails=await pool.query("select mail_to,mail_cc from email_log where request_id=$1 and event='REVIEW_RECALLED'",[request.id]);
+    assert.equal(reviewEmails.rows.length,1);
+    assert(reviewEmails.rows[0].mail_to.includes(requestor.email)&&reviewEmails.rows[0].mail_cc.includes(approver.email));
     console.log('APPROVAL_RECALL_SMOKE_OK');
   }catch(error){
     console.error(logs);

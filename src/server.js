@@ -11,7 +11,7 @@ import {
   pool,workflowLockPool,pingDb,getEmployee,authenticateLocalUser,changeEmployeePassword,updateEmployeeSignature,listManagedEmployees,
   createManagedEmployee,updateManagedEmployee,setManagedEmployeeActive,ensureBootstrapAdminCredentials,
   listRequestsForEmployee,listDecisionHistory,hasDecisionHistory,createExpenseRequest,
-  getRequestDetail,setDocumentPaths,transitionRequest,recallExpenseRequest,recallApprovedExpenseRequest,reviseExpenseRequest
+  getRequestDetail,setDocumentPaths,transitionRequest,recallExpenseRequest,recallReviewedExpenseRequest,recallApprovedExpenseRequest,reviseExpenseRequest
 } from './db.js';
 import { buildEvidencePdf,buildFormPdf } from './documents.js';
 import { buildRequestPacket } from './request-packet.js';
@@ -614,18 +614,22 @@ app.post('/api/requests',requireUser,upload.any(),async(req,res,next)=>{
 app.post('/api/requests/:id/recall',requireUser,withRequestWorkflowLock(async(req,res,next)=>{
   try{
     const approvedRecall=req.employee.role==='APPROVER';
+    const reviewedRecall=req.employee.role==='REVIEWER';
+    const decisionRecall=approvedRecall||reviewedRecall;
     const request=approvedRecall
       ? await recallApprovedExpenseRequest(req.params.id,req.employee,req.body?.reason)
-      : await recallExpenseRequest(req.params.id,req.employee);
+      : reviewedRecall
+        ? await recallReviewedExpenseRequest(req.params.id,req.employee,req.body?.reason)
+        : await recallExpenseRequest(req.params.id,req.employee);
     const detail=approvedRecall?await getRequestDetail(request.id):await regenerateForm(request.id);
     await sendWorkflowMail({
-      event:approvedRecall?'APPROVAL_RECALLED':'RECALLED',
+      event:approvedRecall?'APPROVAL_RECALLED':reviewedRecall?'REVIEW_RECALLED':'RECALLED',
       request:detail.request,
-      to:approvedRecall?detail.request.requester_email:detail.request.reviewer_email,
-      cc:approvedRecall?[detail.request.reviewer_email,(await getRuntimeAppSettings()).finalApprovedCc]:undefined,
-      subject:`[${requestCode(detail.request)}] ${detail.request.ref_no} ${approvedRecall?'approval recalled':'recalled by requestor'}`,
-      text:approvedRecall
-        ? `${detail.request.ref_no} approval was recalled by ${req.employee.name}. Reason: ${request.last_rejection_reason}. The previous approval is no longer current. Requestor must revise and resubmit for a new review and approval.`
+      to:decisionRecall?detail.request.requester_email:detail.request.reviewer_email,
+      cc:approvedRecall?[detail.request.reviewer_email,(await getRuntimeAppSettings()).finalApprovedCc]:reviewedRecall?detail.request.approver_email:undefined,
+      subject:`[${requestCode(detail.request)}] ${detail.request.ref_no} ${approvedRecall?'approval recalled':reviewedRecall?'review recalled':'recalled by requestor'}`,
+      text:decisionRecall
+        ? `${detail.request.ref_no} ${approvedRecall?'approval':'review'} was recalled by ${req.employee.name}. Reason: ${request.last_rejection_reason}. The previous approval is no longer current. Requestor must revise and resubmit for a new review and approval.`
         : `${detail.request.ref_no} was recalled by ${req.employee.name} and no longer requires review.`
     });
     res.json({ok:true,status:detail.request.status,refNo:detail.request.ref_no});

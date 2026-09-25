@@ -248,8 +248,11 @@ function renderRequests(requests,tableId='table',bodyId='tbody',emptyId='empty')
     const recall=currentEmployee?.role==='REQUESTOR' && r.status==='PENDING_REVIEW'
       ? `<button class="btn tiny recall" onclick="recallRequest('${r.id}','${esc(r.ref_no)}')">Recall</button>`
       : '';
-    const approvalRecall=currentEmployee?.role==='APPROVER' && r.status==='APPROVED' &&
-      String(r.approver_email).toLowerCase()===String(currentEmployee.email).toLowerCase()
+    const canRecallDecision=(currentEmployee?.role==='APPROVER' && r.status==='APPROVED' &&
+      String(r.approver_email).toLowerCase()===String(currentEmployee.email).toLowerCase()) ||
+      (currentEmployee?.role==='REVIEWER' && r.status==='PENDING_APPROVAL' &&
+      String(r.reviewer_email).toLowerCase()===String(currentEmployee.email).toLowerCase());
+    const approvalRecall=canRecallDecision
       ? `<button class="btn tiny danger" onclick="openApprovalRecall('${r.id}',this)">Recall</button>` : '';
     const savePdf=r.status==='APPROVED'
       ? `<button class="btn tiny primary" onclick="downloadFinalPdf('${r.id}')">Save PDF</button>`
@@ -939,8 +942,11 @@ let approvalRecallTrigger=null;
 let approvalRecallBusy=false;
 
 function openApprovalRecall(id,trigger){
-  if(currentEmployee?.role!=='APPROVER'||approvalRecallBusy) return;
+  if(!['APPROVER','REVIEWER'].includes(currentEmployee?.role)||approvalRecallBusy) return;
   if(typeof sigRequireWorkflowSignature==='function'&&!sigRequireWorkflowSignature('recall this approval')) return;
+  $('#approvalRecallDescription').textContent=currentEmployee.role==='REVIEWER'
+    ? 'Withdraw your review and return this request to the Requestor for revision. It will leave the Approver queue and require a new review and approval.'
+    : 'Return this request to the Requestor for revision. It will require a new review and approval. The previous approved PDF stays in the audit trail.';
   approvalRecallTarget=id;
   approvalRecallTrigger=trigger;
   $('#approvalRecallTitle').textContent=`Recall ${trigger?.closest('tr')?.querySelector('td strong')?.textContent||'approval'}`;
@@ -988,7 +994,7 @@ async function submitApprovalRecall(event){
     approvalRecallBusy=false;
     closeApprovalRecall();
     await loadMe();
-    msg(`${r.refNo}: approval recalled. Requestor can revise and resubmit.`,'ok');
+    msg(`${r.refNo}: ${currentEmployee.role==='REVIEWER'?'review':'approval'} recalled. Requestor can revise and resubmit.`,'ok');
   }catch(e){$('#approvalRecallError').textContent=e.message;}
   finally{
     approvalRecallBusy=false;
