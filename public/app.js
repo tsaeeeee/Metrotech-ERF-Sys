@@ -901,7 +901,7 @@ async function startRevision(id){
       purpose:String(item.purpose||''),
       paymentDate:String(item.payment_date||'').slice(0,10),
       amount:Number(item.amount||0),
-      evidence:(item.evidence_names||[]).map(name=>({name:String(name),existing:true})),
+      evidence:(item.evidenceReusable===false?[]:(item.evidence_names||[])).map(name=>({name:String(name),existing:true})),
       sourceLineNo:Number(item.line_no)
     }));
     editingIndex=-1;
@@ -911,8 +911,11 @@ async function startRevision(id){
     $('#requestFormTitle').textContent=`${recalled?'Edit & Resubmit':'Revise'} ${refNo}`;
     $('#revisionBanner').classList.remove('hidden');
     $('#revisionBanner').innerHTML=recalled
-      ? `<strong>Recalled:</strong> Edit the existing payment data below and resubmit. Existing evidence is kept unless you replace it.`
+      ? `<strong>Recalled:</strong> ${esc(reason)} Edit the payment data below and resubmit for review.`
       : `<strong>Rejected:</strong> ${esc(reason)} <span>Edit the existing payment data below and resubmit. Existing evidence is kept unless you replace it.</span>`;
+    if((data.items||[]).some(item=>item.evidenceReusable===false)){
+      $('#revisionBanner').innerHTML+=' <strong>Some original evidence is unavailable. Attach it again before resubmitting; the old approved packet remains in the audit trail.</strong>';
+    }
     $('#cancelRevisionBtn').classList.remove('hidden');
     $('#submitExpenseBtn').textContent='Submit Revision';
     $('#requestForm').scrollIntoView({behavior:'smooth'});
@@ -926,6 +929,23 @@ async function recallRequest(id,refNo){
     msg(`${r.refNo} recalled successfully. Reviewer can no longer action it until you resubmit.`,'ok');
     await loadMe();
   }catch(e){msg(e.message,'err')}
+}
+
+async function recallApprovedRequest(){
+  if(!currentDetailId||currentEmployee?.role!=='APPROVER') return;
+  if(typeof sigRequireWorkflowSignature==='function'&&!sigRequireWorkflowSignature('recall this approval')) return;
+  const reason=prompt('Reason for recalling this approval (required):');
+  if(reason===null) return;
+  if(!reason.trim()){msg('A recall reason is required.','err');return;}
+  if(!confirm('Recall this approval and return the request to the Requestor? It will need a new review and approval. The previous PDF will remain as a superseded archive.')) return;
+  const button=$('#detailRecallBtn');
+  button.disabled=true;
+  try{
+    const r=await api(`/api/requests/${currentDetailId}/recall`,{method:'POST',body:JSON.stringify({reason:reason.trim()})});
+    closeDetail();
+    await loadMe();
+    msg(`${r.refNo}: approval recalled. Requestor can revise and resubmit.`,'ok');
+  }catch(e){msg(e.message,'err')}finally{button.disabled=false;}
 }
 
 function cancelRevision(){
@@ -1065,7 +1085,7 @@ async function openRequest(id){
       <div class="audit-row">
         <div class="audit-dot"></div>
         <div><strong>${esc(a.action.replaceAll('_',' '))}</strong><span>${esc(a.actor_name)} · ${esc(a.actor_role)}</span>
-        ${a.reason?`<p>${esc(a.reason)}</p>`:''}<small>${new Date(a.created_at).toLocaleString('id-ID')}</small></div>
+        ${a.reason?`<p>${esc(a.reason)}</p>`:''}${a.action==='APPROVAL_RECALLED'?`<p><a href="/api/requests/${encodeURIComponent(id)}/approval-archive/${Number(a.revision)}">Previous approved PDF · revision ${Number(a.revision)} · superseded</a></p>`:''}<small>${new Date(a.created_at).toLocaleString('id-ID')}</small></div>
       </div>`).join(''):'<div class="muted">No audit entries.</div>';
 
     const stamp=Date.now();
@@ -1077,6 +1097,7 @@ async function openRequest(id){
       (currentEmployee.role==='APPROVER'&&r.status==='PENDING_APPROVAL'&&String(r.approver_email).toLowerCase()===email);
     $('#decisionPanel').classList.toggle('hidden',!actionable);
     $('#detailSavePdfBtn').classList.toggle('hidden',r.status!=='APPROVED');
+    $('#detailRecallBtn').classList.toggle('hidden',!(currentEmployee.role==='APPROVER'&&r.status==='APPROVED'&&String(r.approver_email).toLowerCase()===email));
     $('#decisionReason').value='';
     $('#approveBtn').disabled=!actionable;
     $('#rejectBtn').disabled=true;

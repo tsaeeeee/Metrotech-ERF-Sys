@@ -489,6 +489,7 @@
     <div class="modal-head">
       <div><h2 id="detailRef">Expense Request</h2><p id="detailMeta" class="muted"></p></div>
       <div class="modal-head-actions">
+        <button id="detailRecallBtn" class="btn recall hidden" type="button" onclick="recallApprovedRequest()">Recall Approval</button>
         <button id="detailSavePdfBtn" class="btn primary hidden" type="button" onclick="downloadFinalPdf(currentDetailId)">Save PDF</button>
         <button class="btn ghost" onclick="closeDetail()">Close</button>
       </div>
