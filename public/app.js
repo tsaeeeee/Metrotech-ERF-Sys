@@ -168,8 +168,8 @@ async function submitFirstSignature(event){
 
 async function loadMe(){
   try{
-    const {employee,requests,tasks,myRequests}=await api('/api/me');
-    window.emsBootstrap={requests,tasks,myRequests};
+    const {employee,requests,tasks,myRequests,history=[]}=await api('/api/me');
+    window.emsBootstrap={requests,tasks,myRequests,history};
     currentEmployee=employee;
     $('#loginCard').classList.add('hidden');
     $('#dashboard').classList.add('hidden');
@@ -207,6 +207,12 @@ async function loadMe(){
 
     $('#roleTitle').textContent=employee.role==='REQUESTOR'?'Requestor Dashboard':employee.role==='REVIEWER'?'Reviewer Dashboard':employee.role==='APPROVER'?'Approver Dashboard':'Checker Dashboard';
     $('#queueTitle').textContent=employee.role==='REQUESTOR'?'My Requests':employee.role==='REVIEWER'?'Pending Review':'Pending Approval';
+    const showHistory=['REVIEWER','APPROVER'].includes(employee.role);
+    $('#decisionHistoryCard').classList.toggle('hidden',!showHistory);
+    if(showHistory){
+      $('#decisionHistoryTitle').textContent=employee.role==='REVIEWER'?'Review History':'Approval History';
+      renderRequests(history,'decisionHistoryTable','decisionHistoryBody','decisionHistoryEmpty');
+    }
     $('#requestForm').classList.toggle('hidden',employee.role!=='REQUESTOR');
 
     const fields=[
@@ -229,15 +235,15 @@ async function loadMe(){
   }
 }
 
-function renderRequests(requests){
+function renderRequests(requests,tableId='table',bodyId='tbody',emptyId='empty'){
   if(!requests.length){
-    $('#empty').classList.remove('hidden');
-    $('#table').classList.add('hidden');
+    $(`#${emptyId}`).classList.remove('hidden');
+    $(`#${tableId}`).classList.add('hidden');
     return;
   }
-  $('#empty').classList.add('hidden');
-  $('#table').classList.remove('hidden');
-  $('#tbody').innerHTML=requests.map(r=>{
+  $(`#${emptyId}`).classList.add('hidden');
+  $(`#${tableId}`).classList.remove('hidden');
+  $(`#${bodyId}`).innerHTML=requests.map(r=>{
     const ownRequest=(r.form_type==='ECF'
       ? currentEmployee?.ecfRole==='REQUESTOR'
       : currentEmployee?.role==='REQUESTOR') &&
@@ -250,6 +256,12 @@ function renderRequests(requests){
       r.status===(r.form_type==='ECF'?'PENDING_CHECK':'PENDING_REVIEW')
       ? `<button class="btn tiny recall" onclick="recallRequest('${r.id}','${esc(r.ref_no)}','${r.form_type==='ECF'?'ECF':'ERF'}')">Recall</button>`
       : '';
+    const canRecallDecision=(currentEmployee?.role==='APPROVER' && r.status==='APPROVED' &&
+      String(r.approver_email).toLowerCase()===String(currentEmployee.email).toLowerCase()) ||
+      (currentEmployee?.role==='REVIEWER' && r.status==='PENDING_APPROVAL' &&
+      String(r.reviewer_email).toLowerCase()===String(currentEmployee.email).toLowerCase());
+    const approvalRecall=canRecallDecision
+      ? `<button class="btn tiny danger" onclick="openApprovalRecall('${r.id}',this)">Recall</button>` : '';
     const savePdf=r.status==='APPROVED'
       ? `<button class="btn tiny primary" onclick="downloadFinalPdf('${r.id}')">Save PDF</button>`
       : '';
@@ -260,7 +272,7 @@ function renderRequests(requests){
       <td class="money">${rupiah(r.total)}</td>
       <td class="status-col"><span class="status ${esc(r.status)}">${esc(r.status)}</span></td>
       <td class="rev-col">${r.revision}</td>
-      <td class="actions action-col"><button class="btn tiny ghost" onclick="openRequest('${r.id}')">Open</button> ${savePdf} ${recall} ${revise}</td>
+      <td class="actions action-col"><button class="btn tiny ghost" onclick="openRequest('${r.id}')">Open</button> ${savePdf} ${approvalRecall} ${recall} ${revise}</td>
     </tr>`;
   }).join('');
 }
@@ -752,6 +764,7 @@ function closeCategoryMenu(){
 function selectCategory(value){
   $('#category').value=value;
   $('#categoryLabel').textContent=value;
+  $('#categoryButton').title=value;
   $('#categoryLabel').classList.remove('custom-select-placeholder');
   document.querySelectorAll('#categoryMenu button').forEach(btn=>{
     btn.classList.toggle('selected',btn.dataset.value===value);
@@ -763,6 +776,7 @@ function selectCategory(value){
 function resetCategory(){
   $('#category').value='';
   $('#categoryLabel').textContent='Select category';
+  $('#categoryButton').removeAttribute('title');
   $('#categoryLabel').classList.add('custom-select-placeholder');
   document.querySelectorAll('#categoryMenu button').forEach(btn=>btn.classList.remove('selected'));
   closeCategoryMenu();
@@ -897,13 +911,13 @@ async function startRevision(id){
     const recalled=data.request.status==='RECALLED';
     const reason=data.request.last_rejection_reason||'Please revise this request.';
 
-    revisionTarget={id,refNo,recalled,reason,formType:data.request.form_type||'ERF'};
+    revisionTarget={id,refNo,recalled,reason,formType:data.request.form_type||'ERF',missingEvidence:(data.items||[]).some(item=>item.evidenceReusable===false)};
     payments=(data.items||[]).map(item=>({
       category:String(item.category||''),
       purpose:String(item.purpose||''),
       paymentDate:String(item.payment_date||'').slice(0,10),
       amount:Number(item.amount||0),
-      evidence:(item.evidence_names||[]).map(name=>({name:String(name),existing:true})),
+      evidence:(item.evidenceReusable===false?[]:(item.evidence_names||[])).map(name=>({name:String(name),existing:true})),
       sourceLineNo:Number(item.line_no)
     }));
     editingIndex=-1;
@@ -933,8 +947,77 @@ function renderRevisionState(){
     : 'Create Expense Request';
   $('#submitExpenseBtn').textContent=revisionTarget?'Submit Revision':'Submit Expense';
   $('#revisionBanner').innerHTML=!revisionTarget?'':revisionTarget.recalled
-    ? '<strong>Recalled:</strong> Edit the existing payment data below and resubmit. Existing evidence is kept unless you replace it.'
+    ? `<strong>Recalled:</strong> ${esc(revisionTarget.reason)} Edit the payment data below and resubmit for review.`
     : `<strong>Rejected:</strong> ${esc(revisionTarget.reason)} <span>Edit the existing payment data below and resubmit. Existing evidence is kept unless you replace it.</span>`;
+  if(revisionTarget?.missingEvidence) $('#revisionBanner').innerHTML+=' <strong>Some original evidence is unavailable. Attach it again before resubmitting; the old approved packet remains in the audit trail.</strong>';
+}
+
+let approvalRecallTarget=null;
+let approvalRecallTrigger=null;
+let approvalRecallBusy=false;
+
+function openApprovalRecall(id,trigger){
+  if(!['APPROVER','REVIEWER'].includes(currentEmployee?.role)||approvalRecallBusy) return;
+  if(typeof sigRequireWorkflowSignature==='function'&&!sigRequireWorkflowSignature('recall this approval')) return;
+  $('#approvalRecallDescription').textContent=currentEmployee.role==='REVIEWER'
+    ? 'Withdraw your review and return this request to the Requestor for revision. It will leave the Approver queue and require a new review and approval.'
+    : 'Return this request to the Requestor for revision. It will require a new review and approval. The previous approved PDF stays in the audit trail.';
+  approvalRecallTarget=id;
+  approvalRecallTrigger=trigger;
+  $('#approvalRecallTitle').textContent=`Recall ${trigger?.closest('tr')?.querySelector('td strong')?.textContent||'approval'}`;
+  $('#approvalRecallReason').value='';
+  $('#approvalRecallError').textContent='';
+  $('#approvalRecallSubmit').disabled=true;
+  $('#approvalRecallModal').classList.remove('hidden');
+  document.body.classList.add('modal-open');
+  $('#approvalRecallReason').focus();
+}
+
+function closeApprovalRecall(){
+  if(approvalRecallBusy) return;
+  $('#approvalRecallModal').classList.add('hidden');
+  approvalRecallTarget=null;
+  if(!document.querySelector('.modal:not(.hidden)')) document.body.classList.remove('modal-open');
+  approvalRecallTrigger?.focus();
+  approvalRecallTrigger=null;
+}
+
+function approvalRecallKeydown(event){
+  if(event.key==='Escape'){event.preventDefault();closeApprovalRecall();}
+  if(event.key!=='Tab') return;
+  const controls=[...$('#approvalRecallModal').querySelectorAll('button:not(:disabled),textarea:not(:disabled)')];
+  const first=controls[0],last=controls[controls.length-1];
+  if(!first){event.preventDefault();return;}
+  if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}
+  else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
+}
+
+async function submitApprovalRecall(event){
+  event.preventDefault();
+  if(!approvalRecallTarget||approvalRecallBusy) return;
+  const reason=$('#approvalRecallReason').value.trim();
+  if(!reason){$('#approvalRecallError').textContent='A recall reason is required.';return;}
+  approvalRecallBusy=true;
+  const button=$('#approvalRecallSubmit');
+  button.disabled=true;
+  button.textContent='Recalling…';
+  $('#approvalRecallCancel').disabled=true;
+  $('#approvalRecallReason').readOnly=true;
+  $('#approvalRecallError').textContent='';
+  try{
+    const r=await api(`/api/requests/${approvalRecallTarget}/recall`,{method:'POST',body:JSON.stringify({reason})});
+    approvalRecallBusy=false;
+    closeApprovalRecall();
+    await loadMe();
+    msg(`${r.refNo}: ${currentEmployee.role==='REVIEWER'?'review':'approval'} recalled. Requestor can revise and resubmit.`,'ok');
+  }catch(e){$('#approvalRecallError').textContent=e.message;}
+  finally{
+    approvalRecallBusy=false;
+    button.disabled=!$('#approvalRecallReason').value.trim();
+    button.textContent='Recall';
+    $('#approvalRecallCancel').disabled=false;
+    $('#approvalRecallReason').readOnly=false;
+  }
 }
 
 function cancelRevision(){
@@ -1035,6 +1118,21 @@ async function renderPdfDocument(url,targetSelector){
   }
 }
 
+function renderDetailSummary(r){
+  const assignee=key=>String(r[`${key}_name`]||'').trim()||String(r[`${key}_email`]||'').trim()||'—';
+  const fields=[
+    ['Request Date',String(r.request_date).slice(0,10)], ['Employee ID',r.employee_id],
+    ['Department',r.department], ['Location',r.location],
+    ['Division',r.division], ['Total',rupiah(r.total)],
+    ['Reviewer',assignee('reviewer')], ['Approver',assignee('approver')]
+  ];
+  const rows=[];
+  for(let i=0;i<fields.length;i+=2){
+    rows.push(`<tr>${fields.slice(i,i+2).map(([label,value])=>`<th scope="row">${esc(label)}</th><td>${esc(value??'—')}</td>`).join('')}</tr>`);
+  }
+  $('#detailSummary').innerHTML=`<table class="detail-summary-table" aria-label="Request summary"><tbody>${rows.join('')}</tbody></table>`;
+}
+
 async function openRequest(id){
   clearMsg();
   try{
@@ -1043,14 +1141,7 @@ async function openRequest(id){
     const r=data.request;
     $('#detailRef').textContent=r.ref_no;
     $('#detailMeta').textContent=`${r.employee_name} · Revision ${r.revision} · ${r.status}`;
-    $('#detailSummary').innerHTML=[
-      ['Request Date',String(r.request_date).slice(0,10)],
-      ['Employee ID',r.employee_id],
-      ['Department',r.department],
-      ['Location',r.location],
-      ['Division',r.division],
-      ['Total',rupiah(r.total)]
-    ].map(([a,b])=>`<div><span>${esc(a)}</span><strong>${esc(b)}</strong></div>`).join('');
+    renderDetailSummary(r);
 
     $('#detailItems').innerHTML=data.items.map(it=>`<tr>
       <td>${it.line_no}</td><td>${esc(it.category)}</td><td>${esc(it.purpose)}</td>
@@ -1063,15 +1154,16 @@ async function openRequest(id){
       <div class="audit-row">
         <div class="audit-dot"></div>
         <div><strong>${esc(a.action.replaceAll('_',' '))}</strong><span>${esc(a.actor_name)} · ${esc(a.actor_role)}</span>
-        ${a.reason?`<p>${esc(a.reason)}</p>`:''}<small>${new Date(a.created_at).toLocaleString('id-ID')}</small></div>
+        ${a.reason?`<p>${esc(a.reason)}</p>`:''}${a.action==='APPROVAL_RECALLED'?`<p><a href="/api/requests/${encodeURIComponent(id)}/approval-archive/${Number(a.revision)}">Previous approved PDF · revision ${Number(a.revision)} · superseded</a></p>`:''}<small>${new Date(a.created_at).toLocaleString('id-ID')}</small></div>
       </div>`).join(''):'<div class="muted">No audit entries.</div>';
 
     const stamp=Date.now();
     const formUrl=data.documents.form?`/api/requests/${id}/form?t=${stamp}`:null;
     const evidenceUrl=data.documents.evidence?`/api/requests/${id}/evidence?t=${stamp}`:null;
 
-    const actionable=(currentEmployee.role==='REVIEWER'&&r.status==='PENDING_REVIEW') ||
-      (currentEmployee.role==='APPROVER'&&r.status==='PENDING_APPROVAL');
+    const email=String(currentEmployee.email).toLowerCase();
+    const actionable=(currentEmployee.role==='REVIEWER'&&r.status==='PENDING_REVIEW'&&String(r.reviewer_email).toLowerCase()===email) ||
+      (currentEmployee.role==='APPROVER'&&r.status==='PENDING_APPROVAL'&&String(r.approver_email).toLowerCase()===email);
     $('#decisionPanel').classList.toggle('hidden',!actionable);
     $('#detailSavePdfBtn').classList.toggle('hidden',r.status!=='APPROVED');
     $('#decisionReason').value='';

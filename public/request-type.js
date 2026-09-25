@@ -640,14 +640,7 @@ function workflowSyncDetailAssignees(data){
   const request=data?.request;
   if(!summary || !request) return;
 
-  summary.querySelectorAll('[data-workflow-assignee]').forEach(node=>node.remove());
-  const rows=[
-    ['Reviewer',workflowAssigneeName(request,'reviewer')],
-    ['Approver',workflowAssigneeName(request,'approver')]
-  ];
-  summary.insertAdjacentHTML('beforeend',rows.map(([label,value])=>
-    `<div data-workflow-assignee><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`
-  ).join(''));
+  renderDetailSummary(request);
 }
 
 async function workflowAssignmentNote(requestId){
