@@ -248,6 +248,9 @@ function renderRequests(requests,tableId='table',bodyId='tbody',emptyId='empty')
     const recall=currentEmployee?.role==='REQUESTOR' && r.status==='PENDING_REVIEW'
       ? `<button class="btn tiny recall" onclick="recallRequest('${r.id}','${esc(r.ref_no)}')">Recall</button>`
       : '';
+    const approvalRecall=currentEmployee?.role==='APPROVER' && r.status==='APPROVED' &&
+      String(r.approver_email).toLowerCase()===String(currentEmployee.email).toLowerCase()
+      ? `<button class="btn tiny danger" onclick="openApprovalRecall('${r.id}',this)">Recall</button>` : '';
     const savePdf=r.status==='APPROVED'
       ? `<button class="btn tiny primary" onclick="downloadFinalPdf('${r.id}')">Save PDF</button>`
       : '';
@@ -258,7 +261,7 @@ function renderRequests(requests,tableId='table',bodyId='tbody',emptyId='empty')
       <td class="money">${rupiah(r.total)}</td>
       <td class="status-col"><span class="status ${esc(r.status)}">${esc(r.status)}</span></td>
       <td class="rev-col">${r.revision}</td>
-      <td class="actions action-col"><button class="btn tiny ghost" onclick="openRequest('${r.id}')">Open</button> ${savePdf} ${recall} ${revise}</td>
+      <td class="actions action-col"><button class="btn tiny ghost" onclick="openRequest('${r.id}')">Open</button> ${savePdf} ${approvalRecall} ${recall} ${revise}</td>
     </tr>`;
   }).join('');
 }
@@ -931,21 +934,69 @@ async function recallRequest(id,refNo){
   }catch(e){msg(e.message,'err')}
 }
 
-async function recallApprovedRequest(){
-  if(!currentDetailId||currentEmployee?.role!=='APPROVER') return;
+let approvalRecallTarget=null;
+let approvalRecallTrigger=null;
+let approvalRecallBusy=false;
+
+function openApprovalRecall(id,trigger){
+  if(currentEmployee?.role!=='APPROVER'||approvalRecallBusy) return;
   if(typeof sigRequireWorkflowSignature==='function'&&!sigRequireWorkflowSignature('recall this approval')) return;
-  const reason=prompt('Reason for recalling this approval (required):');
-  if(reason===null) return;
-  if(!reason.trim()){msg('A recall reason is required.','err');return;}
-  if(!confirm('Recall this approval and return the request to the Requestor? It will need a new review and approval. The previous PDF will remain as a superseded archive.')) return;
-  const button=$('#detailRecallBtn');
+  approvalRecallTarget=id;
+  approvalRecallTrigger=trigger;
+  $('#approvalRecallTitle').textContent=`Recall ${trigger?.closest('tr')?.querySelector('td strong')?.textContent||'approval'}`;
+  $('#approvalRecallReason').value='';
+  $('#approvalRecallError').textContent='';
+  $('#approvalRecallSubmit').disabled=true;
+  $('#approvalRecallModal').classList.remove('hidden');
+  document.body.classList.add('modal-open');
+  $('#approvalRecallReason').focus();
+}
+
+function closeApprovalRecall(){
+  if(approvalRecallBusy) return;
+  $('#approvalRecallModal').classList.add('hidden');
+  approvalRecallTarget=null;
+  if(!document.querySelector('.modal:not(.hidden)')) document.body.classList.remove('modal-open');
+  approvalRecallTrigger?.focus();
+  approvalRecallTrigger=null;
+}
+
+function approvalRecallKeydown(event){
+  if(event.key==='Escape'){event.preventDefault();closeApprovalRecall();}
+  if(event.key!=='Tab') return;
+  const controls=[...$('#approvalRecallModal').querySelectorAll('button:not(:disabled),textarea:not(:disabled)')];
+  const first=controls[0],last=controls[controls.length-1];
+  if(!first){event.preventDefault();return;}
+  if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}
+  else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
+}
+
+async function submitApprovalRecall(event){
+  event.preventDefault();
+  if(!approvalRecallTarget||approvalRecallBusy) return;
+  const reason=$('#approvalRecallReason').value.trim();
+  if(!reason){$('#approvalRecallError').textContent='A recall reason is required.';return;}
+  approvalRecallBusy=true;
+  const button=$('#approvalRecallSubmit');
   button.disabled=true;
+  button.textContent='Recalling…';
+  $('#approvalRecallCancel').disabled=true;
+  $('#approvalRecallReason').readOnly=true;
+  $('#approvalRecallError').textContent='';
   try{
-    const r=await api(`/api/requests/${currentDetailId}/recall`,{method:'POST',body:JSON.stringify({reason:reason.trim()})});
-    closeDetail();
+    const r=await api(`/api/requests/${approvalRecallTarget}/recall`,{method:'POST',body:JSON.stringify({reason})});
+    approvalRecallBusy=false;
+    closeApprovalRecall();
     await loadMe();
     msg(`${r.refNo}: approval recalled. Requestor can revise and resubmit.`,'ok');
-  }catch(e){msg(e.message,'err')}finally{button.disabled=false;}
+  }catch(e){$('#approvalRecallError').textContent=e.message;}
+  finally{
+    approvalRecallBusy=false;
+    button.disabled=!$('#approvalRecallReason').value.trim();
+    button.textContent='Recall';
+    $('#approvalRecallCancel').disabled=false;
+    $('#approvalRecallReason').readOnly=false;
+  }
 }
 
 function cancelRevision(){
@@ -1097,7 +1148,6 @@ async function openRequest(id){
       (currentEmployee.role==='APPROVER'&&r.status==='PENDING_APPROVAL'&&String(r.approver_email).toLowerCase()===email);
     $('#decisionPanel').classList.toggle('hidden',!actionable);
     $('#detailSavePdfBtn').classList.toggle('hidden',r.status!=='APPROVED');
-    $('#detailRecallBtn').classList.toggle('hidden',!(currentEmployee.role==='APPROVER'&&r.status==='APPROVED'&&String(r.approver_email).toLowerCase()===email));
     $('#decisionReason').value='';
     $('#approveBtn').disabled=!actionable;
     $('#rejectBtn').disabled=true;

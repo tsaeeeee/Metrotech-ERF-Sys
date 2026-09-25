@@ -1042,3 +1042,11 @@ h1{margin:0;color:var(--navy);font-size:26px}h2{margin:0 0 12px;color:var(--navy
 /* Keep payment controls aligned while full values remain available in the menu and table. */
 #categoryLabel{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #categoryButton .custom-select-chevron{flex-shrink:0}
+
+.approval-recall-panel{width:min(480px,100%);max-height:90vh;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:16px;padding:24px;box-shadow:0 20px 70px rgba(0,0,0,.25)}
+.approval-recall-panel .field{margin-top:20px}
+.approval-recall-panel textarea{width:100%;border:1px solid #cbd5e1;border-radius:9px;padding:10px 11px;font:inherit;resize:vertical;min-height:100px}
+.approval-recall-panel textarea:focus{outline:2px solid var(--blue);outline-offset:2px}
+.approval-recall-error{color:var(--red);font-size:13px;margin-top:10px}
+.approval-recall-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+@media(max-width:760px){#approvalRecallModal{padding:16px}}

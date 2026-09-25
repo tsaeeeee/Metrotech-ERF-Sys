@@ -423,7 +423,7 @@ export async function listDecisionHistory(employee) {
   const assigneeColumn=employee.role==='REVIEWER'?'reviewer_email':'approver_email';
   const {rows}=await pool.query(
     `select r.id,r.ref_no,r.request_date,r.employee_name,r.request_type,r.total,
-            r.status,r.revision,r.last_rejection_reason,r.updated_at
+            r.status,r.revision,r.last_rejection_reason,r.updated_at,r.approver_email
      from requests r
      where exists(select 1 from workflow_actions a
        where a.request_id=r.id and lower(a.actor_email)=lower($1)
