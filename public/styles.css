@@ -89,7 +89,8 @@ h1{margin:0;color:var(--navy);font-size:26px}h2{margin:0 0 12px;color:var(--navy
 
 .payment-form{margin-top:14px}
 .field #purpose{width:100%;min-height:42px;border:1px solid #cbd5e1;border-radius:9px;padding:9px 11px;font:inherit;background:#fff;resize:vertical;overflow-wrap:anywhere}
-#paymentBody td:nth-child(3),#detailItems td:nth-child(3){overflow-wrap:anywhere;white-space:pre-wrap}
+#paymentBody td:not(:last-child),#detailItems td{overflow-wrap:anywhere;white-space:pre-wrap}
+#paymentBody .file-chip,#detailItems .file-chip{max-width:100%;white-space:normal;overflow-wrap:anywhere}
 #decisionHistoryTable th,#decisionHistoryTable td{vertical-align:middle}
 #decisionHistoryTable .money{text-align:right}
 #decisionHistoryTable .status-col{text-align:center;width:150px}
