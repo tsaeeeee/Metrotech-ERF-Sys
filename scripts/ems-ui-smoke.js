@@ -9,12 +9,21 @@ const publicDir=new URL('../public/',import.meta.url);
 const assets={
   '/':['index.html'],
   '/styles.css':['styles.css'],
+  '/ems-theme.css':['ems-theme.css'],
   '/app.js':['app.js','request-type.js'],
   '/ecf-admin.js':['ecf-admin.js','ecf-profile.js'],
   '/ems.js':['ems.js']
 };
 const server=http.createServer(async(req,res)=>{
   const pathname=new URL(req.url,'http://localhost').pathname;
+  if(['/assets/metrotech-logo.png','/assets/metrotech-favicon.svg'].includes(pathname)){
+    try{
+      const body=await fs.readFile(new URL('.'+pathname,publicDir));
+      res.setHeader('Content-Type',pathname.endsWith('.svg')?'image/svg+xml':'image/png');
+      res.end(body);
+    }catch{res.writeHead(404);res.end()}
+    return;
+  }
   const files=assets[pathname];
   if(!files){res.writeHead(404);res.end();return}
   try{
@@ -147,15 +156,24 @@ try{
   await admin.page.locator('#emsHome').waitFor({state:'visible'});
   await assertAdmin(admin.page);
   const geometry=await admin.page.locator('#emsNav').boundingBox();
-  assert.equal(geometry.x,0,'Sidebar must be flush left.');
-  assert.equal(Math.round(geometry.y+geometry.height),1000,'Sidebar must reach the bottom of the viewport.');
-  await admin.page.locator('#emsAdminNav summary').click();
-  assert(!await admin.page.locator('#adminUsersTab').isVisible(),'Administration must collapse.');
-  await admin.page.locator('#emsAdminNav summary').click();
+  assert(geometry.y<2 && geometry.height===56,'Desktop navigation must sit in the compact WMS header.');
+  assert.equal(await admin.page.locator('[data-ems-view="admin-users"]').getAttribute('aria-current'),'page');
+  assert.equal(await admin.page.locator('.ems-nav .active').evaluate(el=>getComputedStyle(el).color),'rgb(11, 55, 104)','Keep Metrotech navy.');
+  assert(await admin.page.locator('.ems-nav .active').evaluate(el=>getComputedStyle(el,'::before').maskImage!=='none'),'Navigation icons must render.');
+  assert(await admin.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Desktop must not overflow.');
   await admin.page.setViewportSize({width:390,height:844});
   await admin.page.locator('#emsSidebarToggle').click();
   await admin.page.waitForFunction(()=>Math.abs(document.querySelector('#emsNav').getBoundingClientRect().left)<1);
+  await admin.page.locator('#emsAdminNav summary').click();
+  assert(!await admin.page.locator('#adminUsersTab').isVisible(),'Mobile administration must collapse.');
+  await admin.page.locator('#emsAdminNav summary').click();
   await admin.page.locator('#adminUsersTab').click();
+  assert.equal(await admin.page.locator('#emsSidebarToggle').getAttribute('aria-expanded'),'false');
+  assert(await admin.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Mobile must not overflow.');
+  await admin.page.locator('#emsSidebarToggle').click();
+  await admin.page.locator('#emsAdminNav summary').click();
+  await admin.page.setViewportSize({width:1440,height:1000});
+  await admin.page.locator('#adminUsersTab').waitFor({state:'visible'});
   assert.equal(await admin.page.locator('#emsSidebarToggle').getAttribute('aria-expanded'),'false');
   await admin.context.close();
 
