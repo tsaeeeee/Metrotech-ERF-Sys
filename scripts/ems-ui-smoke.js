@@ -137,7 +137,8 @@ async function assertAdmin(page){
 
 async function addPayment(page,purpose,{evidence=false}={}){
   await page.locator('#categoryButton').click();
-  await page.locator('#categoryMenu [data-value="Travel Expense"]').click();
+  const claim=await page.evaluate(()=>emsFormView==='ecf');
+  await page.locator(claim?'#categoryMenu [data-value="Transportation"]':'#categoryMenu [data-value="Travel Expense"]').click();
   await page.locator('#purpose').fill(purpose);
   await page.locator('#paymentDate').fill('2026-09-23');
   await page.locator('#amount').fill('100000');
@@ -346,7 +347,15 @@ try{
 
   const ecfOnly=await session(employee('NONE','REQUESTOR'));
   await ecfOnly.page.locator('[data-ems-view="ecf"]').click();
+  const claimOptions=await ecfOnly.page.locator('#categoryMenu button').allTextContents();
+  assert(claimOptions.includes('Accommodation') && claimOptions.includes('Meals') && claimOptions.includes('Others'));
+  assert(!claimOptions.includes('Cash Deposit'),'ECF must not inherit ERF categories.');
   await addPayment(ecfOnly.page,'Independent ECF',{evidence:true});
+  await ecfOnly.page.locator('#paymentBody').getByRole('button',{name:'Edit',exact:true}).click();
+  await ecfOnly.page.locator('#categoryButton').click();
+  await ecfOnly.page.locator('#categoryMenu [data-value="Others"]').click();
+  await ecfOnly.page.locator('#addPaymentBtn').click();
+  assert((await ecfOnly.page.locator('#paymentBody').innerText()).includes('Others'));
   let releaseSubmit;
   const submitGate=new Promise(resolve=>{releaseSubmit=resolve});
   await ecfOnly.page.route(`${origin}/api/ecf/claims`,async route=>{
@@ -360,7 +369,7 @@ try{
   await ecfOnly.page.waitForFunction(()=>!emsSubmitting && payments.length===0);
   assert.equal(await ecfOnly.page.locator('#submitExpenseBtn').getAttribute('aria-busy'),null);
   assert(ecfOnly.writes.some(write=>write.path==='/api/ecf/claims' &&
-    write.body.includes('Independent ECF')));
+    write.body.includes('Independent ECF') && write.body.includes('Others')));
   assert(!ecfOnly.writes.some(write=>write.path==='/api/requests' && write.method==='POST'));
   await ecfOnly.context.close();
 
@@ -368,6 +377,8 @@ try{
   const page=requestor.page;
   await page.locator('[data-ems-view="erf"]').click();
   await addPayment(page,'ERF draft');
+  await page.locator('#categoryButton').click();
+  await page.locator('#categoryMenu [data-value="Cash Deposit"]').click();
   await page.locator('#purpose').fill('Unfinished ERF payment');
   await page.locator('#evidence').setInputFiles({name:'unfinished.pdf',mimeType:'application/pdf',buffer:Buffer.from('UI fixture')});
   await page.locator('[data-ems-view="ecf"]').click();
@@ -379,6 +390,9 @@ try{
   assert((await page.locator('#paymentBody').innerText()).includes('ERF draft'));
   assert(!(await page.locator('#paymentBody').innerText()).includes('ECF draft'));
   assert.equal(await page.locator('#purpose').inputValue(),'Unfinished ERF payment');
+  assert.equal(await page.locator('#category').inputValue(),'Cash Deposit');
+  assert(await page.locator('#categoryMenu [data-value="Cash Deposit"]').count());
+  assert.equal(await page.locator('#categoryMenu [data-value="Meals"]').count(),0);
   assert.equal(await page.locator('#evidence').evaluate(el=>el.files[0]?.name),'unfinished.pdf');
   await page.locator('[data-ems-view="ecf"]').click();
   assert((await page.locator('#paymentBody').innerText()).includes('ECF draft'));

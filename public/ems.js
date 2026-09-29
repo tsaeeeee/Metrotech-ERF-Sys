@@ -7,6 +7,28 @@ let emsDrafts={};
 let emsSubmitting=false;
 let emsChecking=false;
 
+// Keep the original ERF options; ECF uses the claim category catalogue.
+const emsErfCategories=[...document.querySelectorAll('#categoryMenu button')].map(button=>button.dataset.value);
+const emsEcfCategories=[
+  'Transportation','Accommodation','Meals','Office Supplies','Communication',
+  'Project / Operational','Maintenance & Repair','Software / Subscription',
+  'Training / Certification','Courier / Delivery','Others'
+];
+
+function emsSetCategories(view){
+  closeCategoryMenu();
+  const options=view==='ecf'?emsEcfCategories:emsErfCategories;
+  const menu=$('#categoryMenu');
+  menu.replaceChildren(...options.map(value=>{
+    const button=document.createElement('button');
+    button.type='button';
+    button.dataset.value=value;
+    button.textContent=value;
+    button.addEventListener('click',()=>selectCategory(value));
+    return button;
+  }));
+}
+
 function emsStoreDraft(){
   if(!emsFormView) return;
   emsDrafts[emsFormView]={
@@ -26,6 +48,7 @@ function emsStoreDraft(){
 function emsRestoreDraft(view){
   const draft=emsDrafts[view];
   emsFormView=view;
+  emsSetCategories(view);
   payments=(draft?.payments||[]).map(item=>({...item,evidence:[...item.evidence]}));
   editingIndex=draft?.editingIndex??-1;
   revisionTarget=draft?.revisionTarget?{...draft.revisionTarget}:null;

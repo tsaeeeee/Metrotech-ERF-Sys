@@ -9,7 +9,7 @@ body.ems-theme {
 .ems-theme .topbar {height:60px;padding:0;margin:0;display:block;background:var(--navy);border-bottom:1px solid #ffffff12;box-shadow:0 2px 8px #0b37680d;z-index:40}
 .ems-theme .topbar-inner {height:100%;margin:auto;padding:0 24px;display:flex;align-items:center;justify-content:space-between;gap:20px}
 .ems-theme .topbar-brand {min-width:0;gap:18px}
-.ems-theme .metro-logo {width:154px;height:30px;max-height:30px;object-fit:contain;background:#fff;border-radius:5px;padding:4px 7px}
+.ems-theme .metro-logo {width:154px;height:30px;max-height:30px;object-fit:contain;background:transparent;border-radius:0;padding:0}
 .ems-theme .topbar-title {display:block;color:#fff;font-size:14px;font-weight:600}
 .ems-theme .topbar-divider {display:block;background:#ffffff30;height:24px}
 .ems-theme .user-menu-wrap {margin-left:auto;flex:none}
@@ -32,7 +32,7 @@ body.ems-theme {
 .ems-theme .ems-nav-items {display:grid;padding-top:6px;gap:5px}
 .ems-theme .ems-nav button {width:100%;min-height:42px;height:auto;padding:10px 12px;display:flex;align-items:center;gap:9px;border:0;border-radius:7px;background:transparent;color:#536176;font-size:13px;font-weight:500;white-space:normal;box-shadow:none;text-align:left}
 .ems-theme .ems-nav button:hover {color:var(--navy);background:#f5f8fc}
-.ems-theme .ems-nav button.active {color:var(--navy);background:#edf3fa;box-shadow:inset 3px 0 var(--navy);font-weight:600}
+.ems-theme .ems-nav button.active {color:var(--navy);background:transparent;box-shadow:none;font-weight:700}
 .ems-theme .ems-nav span {margin-left:auto;color:var(--navy);background:#dce9f6;font-size:10px}
 .ems-theme .ems-nav span:empty {display:none}
 .ems-theme h2 {font-size:16px;font-weight:600;color:var(--text)}
