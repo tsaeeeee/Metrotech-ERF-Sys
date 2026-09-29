@@ -83,7 +83,8 @@ async function session(user,{signedIn=true,dashboard={totals:[],trend:[],categor
       const state=path.endsWith('history')?'APPROVED':user.ecfRole==='CHECKER'?'PENDING_CHECK':
         user.role==='REVIEWER'?'PENDING_REVIEW':'PENDING_APPROVAL';
       data={request:{...row('ECF',state,path.split('/').pop()),checker_name:'UI Checker',
-        reviewer_name:'UI Reviewer',approver_name:'UI Approver'},items:[],documents:{},
+        reviewer_name:'UI Reviewer',approver_name:'UI Approver',
+        payment_to:'Test Account Holder',bank_name:'Test Bank',bank_code:'008',account_number:'001234567890'},items:[],documents:{},
         actions:[{action:'CHECK_APPROVED',actor_name:'UI Checker',actor_role:'REQUESTOR',created_at:'2026-09-25'}]};
     }
     else if(path==='/api/requests/history/recall' && method==='POST'){
@@ -299,6 +300,10 @@ try{
         assert((await actor.page.locator('#decisionHistoryBody').innerText()).includes('ECF-history'));
         await actor.page.locator('#decisionHistoryBody').getByRole('button',{name:'Open',exact:true}).click();
         await actor.page.waitForFunction(()=>emsDetail?.id==='history');
+        assert.deepEqual(await actor.page.locator('#detailSummary th').allTextContents(),['Checker','Reviewer','Approver']);
+        assert.deepEqual(await actor.page.locator('#detailSummary td').allTextContents(),['UI Checker','UI Reviewer','UI Approver']);
+        assert(!(await actor.page.locator('#detailSummary').innerText()).includes('001234567890'),
+          'Bank details belong in the ECF PDF, not the modal summary.');
         assert((await actor.page.locator('#auditTrail').innerText()).includes('UI Checker · CHECKER'),
           'Old Checker audit entries must display CHECKER without updating stored records.');
         await actor.page.evaluate(()=>closeDetail());

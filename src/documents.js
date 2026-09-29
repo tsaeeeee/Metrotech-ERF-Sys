@@ -376,17 +376,47 @@ async function buildMockFormPdf({request,items,outPath}) {
     ['Location',request.location],
     ['Division',request.division]
   ];
-  let infoY=725;
-  for(const [label,value] of infoRows){
-    page.drawRectangle({x:42,y:infoY,width:511,height:20,borderWidth:.55,borderColor:line});
-    page.drawRectangle({x:42,y:infoY,width:120,height:20,color:pale,borderWidth:.55,borderColor:line});
-    page.drawText(label,{x:51,y:infoY+6,size:7.5,font:bold,color:grey});
-    page.drawText(String(value||''),{x:173,y:infoY+6,size:8.5,font:normal,color:navy});
-    infoY-=20;
+  let infoBottom=645;
+  if(request.form_type==='ECF'){
+    const bankRows=[
+      ['Payment To',request.payment_to],
+      ['Bank Name',request.bank_name],
+      ['Bank Code',request.bank_code],
+      ['Account Number',request.account_number]
+    ];
+    let rowTop=745;
+    infoRows.forEach(([label,value],index)=>{
+      const cells=[
+        {x:42,width:85,text:label,label:true},
+        {x:127,width:170,text:value},
+        {x:297,width:88,text:bankRows[index]?.[0],label:true},
+        {x:385,width:168,text:bankRows[index]?.[1]}
+      ].map(cell=>({...cell,lines:wrapPdfText(String(cell.text??''),cell.label?bold:normal,7.5,cell.width-16)}));
+      const height=Math.max(20,...cells.map(cell=>cell.lines.length*10+10));
+      for(const cell of cells){
+        page.drawRectangle({x:cell.x,y:rowTop-height,width:cell.width,height,
+          borderWidth:.55,borderColor:line,...(cell.label?{color:pale}:{})});
+        cell.lines.forEach((text,index)=>{
+          if(text) page.drawText(text,{x:cell.x+8,y:rowTop-13-index*10,size:7.5,
+            font:cell.label?bold:normal,color:cell.label?grey:navy});
+        });
+      }
+      rowTop-=height;
+    });
+    infoBottom=rowTop;
+  }else{
+    let infoY=725;
+    for(const [label,value] of infoRows){
+      page.drawRectangle({x:42,y:infoY,width:511,height:20,borderWidth:.55,borderColor:line});
+      page.drawRectangle({x:42,y:infoY,width:120,height:20,color:pale,borderWidth:.55,borderColor:line});
+      page.drawText(label,{x:51,y:infoY+6,size:7.5,font:bold,color:grey});
+      page.drawText(String(value||''),{x:173,y:infoY+6,size:8.5,font:normal,color:navy});
+      infoY-=20;
+    }
   }
 
   // Expense table
-  const tableTop=600;
+  const tableTop=infoBottom-45;
   const x0=42;
   const widths=[28,100,214,75,94];
   const heads=['No.','Category','Purpose of Payment','Payment Date','Amount (IDR)'];
