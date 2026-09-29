@@ -157,7 +157,7 @@ try{
   await assertAdmin(admin.page);
   const geometry=await admin.page.locator('#emsNav').boundingBox();
   assert(geometry.y<2 && geometry.height===56,'Desktop navigation must sit in the compact WMS header.');
-  assert.equal(await admin.page.locator('[data-ems-view="admin-users"]').getAttribute('aria-current'),'page');
+  assert.equal(await admin.page.locator('[data-ems-view="admin-app"]').getAttribute('aria-current'),'page');
   assert.equal(await admin.page.locator('.ems-nav .active').evaluate(el=>getComputedStyle(el).color),'rgb(11, 55, 104)','Keep Metrotech navy.');
   assert(await admin.page.locator('.ems-nav .active').evaluate(el=>getComputedStyle(el,'::before').maskImage!=='none'),'Navigation icons must render.');
   assert(await admin.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Desktop must not overflow.');
@@ -381,3 +381,4 @@ try{
   await browser?.close();
   await new Promise(resolve=>server.close(resolve));
 }
+
