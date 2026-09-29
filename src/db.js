@@ -841,7 +841,8 @@ export async function recallApprovedExpenseRequest(id,employee,reason){
     const {rows}=await client.query('select * from requests where id=$1 for update',[id]);
     const request=rows[0];
     if(!request) throw Object.assign(new Error('Request not found.'),{status:404});
-    if(request.form_type!=='ERF') throw Object.assign(new Error('Decision recall is available for ERF requests only.'),{status:403});
+    if(!['ERF','ECF'].includes(request.form_type))
+      throw Object.assign(new Error('Approval recall is available for ERF and ECF only.'),{status:403});
     if(String(request.approver_email).toLowerCase()!==String(employee.email).toLowerCase())
       throw Object.assign(new Error('This request is assigned to another Approver.'),{status:403});
     if(request.status!=='APPROVED')

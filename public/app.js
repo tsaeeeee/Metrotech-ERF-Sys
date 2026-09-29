@@ -254,8 +254,8 @@ function renderRequests(requests,tableId='table',bodyId='tbody',emptyId='empty')
       String(r.approver_email).toLowerCase()===String(currentEmployee.email).toLowerCase()) ||
       (currentEmployee?.role==='REVIEWER' && r.status==='PENDING_APPROVAL' &&
       String(r.reviewer_email).toLowerCase()===String(currentEmployee.email).toLowerCase());
-    const approvalRecall=r.form_type!=='ECF' && canRecallDecision
-      ? `<button class="btn tiny danger" onclick="openApprovalRecall('${r.id}',this)">Recall</button>` : '';
+    const approvalRecall=canRecallDecision && (r.form_type!=='ECF' || currentEmployee.role==='APPROVER')
+      ? `<button class="btn tiny danger" data-form-type="${r.form_type==='ECF'?'ECF':'ERF'}" onclick="openApprovalRecall('${r.id}',this)">Recall</button>` : '';
     const savePdf=r.status==='APPROVED'
       ? `<button class="btn tiny primary" onclick="downloadFinalPdf('${r.id}')">Save PDF</button>`
       : '';
@@ -955,7 +955,9 @@ function openApprovalRecall(id,trigger){
   if(typeof sigRequireWorkflowSignature==='function'&&!sigRequireWorkflowSignature('recall this approval')) return;
   $('#approvalRecallDescription').textContent=currentEmployee.role==='REVIEWER'
     ? 'Withdraw your review and return this request to the Requestor for revision. It will leave the Approver queue and require a new review and approval.'
-    : 'Return this request to the Requestor for revision. It will require a new review and approval. The previous approved PDF stays in the audit trail.';
+    : trigger?.dataset.formType==='ECF'
+      ? 'Return this claim to the Requestor for revision. It must pass Checker, Reviewer, and Approver again after resubmission. The previous approved PDF stays in the audit trail.'
+      : 'Return this request to the Requestor for revision. It will require a new review and approval. The previous approved PDF stays in the audit trail.';
   approvalRecallTarget=id;
   approvalRecallTrigger=trigger;
   $('#approvalRecallTitle').textContent=`Recall ${trigger?.closest('tr')?.querySelector('td strong')?.textContent||'approval'}`;
