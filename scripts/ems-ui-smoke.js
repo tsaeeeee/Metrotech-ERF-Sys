@@ -51,7 +51,7 @@ function row(form_type,status,id){
 const revisionRow={...row('ECF','CHECK_REJECTED','revision'),last_rejection_reason:'Update receipt',
   service_order_number:'SO-ORIGINAL'};
 
-async function session(user,{signedIn=true}={}){
+async function session(user,{signedIn=true,dashboard={totals:[],trend:[],categories:[]}}={}){
   const context=await browser.newContext({viewport:{width:1440,height:1000}});
   const page=await context.newPage();
   page.setDefaultTimeout(10000);
@@ -77,7 +77,7 @@ async function session(user,{signedIn=true}={}){
         history:[row('ECF','APPROVED','history')],
         myRequests:user.role==='REQUESTOR'||
           (user.role==='NONE'&&user.ecfRole==='REQUESTOR')?[revisionRow]:[]};
-    }else if(path==='/api/ems/dashboard')data={totals:[],trend:[],categories:[]};
+    }else if(path==='/api/ems/dashboard')data=dashboard;
     else if(path==='/api/requests/task' || path==='/api/requests/history'){
       const state=path.endsWith('history')?'APPROVED':user.ecfRole==='CHECKER'?'PENDING_CHECK':
         user.role==='REVIEWER'?'PENDING_REVIEW':'PENDING_APPROVAL';
@@ -156,7 +156,12 @@ try{
   await admin.page.locator('#emsHome').waitFor({state:'visible'});
   await assertAdmin(admin.page);
   const geometry=await admin.page.locator('#emsNav').boundingBox();
-  assert(geometry.y<2 && geometry.height===56,'Desktop navigation must sit in the compact WMS header.');
+  assert.equal(geometry.x,0,'Navigation must stay in the left sidebar.');
+  assert.equal(geometry.y,60,'Sidebar must start below the header.');
+  assert.equal(geometry.y+geometry.height,1000,'Sidebar must reach the viewport bottom.');
+  await admin.page.locator('#emsAdminNav summary').click();
+  assert(!await admin.page.locator('#adminUsersTab').isVisible(),'Desktop navigation groups must collapse.');
+  await admin.page.locator('#emsAdminNav summary').click();
   assert.equal(await admin.page.locator('[data-ems-view="admin-app"]').getAttribute('aria-current'),'page');
   assert.equal(await admin.page.locator('.ems-nav .active').evaluate(el=>getComputedStyle(el).color),'rgb(11, 55, 104)','Keep Metrotech navy.');
   assert(await admin.page.locator('.ems-nav .active').evaluate(el=>getComputedStyle(el,'::before').maskImage!=='none'),'Navigation icons must render.');
@@ -173,9 +178,42 @@ try{
   await admin.page.locator('#emsSidebarToggle').click();
   await admin.page.locator('#emsAdminNav summary').click();
   await admin.page.setViewportSize({width:1440,height:1000});
+  assert(!await admin.page.locator('#adminUsersTab').isVisible(),'Keep the disclosure choice when resizing.');
+  await admin.page.locator('#emsAdminNav summary').click();
   await admin.page.locator('#adminUsersTab').waitFor({state:'visible'});
   assert.equal(await admin.page.locator('#emsSidebarToggle').getAttribute('aria-expanded'),'false');
   await admin.context.close();
+
+  const chartUser=await session(employee('REQUESTOR','REQUESTOR'),{dashboard:{
+    totals:[{form_type:'ERF',status:'APPROVED',amount:2000000,count:2},
+      {form_type:'ECF',status:'APPROVED',amount:1000000,count:1},
+      {form_type:'ECF',status:'PENDING_CHECK',amount:250000,count:1}],
+    trend:[{month:'2026-08',form_type:'ERF',amount:800000},{month:'2026-09',form_type:'ERF',amount:1200000},
+      {month:'2026-09',form_type:'ECF',amount:1000000}],
+    categories:[{category:'Akamai Expenses – Deployment',form_type:'ERF',amount:1200000},
+      {category:'Bank Action',form_type:'ECF',amount:1000000}]
+  }});
+  await chartUser.page.locator('#emsTrend svg').waitFor();
+  assert.equal(await chartUser.page.locator('#emsDistribution svg circle').count(),2);
+  assert((await chartUser.page.locator('#emsMetrics').innerText()).includes('2 approved requests'));
+  await chartUser.page.locator('.ems-chart-data summary').click();
+  assert.equal(await chartUser.page.locator('.ems-chart-data tbody tr').count(),6);
+  const firstMonth=await chartUser.page.locator('.ems-chart-data tbody tr').first().innerText();
+  assert(/\d{4}-\d{2}/.test(firstMonth),'Monthly chart must include dated amounts.');
+  await chartUser.page.locator('.ems-chart-data summary').click();
+  if(process.env.EMS_UI_SCREENSHOTS){
+    await fs.mkdir(process.env.EMS_UI_SCREENSHOTS,{recursive:true});
+    await chartUser.page.screenshot({path:`${process.env.EMS_UI_SCREENSHOTS}/dashboard.png`,fullPage:true});
+  }
+  await chartUser.page.setViewportSize({width:390,height:844});
+  assert(await chartUser.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Charts must fit on mobile.');
+  if(process.env.EMS_UI_SCREENSHOTS)
+    await chartUser.page.screenshot({path:`${process.env.EMS_UI_SCREENSHOTS}/dashboard-mobile.png`,fullPage:true});
+  await chartUser.page.setViewportSize({width:1440,height:1000});
+  await chartUser.page.locator('[data-ems-view="erf"]').click();
+  if(process.env.EMS_UI_SCREENSHOTS)
+    await chartUser.page.screenshot({path:`${process.env.EMS_UI_SCREENSHOTS}/request-form.png`,fullPage:true});
+  await chartUser.context.close();
 
   const fresh=await session(employee('ADMIN','NONE'),{signedIn:false});
   await login(fresh.page);
@@ -381,4 +419,3 @@ try{
   await browser?.close();
   await new Promise(resolve=>server.close(resolve));
 }
-
