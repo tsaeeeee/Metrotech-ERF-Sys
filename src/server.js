@@ -667,7 +667,7 @@ app.post('/api/requests/:id/recall',requireUser,withRequestWorkflowLock(async(re
       cc:approvedRecall?[detail.request.reviewer_email,(await getRuntimeAppSettings()).finalApprovedCc]:reviewedRecall?detail.request.approver_email:undefined,
       subject:`[${requestCode(detail.request)}] ${detail.request.ref_no} ${approvedRecall?'approval recalled':reviewedRecall?'review recalled':'recalled by requestor'}`,
       text:decisionRecall
-        ? `${detail.request.ref_no} ${approvedRecall?'approval':'review'} was recalled by ${req.employee.name}. Reason: ${request.last_rejection_reason}. The previous approval is no longer current. Requestor must revise and resubmit for a new review and approval.`
+        ? `${detail.request.ref_no} ${approvedRecall?'approval':'review'} was recalled by ${req.employee.name}. Reason: ${request.last_rejection_reason}. The previous approval is no longer current. Requestor must revise and resubmit for ${detail.request.form_type==='ECF'?'a new check, review, and approval':'a new review and approval'}.`
         : `${detail.request.ref_no} was recalled by ${req.employee.name} and no longer requires review.`
     });
     res.json({ok:true,status:detail.request.status,refNo:detail.request.ref_no});

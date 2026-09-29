@@ -57,6 +57,7 @@ async function session(user,{signedIn=true,dashboard={totals:[],trend:[],categor
   page.setDefaultTimeout(10000);
   page.on('pageerror',error=>errors.push(error.message));
   let active=signedIn?user:null;
+  let historyStatus='APPROVED';
   const writes=[];
   await page.route(`${origin}/api/**`,async route=>{
     const request=route.request(),path=new URL(request.url()).pathname;
@@ -74,7 +75,7 @@ async function session(user,{signedIn=true,dashboard={totals:[],trend:[],categor
       data={employee:active,requests:user.role==='REQUESTOR'||
         (user.role==='NONE'&&user.ecfRole==='REQUESTOR')?[revisionRow]:tasks,
         tasks:user.ecfRole==='REQUESTOR'||user.ecfRole==='NONE'||user.role==='ADMIN'?[]:tasks,
-        history:[row('ECF','APPROVED','history')],
+        history:[row('ECF',historyStatus,'history')],
         myRequests:user.role==='REQUESTOR'||
           (user.role==='NONE'&&user.ecfRole==='REQUESTOR')?[revisionRow]:[]};
     }else if(path==='/api/ems/dashboard')data=dashboard;
@@ -84,6 +85,9 @@ async function session(user,{signedIn=true,dashboard={totals:[],trend:[],categor
       data={request:{...row('ECF',state,path.split('/').pop()),checker_name:'UI Checker',
         reviewer_name:'UI Reviewer',approver_name:'UI Approver'},items:[],documents:{},
         actions:[{action:'CHECK_APPROVED',actor_name:'UI Checker',actor_role:'REQUESTOR',created_at:'2026-09-25'}]};
+    }
+    else if(path==='/api/requests/history/recall' && method==='POST'){
+      historyStatus='RECALLED';data={ok:true,status:historyStatus,refNo:'ECF-history'};
     }
     else if(path==='/api/admin/users')data={users:[{...employee('REQUESTOR'),active:true,username:'ui-requestor',has_signature:true}]};
     else if(path==='/api/admin/app-settings')data={settings:{appBaseUrl:'https://ems.example.test',ecfRoles:[]},readiness:{}};
@@ -343,6 +347,30 @@ try{
       assert.equal(count,2,'Double clicks must not submit duplicate decisions.');
       await actor.context.close();
     }
+  }
+
+  const recallApprover=await session(employee('APPROVER'));
+  await recallApprover.page.locator('[data-ems-view="history"]').click();
+  const recallButton=recallApprover.page.locator('#decisionHistoryBody').getByRole('button',{name:'Recall',exact:true});
+  await recallButton.click();
+  assert(await recallApprover.page.locator('#approvalRecallModal').isVisible());
+  assert((await recallApprover.page.locator('#approvalRecallDescription').innerText()).includes('Checker'));
+  assert(await recallApprover.page.locator('#approvalRecallSubmit').isDisabled());
+  await recallApprover.page.locator('#approvalRecallReason').fill('Correct this ECF');
+  await recallApprover.page.locator('#approvalRecallSubmit').click();
+  await recallApprover.page.locator('#approvalRecallModal').waitFor({state:'hidden'});
+  await recallApprover.page.waitForFunction(()=>document.querySelector('#decisionHistoryBody').innerText.includes('RECALLED'));
+  assert.equal(await recallButton.count(),0,'Recalled ECF must no longer offer approval recall.');
+  assert(recallApprover.writes.some(write=>write.path==='/api/requests/history/recall' &&
+    JSON.parse(write.body).reason==='Correct this ECF'));
+  await recallApprover.context.close();
+  for(const actor of [employee('REQUESTOR'),employee('NONE','CHECKER'),employee('REVIEWER'),
+    {...employee('APPROVER'),email:'other-approver@example.test'}]){
+    const denied=await session(actor);
+    await denied.page.locator('[data-ems-view="history"]').click();
+    assert.equal(await denied.page.locator('#decisionHistoryBody').getByRole('button',{name:'Recall',exact:true}).count(),0,
+      'Approved ECF recall belongs only to its assigned Approver.');
+    await denied.context.close();
   }
 
   const ecfOnly=await session(employee('NONE','REQUESTOR'));

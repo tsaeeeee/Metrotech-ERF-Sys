@@ -12,7 +12,7 @@ process.env.PDF_DIR='/tmp/ems-http-smoke';
 process.env.PORT='18989';
 
 const base='http://127.0.0.1:18989';
-const {pool,getEmployee,createExpenseRequest}=await import('../src/db.js');
+const {pool,getEmployee,createExpenseRequest,getRequestDetail,recallApprovedExpenseRequest,setDocumentPaths}=await import('../src/db.js');
 const server=spawn(process.execPath,['--import','./src/ecf-profile-preload.js','src/server.js'],{
   env:process.env,stdio:['ignore','pipe','pipe']
 });
@@ -135,6 +135,63 @@ try{
     assert(historic.data.actions.some(action=>action.action==='CHECK_APPROVED' && action.actor_role==='CHECKER'),
       'Checker audit role must be correct.');
   }
+
+  // Approval recall must cover ECF as well as ERF, with the same archive and ownership guarantees.
+  const approvedEcf=await getRequestDetail(id);
+  const approvedBytes=Buffer.from(await final.response.arrayBuffer());
+  for(const cookie of [requestorCookie,checkerCookie,reviewerCookie]){
+    assert((await request(`/api/requests/${id}/recall`,{
+      method:'POST',body:{reason:'Not the Approver'},cookie
+    })).status>=400,'Only the assigned Approver may recall an approved ECF.');
+  }
+  let wrongApproverDenied=false;
+  try{await recallApprovedExpenseRequest(id,{...approver,email:'other-approver@example.test'},'Wrong assignment')}
+  catch(error){wrongApproverDenied=error.status===403}
+  assert(wrongApproverDenied,'A different Approver must not recall the ECF.');
+  assert((await request(`/api/requests/${id}/recall`,{
+    method:'POST',body:{reason:'  '},cookie:approverCookie
+  })).status===400,'Approval recall requires a reason.');
+  await setDocumentPaths(id,`${process.env.PDF_DIR}/missing-approved-claim.pdf`,approvedEcf.request.evidence_pdf_path);
+  let archiveFailure=false;
+  try{await recallApprovedExpenseRequest(id,approver,'Missing approved PDF')}
+  catch(error){archiveFailure=error.status===409}
+  assert(archiveFailure && (await getRequestDetail(id)).request.status==='APPROVED',
+    'Missing ECF archive must leave the approval intact.');
+  await setDocumentPaths(id,approvedEcf.request.form_pdf_path,approvedEcf.request.evidence_pdf_path);
+  const recallResults=await Promise.all([1,2].map(()=>request(`/api/requests/${id}/recall`,{
+    method:'POST',body:{reason:'Correct the claim amount'},cookie:approverCookie
+  })));
+  assert(recallResults.map(result=>result.status).sort().join(',')==='200,409',
+    'Duplicate ECF recalls must produce exactly one successful transition.');
+  const recalledEcf=await getRequestDetail(id);
+  assert(recalledEcf.request.status==='RECALLED','Approved ECF must become Recalled.');
+  const recallActions=recalledEcf.actions.filter(action=>action.action==='APPROVAL_RECALLED');
+  assert(recallActions.length===1 && recallActions[0].actor_role==='APPROVER' &&
+    recallActions[0].reason==='Correct the claim amount','ECF recall must be recorded in the audit trail.');
+  assert((await request(`/api/requests/${id}/form/download`,{cookie:requestorCookie})).status===409,
+    'The recalled approval must not be downloadable as current.');
+  const archiveUrl=`/api/requests/${id}/approval-archive/${approvedEcf.request.revision}`;
+  const archivedEcf=await request(archiveUrl,{cookie:requestorCookie});
+  assert(archivedEcf.status===200 && approvedBytes.equals(Buffer.from(await archivedEcf.response.arrayBuffer())),
+    'Archive must preserve the exact previously approved ECF PDF.');
+  const resubmittedEcf=await request(`/api/requests/${id}/revise`,{
+    method:'POST',body:revision,cookie:requestorCookie
+  });
+  assert(resubmittedEcf.status===200 && resubmittedEcf.data.status==='PENDING_CHECK',
+    'A recalled ECF must restart with Checker after Requestor revision.');
+  assert((await request(`/api/requests/${id}/approve`,{
+    method:'POST',body:{decision:'APPROVE'},cookie:approverCookie
+  })).status===409,'Approver must not bypass the new ECF check/review.');
+  for(const [stage,cookie,state] of [['check',checkerCookie,'PENDING_REVIEW'],
+    ['review',reviewerCookie,'PENDING_APPROVAL'],['approve',approverCookie,'APPROVED']]){
+    const result=await request(`/api/requests/${id}/${stage}`,{method:'POST',body:{decision:'APPROVE'},cookie});
+    assert(result.status===200 && result.data.status===state,`Recalled ECF must pass ${stage} again.`);
+  }
+  assert((await request(`/api/requests/${id}/form/download`,{cookie:requestorCookie})).status===200,
+    'The new ECF approval must be downloadable.');
+  const archivedAgain=await request(archiveUrl,{cookie:requestorCookie});
+  assert(archivedAgain.status===200 && approvedBytes.equals(Buffer.from(await archivedAgain.response.arrayBuffer())),
+    'Reapproval must not overwrite the previous ECF archive.');
 
   const ecfOnlyCookie=await login('workflow-ecf-only');
   const ecfOnlyMe=await request('/api/me',{cookie:ecfOnlyCookie});
