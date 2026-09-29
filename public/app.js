@@ -207,12 +207,6 @@ async function loadMe(){
 
     $('#roleTitle').textContent=employee.role==='REQUESTOR'?'Requestor Dashboard':employee.role==='REVIEWER'?'Reviewer Dashboard':employee.role==='APPROVER'?'Approver Dashboard':'Checker Dashboard';
     $('#queueTitle').textContent=employee.role==='REQUESTOR'?'My Requests':employee.role==='REVIEWER'?'Pending Review':'Pending Approval';
-    const showHistory=['REVIEWER','APPROVER'].includes(employee.role);
-    $('#decisionHistoryCard').classList.toggle('hidden',!showHistory);
-    if(showHistory){
-      $('#decisionHistoryTitle').textContent=employee.role==='REVIEWER'?'Review History':'Approval History';
-      renderRequests(history,'decisionHistoryTable','decisionHistoryBody','decisionHistoryEmpty');
-    }
     $('#requestForm').classList.toggle('hidden',employee.role!=='REQUESTOR');
 
     const fields=[
@@ -260,7 +254,7 @@ function renderRequests(requests,tableId='table',bodyId='tbody',emptyId='empty')
       String(r.approver_email).toLowerCase()===String(currentEmployee.email).toLowerCase()) ||
       (currentEmployee?.role==='REVIEWER' && r.status==='PENDING_APPROVAL' &&
       String(r.reviewer_email).toLowerCase()===String(currentEmployee.email).toLowerCase());
-    const approvalRecall=canRecallDecision
+    const approvalRecall=r.form_type!=='ECF' && canRecallDecision
       ? `<button class="btn tiny danger" onclick="openApprovalRecall('${r.id}',this)">Recall</button>` : '';
     const savePdf=r.status==='APPROVED'
       ? `<button class="btn tiny primary" onclick="downloadFinalPdf('${r.id}')">Save PDF</button>`
@@ -1150,12 +1144,15 @@ async function openRequest(id){
       <td class="money">${rupiah(it.amount)}</td>
     </tr>`).join('');
 
-    $('#auditTrail').innerHTML=data.actions.length?data.actions.map(a=>`
+    $('#auditTrail').innerHTML=data.actions.length?data.actions.map(a=>{
+      const actorRole=['CHECK_APPROVED','CHECK_REJECTED'].includes(a.action)?'CHECKER':a.actor_role;
+      return `
       <div class="audit-row">
         <div class="audit-dot"></div>
-        <div><strong>${esc(a.action.replaceAll('_',' '))}</strong><span>${esc(a.actor_name)} · ${esc(a.actor_role)}</span>
+        <div><strong>${esc(a.action.replaceAll('_',' '))}</strong><span>${esc(a.actor_name)} · ${esc(actorRole)}</span>
         ${a.reason?`<p>${esc(a.reason)}</p>`:''}${a.action==='APPROVAL_RECALLED'?`<p><a href="/api/requests/${encodeURIComponent(id)}/approval-archive/${Number(a.revision)}">Previous approved PDF · revision ${Number(a.revision)} · superseded</a></p>`:''}<small>${new Date(a.created_at).toLocaleString('id-ID')}</small></div>
-      </div>`).join(''):'<div class="muted">No audit entries.</div>';
+      </div>`;
+    }).join(''):'<div class="muted">No audit entries.</div>';
 
     const stamp=Date.now();
     const formUrl=data.documents.form?`/api/requests/${id}/form?t=${stamp}`:null;
@@ -1199,10 +1196,12 @@ async function sendDecision(decision){
     closeDetail();
     msg(`Request updated to ${r.status}.`,'ok');
     await loadMe();
+    return true;
   }catch(e){
     msg(e.message,'err');
     $('#approveBtn').disabled=false;
     syncRejectButton();
+    return false;
   }
 }
 

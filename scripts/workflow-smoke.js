@@ -128,7 +128,8 @@ try{
   assert(!(await listDecisionHistory(reviewer2)).some(r=>r.id===first.id),'Another reviewer must not see the history.');
   assert(await hasDecisionHistory(first.id,reviewer),'Historic reviewer can read the request.');
   assert(!(await hasDecisionHistory(first.id,reviewer2)),'Unrelated reviewer cannot read the request.');
-  assert((await listDecisionHistory(requestor)).length===0,'Requestor has no decision history.');
+  assert((await listDecisionHistory(requestor)).some(r=>r.id===first.id),
+    'Requestor must see own request history.');
 
   const {testApprovalRecall}=await import('./approval-recall-smoke.js');
   await testApprovalRecall({request:finalApproved,requestor,reviewer,reviewer2,approver,admin:bootstrapAdmin});
@@ -181,6 +182,12 @@ try{
   assert((await pool.query('select status from requests where id=$1',[claim.id])).rows[0].status==='PENDING_CHECK',
     'Revised claim returns to Checker without an ERF balance check.');
   await transitionRequest(claim.id,ecfOnlyChecker,'CHECK','APPROVE');
+  const checkedDetail=await getRequestDetail(claim.id);
+  assert(checkedDetail.actions.some(action=>
+    action.action==='CHECK_APPROVED' && action.actor_role==='CHECKER'
+  ),'Checker decisions must be labeled as CHECKER in the audit trail.');
+  assert(await hasDecisionHistory(claim.id,ecfOnlyChecker),
+    'Checker must see claims in history after checking them.');
   const reviewerForClaim=await getEmployee(claim.reviewer_email);
   await transitionRequest(claim.id,reviewerForClaim,'REVIEW','APPROVE');
   await transitionRequest(claim.id,approver,'APPROVAL','APPROVE');

@@ -513,8 +513,11 @@ recallRequest=async function(...args){
 };
 
 const sigOriginalSendDecision=sendDecision;
+let sigDecisionBusy=false;
 sendDecision=async function(decision){
+  if(sigDecisionBusy || !currentDetailId) return;
   const rejecting=String(decision).toUpperCase()==='REJECT';
+  if(rejecting && !$('#decisionReason').value.trim()) return;
   const role=currentEmployee?.role;
   const action=role==='REVIEWER'
     ? (rejecting?'reject this request':'review and approve this request')
@@ -531,14 +534,6 @@ sendDecision=async function(decision){
   const refNo=String($('#detailRef')?.textContent||'Request').trim()||'Request';
   let nextApprover='';
 
-  if(role==='REVIEWER' && !rejecting && requestId){
-    try{
-      const data=await api(`/api/requests/${encodeURIComponent(requestId)}`);
-      const resolved=workflowAssigneeName(data?.request,'approver');
-      if(resolved!=='—') nextApprover=resolved;
-    }catch{}
-  }
-
   if(activeBtn){
     activeBtn.classList.add('decision-action-loading');
     activeBtn.setAttribute('aria-busy','true');
@@ -548,15 +543,27 @@ sendDecision=async function(decision){
 
   if(approveBtn) approveBtn.disabled=true;
   if(rejectBtn) rejectBtn.disabled=true;
+  sigDecisionBusy=true;
+  $('#decisionReason').disabled=true;
 
   try{
+    if(role==='REVIEWER' && !rejecting){
+      try{
+        const data=await api(`/api/requests/${encodeURIComponent(requestId)}`);
+        const resolved=workflowAssigneeName(data?.request,'approver');
+        if(resolved!=='—') nextApprover=resolved;
+      }catch{}
+    }
     const result=await sigOriginalSendDecision(decision);
-    if(role==='REVIEWER' && !rejecting && nextApprover){
+    if(result && role==='REVIEWER' && !rejecting && nextApprover){
       clearMsg();
       msg(`${refNo} approved by Reviewer and forwarded to ${nextApprover} for final approval.`,'ok');
     }
     return result;
   }finally{
+    sigDecisionBusy=false;
+    $('#decisionReason').disabled=false;
+    if(currentDetailId===requestId) syncRejectButton();
     if(approveBtn){
       approveBtn.classList.remove('decision-action-loading');
       approveBtn.removeAttribute('aria-busy');
@@ -574,7 +581,7 @@ sendDecision=async function(decision){
 const sigOriginalSyncRejectButton=syncRejectButton;
 syncRejectButton=function(...args){
   sigOriginalSyncRejectButton(...args);
-  if(!sigHasDigitalSignature() && $('#rejectBtn')) $('#rejectBtn').disabled=true;
+  if((sigDecisionBusy || $('#decisionReason')?.disabled || !sigHasDigitalSignature()) && $('#rejectBtn')) $('#rejectBtn').disabled=true;
 };
 
 const evidencePreviewUrls=new WeakMap();

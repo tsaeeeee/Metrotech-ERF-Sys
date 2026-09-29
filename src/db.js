@@ -378,26 +378,30 @@ export async function setManagedEmployeeActive(email,active) {
 export async function listRequestsForEmployee(employee) {
   let q, params;
   if (employee.role === 'REQUESTOR' || employee.role === 'NONE') {
-    q = `select r.id,r.ref_no,r.requester_email,r.request_date,r.employee_name,r.request_type,r.form_type,r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at
+    q = `select r.id,r.ref_no,r.requester_email,r.request_date,r.employee_name,r.request_type,r.form_type,r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at,
+         r.reviewer_email,r.approver_email
          from requests r
          where lower(r.requester_email)=lower($1)
            and ((r.form_type='ERF' and $2::boolean) or (r.form_type='ECF' and $3::boolean))
          order by r.updated_at desc limit 100`;
     params=[employee.email,employee.role==='REQUESTOR',employee.ecfRole!=='NONE'];
   } else if (employee.role === 'REVIEWER') {
-    q = `select r.id,r.ref_no,r.requester_email,r.request_date,r.employee_name,r.request_type,r.form_type,r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at
+    q = `select r.id,r.ref_no,r.requester_email,r.request_date,r.employee_name,r.request_type,r.form_type,r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at,
+         r.reviewer_email,r.approver_email
          from requests r
          where lower(r.reviewer_email)=lower($1) and r.status='PENDING_REVIEW'
          order by r.updated_at asc limit 100`;
     params=[employee.email];
   } else if (employee.role === 'APPROVER') {
-    q = `select r.id,r.ref_no,r.requester_email,r.request_date,r.employee_name,r.request_type,r.form_type,r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at
+    q = `select r.id,r.ref_no,r.requester_email,r.request_date,r.employee_name,r.request_type,r.form_type,r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at,
+         r.reviewer_email,r.approver_email
          from requests r
          where lower(r.approver_email)=lower($1) and r.status='PENDING_APPROVAL'
          order by r.updated_at asc limit 100`;
     params=[employee.email];
   } else if (employee.role === 'ADMIN') {
-    q = `select r.id,r.ref_no,r.requester_email,r.request_date,r.employee_name,r.request_type,r.form_type,r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at
+    q = `select r.id,r.ref_no,r.requester_email,r.request_date,r.employee_name,r.request_type,r.form_type,r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at,
+         r.reviewer_email,r.approver_email
          from requests r
          order by r.updated_at desc limit 100`;
     params=[];
@@ -445,38 +449,67 @@ export async function listMyRequests(employee){
 }
 
 const decisionActions={
-  REVIEWER:['REVIEW_APPROVED','REVIEW_REJECTED'],
-  APPROVER:['FINAL_APPROVED','APPROVAL_REJECTED']
+  REVIEWER:['REVIEW_APPROVED','REVIEW_REJECTED','REVIEW_RECALLED'],
+  APPROVER:['FINAL_APPROVED','APPROVAL_REJECTED','APPROVAL_RECALLED'],
+  CHECKER:['CHECK_APPROVED','CHECK_REJECTED']
 };
 
+// Bind only the parameters actually used, including accounts with two roles.
+function historyQuery(employee,requestId){
+  const values=[employee.email];
+  const predicates=[];
+  const ownForms=[];
+  if(employee.role==='REQUESTOR') ownForms.push('ERF');
+  if(employee.ecfRole==='REQUESTOR') ownForms.push('ECF');
+  if(ownForms.length){
+    values.push(ownForms);
+    predicates.push(`(lower(r.requester_email)=lower($1) and r.form_type=any($${values.length}::text[]))`);
+  }
+  const roles=[];
+  if(decisionActions[employee.role]) roles.push(employee.role);
+  if(employee.ecfRole==='CHECKER') roles.push('CHECKER');
+  for(const role of roles){
+    values.push(decisionActions[role]);
+    const participated=`exists(select 1 from workflow_actions a
+      where a.request_id=r.id and lower(a.actor_email)=lower($1)
+        and a.action=any($${values.length}::text[]))`;
+    const activeStatus={CHECKER:'PENDING_CHECK',REVIEWER:'PENDING_REVIEW',APPROVER:'PENDING_APPROVAL'}[role];
+    // Pending work has its own page; historic access still works for revisions.
+    if(requestId) predicates.push(participated);
+    else {
+      values.push(activeStatus);
+      predicates.push(`(${participated} and r.status<>$${values.length})`);
+    }
+  }
+  if(!predicates.length) return null;
+  const scope='('+predicates.join(' or ')+')';
+  if(requestId){
+    values.push(requestId);
+    return {text:`select exists(select 1 from requests r
+      where r.id=$${values.length} and ${scope}) as participated`,values};
+  }
+  return {text:`select r.id,r.ref_no,r.requester_email,r.request_date,r.employee_name,r.request_type,r.form_type,
+      r.total,r.status,r.revision,r.last_rejection_reason,r.updated_at,r.approver_email,r.reviewer_email
+    from requests r where ${scope}
+    order by r.updated_at desc limit 100`,values};
+}
+
+async function employeeHistoryQuery(employee,requestId){
+  const ecfRole=employee.ecfRole??await getEcfRole(employee.email);
+  return historyQuery({...employee,ecfRole},requestId);
+}
+
 export async function hasDecisionHistory(requestId,employee) {
-  const actions=decisionActions[employee.role];
-  if(!actions) return false;
-  const {rows}=await pool.query(
-    `select exists(select 1 from workflow_actions
-      where request_id=$1 and lower(actor_email)=lower($2)
-        and actor_role=$3 and action=any($4::text[])) as participated`,
-    [requestId,employee.email,employee.role,actions]
-  );
+  const query=await employeeHistoryQuery(employee,requestId);
+  if(!query) return false;
+  const {rows}=await pool.query(query.text,query.values);
   return rows[0]?.participated===true;
 }
 
 export async function listDecisionHistory(employee) {
-  const actions=decisionActions[employee.role];
-  if(!actions) return [];
-  const activeStatus=employee.role==='REVIEWER'?'PENDING_REVIEW':'PENDING_APPROVAL';
-  const assigneeColumn=employee.role==='REVIEWER'?'reviewer_email':'approver_email';
-  const {rows}=await pool.query(
-    `select r.id,r.ref_no,r.request_date,r.employee_name,r.request_type,r.total,
-            r.status,r.revision,r.last_rejection_reason,r.updated_at,r.approver_email,r.reviewer_email
-     from requests r
-     where r.form_type='ERF' and exists(select 1 from workflow_actions a
-       where a.request_id=r.id and lower(a.actor_email)=lower($1)
-         and a.actor_role=$2 and a.action=any($3::text[]))
-       and not (r.status=$4 and lower(r.${assigneeColumn})=lower($1))
-     order by r.updated_at desc limit 100`,
-    [employee.email,employee.role,actions,activeStatus]
-  );
+  const query=await employeeHistoryQuery(employee);
+  if(!query) return [];
+  const {rows}=await pool.query(query.text,query.values);
   return rows;
 }
 
@@ -625,12 +658,12 @@ async function insertItems(client, requestId, revision, items) {
   }
 }
 
-async function insertAction(client, request, actor, action, fromStatus, toStatus, reason='') {
+async function insertAction(client, request, actor, action, fromStatus, toStatus, reason='', actorRole=actor.role) {
   await client.query(
     `insert into workflow_actions(
       request_id,ref_no,revision,actor_email,actor_name,actor_role,action,from_status,to_status,reason
     ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-    [request.id,request.ref_no,request.revision,actor.email,actor.name,actor.role,action,fromStatus,toStatus,reason]
+    [request.id,request.ref_no,request.revision,actor.email,actor.name,actorRole,action,fromStatus,toStatus,reason]
   );
 }
 
@@ -728,7 +761,10 @@ export async function transitionRequest(id, actor, stage, decision, reason='') {
       [id,toStatus,reject?String(reason).trim():'']
     );
     const next=updated[0];
-    await insertAction(client,next,actor,action,expected,toStatus,reject?String(reason).trim():'');
+    await insertAction(
+      client,next,actor,action,expected,toStatus,reject?String(reason).trim():'',
+      stage==='CHECK'?'CHECKER':undefined
+    );
     await client.query('commit');
     return next;
   }catch(e){await client.query('rollback');throw e}finally{client.release()}
