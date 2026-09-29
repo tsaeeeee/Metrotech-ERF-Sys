@@ -116,8 +116,12 @@ function emsNavigate(view){
     emsRestoreDraft(view);
   }
   emsView=view;
-  document.querySelectorAll('#emsNav [data-ems-view]').forEach(button=>
-    button.classList.toggle('active',button.dataset.emsView===view));
+  document.querySelectorAll('#emsNav [data-ems-view]').forEach(button=>{
+    const active=button.dataset.emsView===view;
+    button.classList.toggle('active',active);
+    if(active) button.setAttribute('aria-current','page');
+    else button.removeAttribute('aria-current');
+  });
   if(view.startsWith('admin-')) showAdminSection(view==='admin-app'?'app':'users');
   $('#emsHome').classList.toggle('hidden',view!=='home');
   $('#emsTasks').classList.toggle('hidden',view!=='tasks');
@@ -386,3 +390,19 @@ logout=async function(...args){
 // One entry point, after app.js, request-type.js and the ECF extensions.
 loadAuthMode();
 loadMe();
+
+// Desktop uses the WMS header; keep mobile disclosure state from hiding links
+// when returning to a wider viewport.
+const emsCompactNavigation=window.matchMedia('(max-width: 1100px)');
+emsCompactNavigation.addEventListener('change',()=>{
+  emsCloseSidebar();
+  if(!emsCompactNavigation.matches){
+    document.querySelectorAll('#emsNav details').forEach(group=>{group.open=true});
+  }
+});
+document.addEventListener('keydown',event=>{
+  if(event.key==='Escape' && document.querySelector('#emsNav.open')){
+    emsCloseSidebar();
+    $('#emsSidebarToggle').focus();
+  }
+});
