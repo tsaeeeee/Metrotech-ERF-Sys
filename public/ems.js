@@ -5,6 +5,7 @@ let emsFormView=null;
 let emsDraftOwner=null;
 let emsDrafts={};
 let emsSubmitting=false;
+let emsChecking=false;
 
 function emsStoreDraft(){
   if(!emsFormView) return;
@@ -75,6 +76,21 @@ function emsToggleSidebar(){
   $('#emsSidebarToggle').setAttribute('aria-label',open?'Close navigation':'Open navigation');
 }
 
+function emsSetActionLoading(button,label){
+  if(!button) return;
+  if(window.rtInjectStyles) rtInjectStyles();
+  button.classList.add('decision-action-loading');
+  button.setAttribute('aria-busy','true');
+  button.innerHTML=`<span class="decision-spinner" aria-hidden="true"></span>${esc(label)}`;
+}
+
+function emsClearActionLoading(button,label){
+  if(!button) return;
+  button.classList.remove('decision-action-loading');
+  button.removeAttribute('aria-busy');
+  button.textContent=label;
+}
+
 function emsNavigate(view){
   if(!currentEmployee) return;
   if(emsSubmitting && view!==emsView) return;
@@ -90,6 +106,11 @@ function emsNavigate(view){
     !(currentEmployee.role==='NONE' && currentEmployee.ecfRole==='REQUESTOR')) view='home';
   if(!admin && view==='tasks' && !['REVIEWER','APPROVER'].includes(currentEmployee.role)
     && currentEmployee.ecfRole!=='CHECKER') view='home';
+  const canActivity=currentEmployee.role==='REQUESTOR' ||
+    (currentEmployee.role==='NONE' && currentEmployee.ecfRole!=='NONE') ||
+    ['REVIEWER','APPROVER'].includes(currentEmployee.role) ||
+    currentEmployee.ecfRole==='CHECKER';
+  if(!admin && view==='history' && !canActivity) view='home';
   if(!admin && ['erf','ecf'].includes(view) && view!==emsFormView){
     emsStoreDraft();
     emsRestoreDraft(view);
@@ -100,11 +121,10 @@ function emsNavigate(view){
   if(view.startsWith('admin-')) showAdminSection(view==='admin-app'?'app':'users');
   $('#emsHome').classList.toggle('hidden',view!=='home');
   $('#emsTasks').classList.toggle('hidden',view!=='tasks');
-  $('#emsTasks').appendChild($('#decisionHistoryCard'));
-  $('#decisionHistoryCard').classList.toggle('hidden',view!=='tasks'||!['REVIEWER','APPROVER'].includes(currentEmployee.role));
+  $('#decisionHistoryCard').classList.toggle('hidden',view!=='history');
   $('#workflowDashboard').classList.toggle('hidden',!['erf','ecf','requests'].includes(view));
   $('#adminDashboard').classList.toggle('hidden',!view.startsWith('admin-'));
-  $('#requestQueueCard').classList.remove('hidden');
+  $('#requestQueueCard').classList.toggle('hidden',!['erf','ecf','requests'].includes(view));
   const canCreate=(view==='erf' && currentEmployee.role==='REQUESTOR') ||
     (view==='ecf' && currentEmployee.ecfRole==='REQUESTOR');
   $('#requestForm').classList.toggle('hidden',!canCreate);
@@ -129,6 +149,16 @@ function emsNavigate(view){
   }
   $('#evidenceModeNote')?.classList.toggle('hidden',view==='ecf');
   if(view==='tasks') emsRenderTasks();
+  if(view==='history'){
+    const data=window.emsBootstrap||{};
+    const role=currentEmployee.ecfRole==='CHECKER' && currentEmployee.role!=='REVIEWER' && currentEmployee.role!=='APPROVER'
+      ? 'Checker'
+      : currentEmployee.role==='REVIEWER'?'Review'
+      : currentEmployee.role==='APPROVER'?'Approval'
+      : 'Request';
+    $('#decisionHistoryTitle').textContent=`${role} History`;
+    renderRequests(data.history||[],'decisionHistoryTable','decisionHistoryBody','decisionHistoryEmpty');
+  }
   if(view==='home') emsLoadDashboard();
 }
 
@@ -192,6 +222,7 @@ loadMe=async function(...args){
   $('#emsActivityNav').classList.toggle('hidden',admin || (!canRequest && !canWork));
   $('#emsNav [data-ems-view="requests"]').classList.toggle('hidden',!canRequest);
   $('#emsNav [data-ems-view="tasks"]').classList.toggle('hidden',!canWork);
+  $('#emsNav [data-ems-view="history"]').classList.toggle('hidden',!canRequest&&!canWork);
   $('#emsAdminNav').classList.toggle('hidden',!admin);
   $('#emsNav [data-ems-view="erf"]').classList.toggle('hidden',currentEmployee.role!=='REQUESTOR');
   $('#emsNav [data-ems-view="ecf"]').classList.toggle('hidden',currentEmployee.ecfRole!=='REQUESTOR');
@@ -257,7 +288,10 @@ submitExpense=async function(){
   }))));
   payments.forEach((item,index)=>(item.evidence||[]).filter(file=>file instanceof File)
     .forEach(file=>fd.append(`evidence_${index}`,file,file.name)));
-  const button=$('#submitExpenseBtn');button.disabled=true;button.textContent='Submitting…';
+  const button=$('#submitExpenseBtn');
+  const submittingRevision=Boolean(revisionTarget);
+  button.disabled=true;
+  emsSetActionLoading(button,submittingRevision?'Submitting Revision…':'Submitting…');
   emsSubmitting=true;
   try{
     const result=await api(revisionTarget?`/api/requests/${revisionTarget.id}/revise`:'/api/ecf/claims',
@@ -265,8 +299,16 @@ submitExpense=async function(){
     cancelRevision();
     await loadMe();
     msg(`${result.refNo} submitted. Waiting for Checker.`);
-  }catch(e){msg(e.message,'err');button.disabled=false;button.textContent='Submit Claim'}
-  finally{emsSubmitting=false}
+  }catch(e){
+    msg(e.message,'err');
+    button.disabled=false;
+    emsClearActionLoading(button,submittingRevision?'Submit Revision':'Submit Claim');
+  }
+  finally{
+    emsSubmitting=false;
+    emsClearActionLoading(button,revisionTarget?'Submit Revision':'Submit Claim');
+    button.disabled=!payments.length;
+  }
 };
 
 const emsOriginalOpenRequest=openRequest;
@@ -277,10 +319,17 @@ openRequest=async function(id){
     const {request}=await api(`/api/requests/${id}`);
     emsDetail=request;
     if(request.form_type==='ECF'){
-      $('#detailSummary').insertAdjacentHTML('beforeend',[
+      const extraFields=[
         ['Service order',request.service_order_number],
-        ['Payment to',request.payment_to],['Bank',request.bank_name],['Account',request.account_number]
-      ].map(([label,value])=>`<div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join(''));
+        ['Payment to',request.payment_to],['Bank',request.bank_name],
+        ['Account',request.account_number],['Checker',request.checker_name||request.checker_email]
+      ];
+      const extraRows=[];
+      for(let i=0;i<extraFields.length;i+=2){
+        extraRows.push(`<tr>${extraFields.slice(i,i+2).map(([label,value])=>
+          `<th scope="row">${esc(label)}</th><td>${esc(value||'—')}</td>`).join('')}</tr>`);
+      }
+      $('#detailSummary tbody')?.insertAdjacentHTML('beforeend',extraRows.join(''));
       $('.pdf-label').textContent='Expense Claim Form';
     }else $('.pdf-label').textContent='Expense Request Form';
     const checker=request.form_type==='ECF'&&request.status==='PENDING_CHECK'&&
@@ -292,18 +341,33 @@ openRequest=async function(id){
 
 const emsOriginalSendDecision=sendDecision;
 sendDecision=async function(decision){
+  if(emsChecking) return;
   if(emsDetail?.form_type!=='ECF'||emsDetail.status!=='PENDING_CHECK')
     return emsOriginalSendDecision(decision);
   if(!sigRequireWorkflowSignature('check this claim')) return;
   const reason=$('#decisionReason').value.trim();
   if(decision==='REJECT'&&!reason) return;
+  const activeButton=decision==='APPROVE'?$('#approveBtn'):$('#rejectBtn');
+  const activeLabel=decision==='APPROVE'?'Approve':'Reject';
+  emsChecking=true;
+  $('#decisionReason').disabled=true;
+  emsSetActionLoading(activeButton,decision==='APPROVE'?'Approving…':'Rejecting…');
   $('#approveBtn').disabled=true;$('#rejectBtn').disabled=true;
   try{
     const result=await api(`/api/requests/${currentDetailId}/check`,
       {method:'POST',body:JSON.stringify({decision,reason})});
     closeDetail();emsDetail=null;
     await loadMe();msg(`Claim updated to ${result.status}.`);
-  }catch(e){msg(e.message,'err');$('#approveBtn').disabled=false;syncRejectButton()}
+  }catch(e){
+    msg(e.message,'err');
+    $('#approveBtn').disabled=false;
+    syncRejectButton();
+  }finally{
+    emsChecking=false;
+    $('#decisionReason').disabled=false;
+    emsClearActionLoading(activeButton,activeLabel);
+    if(currentDetailId) syncRejectButton();
+  }
 };
 
 const emsOriginalCloseDetail=closeDetail;

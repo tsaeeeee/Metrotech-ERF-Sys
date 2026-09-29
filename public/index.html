@@ -79,6 +79,7 @@
     <div class="ems-nav-items">
       <button type="button" data-ems-view="requests" onclick="emsNavigate('requests')">My Requests</button>
       <button type="button" data-ems-view="tasks" onclick="emsNavigate('tasks')">My Tasks <span id="emsTaskCount"></span></button>
+      <button type="button" data-ems-view="history" onclick="emsNavigate('history')">History</button>
     </div>
   </details>
   <details id="emsAdminNav" class="ems-nav-group hidden" open>
@@ -174,17 +175,18 @@
 </div>
 </div>
 
-<div id="decisionHistoryCard" class="card hidden">
-  <div class="row"><div><h2 id="decisionHistoryTitle">My Activity</h2></div><button class="btn ghost" onclick="loadMe()">Refresh</button></div>
-  <div id="decisionHistoryEmpty" class="empty">No decisions yet.</div>
+</div>
+
+<section id="decisionHistoryCard" class="card hidden">
+  <div class="row"><div><h2 id="decisionHistoryTitle">History</h2></div><button class="btn ghost" onclick="loadMe()">Refresh</button></div>
+  <div id="decisionHistoryEmpty" class="empty">No history yet.</div>
   <div class="table-wrap">
     <table id="decisionHistoryTable" class="request-list-table hidden">
       <thead><tr><th>Ref No</th><th>Requestor</th><th>Date</th><th class="money">Total</th><th class="status-col">Status</th><th class="rev-col">Rev</th><th class="action-col"></th></tr></thead>
       <tbody id="decisionHistoryBody"></tbody>
     </table>
   </div>
-</div>
-</div>
+</section>
 
 <section id="adminDashboard" class="hidden">
   <div id="adminUserManagementView">

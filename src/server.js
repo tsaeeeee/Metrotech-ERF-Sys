@@ -210,7 +210,7 @@ function canAccess(employee,request){
 }
 
 async function canViewRequest(employee,request){
-  return canAccess(employee,request) || (request.form_type==='ERF' && await hasDecisionHistory(request.id,employee));
+  return canAccess(employee,request) || await hasDecisionHistory(request.id,employee);
 }
 
 function normalizeRequestType(value){

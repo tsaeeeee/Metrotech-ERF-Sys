@@ -36,6 +36,7 @@ function employee(role,ecfRole=role){
 function row(form_type,status,id){
   return {id,ref_no:`${form_type}-${id}`,form_type,request_type:'EXPENSE',status,
     requester_email:'requestor@example.test',employee_name:'UI Requestor',
+    reviewer_email:'reviewer@example.test',approver_email:'approver@example.test',
     request_date:'2026-09-23',total:100000,revision:1,last_rejection_reason:''};
 }
 const revisionRow={...row('ECF','CHECK_REJECTED','revision'),last_rejection_reason:'Update receipt',
@@ -64,9 +65,17 @@ async function session(user,{signedIn=true}={}){
       data={employee:active,requests:user.role==='REQUESTOR'||
         (user.role==='NONE'&&user.ecfRole==='REQUESTOR')?[revisionRow]:tasks,
         tasks:user.ecfRole==='REQUESTOR'||user.ecfRole==='NONE'||user.role==='ADMIN'?[]:tasks,
+        history:[row('ECF','APPROVED','history')],
         myRequests:user.role==='REQUESTOR'||
           (user.role==='NONE'&&user.ecfRole==='REQUESTOR')?[revisionRow]:[]};
     }else if(path==='/api/ems/dashboard')data={totals:[],trend:[],categories:[]};
+    else if(path==='/api/requests/task' || path==='/api/requests/history'){
+      const state=path.endsWith('history')?'APPROVED':user.ecfRole==='CHECKER'?'PENDING_CHECK':
+        user.role==='REVIEWER'?'PENDING_REVIEW':'PENDING_APPROVAL';
+      data={request:{...row('ECF',state,path.split('/').pop()),checker_name:'UI Checker',
+        reviewer_name:'UI Reviewer',approver_name:'UI Approver'},items:[],documents:{},
+        actions:[{action:'CHECK_APPROVED',actor_name:'UI Checker',actor_role:'REQUESTOR',created_at:'2026-09-25'}]};
+    }
     else if(path==='/api/admin/users')data={users:[{...employee('REQUESTOR'),active:true,username:'ui-requestor',has_signature:true}]};
     else if(path==='/api/admin/app-settings')data={settings:{appBaseUrl:'https://ems.example.test',ecfRoles:[]},readiness:{}};
     else if(path==='/api/requests/revision')data={request:revisionRow,items:[{
@@ -203,6 +212,7 @@ try{
       assert.equal(await actor.page.locator('[data-ems-view="ecf"]').isVisible(),ecf);
       assert.equal(await actor.page.locator('[data-ems-view="requests"]').isVisible(),requests);
       assert.equal(await actor.page.locator('[data-ems-view="tasks"]').isVisible(),tasks);
+      assert.equal(await actor.page.locator('[data-ems-view="history"]').isVisible(),requests||tasks);
       await actor.page.waitForFunction(()=>document.querySelector('#emsMetrics').textContent.trim()!=='');
       const metricLabels=await actor.page.locator('#emsMetrics').innerText();
       assert.equal(metricLabels.includes('Approved ERF'),role!=='NONE',
@@ -218,17 +228,81 @@ try{
         await actor.page.locator('[data-ems-view="tasks"]').click();
         assert((await actor.page.locator('#emsTaskRows').innerText()).includes('ECF-task'));
         assert(!await actor.page.locator('#requestForm').isVisible(),'Work happens in Activity, without a transaction form.');
+        assert(!await actor.page.locator('#decisionHistoryCard').isVisible(),'History must be separate from My Tasks.');
+      }
+      if(requests||tasks){
+        await actor.page.locator('[data-ems-view="history"]').click();
+        assert(await actor.page.locator('#decisionHistoryCard').isVisible());
+        assert(!await actor.page.locator('#emsTasks').isVisible());
+        assert.equal(await actor.page.locator('#emsTasks #decisionHistoryCard').count(),0);
+        assert((await actor.page.locator('#decisionHistoryBody').innerText()).includes('ECF-history'));
+        await actor.page.locator('#decisionHistoryBody').getByRole('button',{name:'Open',exact:true}).click();
+        await actor.page.waitForFunction(()=>emsDetail?.id==='history');
+        assert((await actor.page.locator('#auditTrail').innerText()).includes('UI Checker · CHECKER'),
+          'Old Checker audit entries must display CHECKER without updating stored records.');
+        await actor.page.evaluate(()=>closeDetail());
       }
       if(attempt===0){await actor.page.reload();await actor.page.locator('#emsHome').waitFor({state:'visible'})}
     }
     await actor.context.close();
   }
 
+  for(const [role,ecfRole,endpoint] of [['NONE','CHECKER','check'],
+    ['REVIEWER','REVIEWER','review'],['APPROVER','APPROVER','approve']]){
+    for(const decision of ['APPROVE','REJECT']){
+      const actor=await session(employee(role,ecfRole));
+      const page=actor.page;
+      await page.locator('[data-ems-view="tasks"]').click();
+      await page.locator('#emsTaskRows button').first().click();
+      await page.waitForFunction(()=>emsDetail?.id==='task');
+      await page.locator('#decisionReason').fill('Test reason');
+      const button=page.locator(decision==='APPROVE'?'#approveBtn':'#rejectBtn');
+      let count=0;
+      for(const fail of [true,false]){
+        let release;
+        const gate=new Promise(resolve=>{release=resolve});
+        const url=`${origin}/api/requests/task/${endpoint}`;
+        await page.route(url,async route=>{
+          count++;
+          await gate;
+          await route.fulfill({status:fail?500:200,contentType:'application/json',
+            body:JSON.stringify(fail?{error:'Test action failure'}:{status:'APPROVED'})});
+        });
+        await button.click();
+        await page.waitForFunction(()=>document.querySelector('[aria-busy="true"].decision-action-loading'));
+        assert.equal(await button.getAttribute('aria-busy'),'true');
+        assert(await page.locator('#approveBtn').isDisabled());
+        assert(await page.locator('#rejectBtn').isDisabled());
+        await page.evaluate(value=>sendDecision(value),decision);
+        release();
+        await page.waitForFunction(()=>!emsChecking && !sigDecisionBusy);
+        assert.equal(await button.getAttribute('aria-busy'),null,'Loading must clear after both success and failure.');
+        if(fail){
+          assert(await page.locator('#detailModal').isVisible());
+          assert(!await button.isDisabled(),'Failed actions must be retryable.');
+        }else assert(!await page.locator('#detailModal').isVisible());
+        await page.unroute(url);
+      }
+      assert.equal(count,2,'Double clicks must not submit duplicate decisions.');
+      await actor.context.close();
+    }
+  }
+
   const ecfOnly=await session(employee('NONE','REQUESTOR'));
   await ecfOnly.page.locator('[data-ems-view="ecf"]').click();
   await addPayment(ecfOnly.page,'Independent ECF',{evidence:true});
+  let releaseSubmit;
+  const submitGate=new Promise(resolve=>{releaseSubmit=resolve});
+  await ecfOnly.page.route(`${origin}/api/ecf/claims`,async route=>{
+    await submitGate;
+    await route.fallback();
+  });
   await ecfOnly.page.locator('#submitExpenseBtn').click();
+  assert.equal(await ecfOnly.page.locator('#submitExpenseBtn').getAttribute('aria-busy'),'true');
+  assert(await ecfOnly.page.locator('#submitExpenseBtn').isDisabled());
+  releaseSubmit();
   await ecfOnly.page.waitForFunction(()=>!emsSubmitting && payments.length===0);
+  assert.equal(await ecfOnly.page.locator('#submitExpenseBtn').getAttribute('aria-busy'),null);
   assert(ecfOnly.writes.some(write=>write.path==='/api/ecf/claims' &&
     write.body.includes('Independent ECF')));
   assert(!ecfOnly.writes.some(write=>write.path==='/api/requests' && write.method==='POST'));

@@ -124,8 +124,23 @@ try{
   const final=await request(`/api/requests/${id}/form/download`,{cookie:requestorCookie});
   assert(final.status===200,'Requestor must be able to download approved ECF packet.');
 
+  for(const [role,cookie] of [['Requestor',requestorCookie],['Checker',checkerCookie],
+    ['Reviewer',reviewerCookie],['Approver',approverCookie]]){
+    const me=await request('/api/me',{cookie});
+    assert(me.status===200 && me.data.history.some(row=>row.id===id && row.form_type==='ECF'),
+      `${role} must see the completed ECF in History.`);
+    assert(!me.data.tasks.some(row=>row.id===id),`${role} must not see completed ECF in My Tasks.`);
+    const historic=await request(`/api/requests/${id}`,{cookie});
+    assert(historic.status===200,`${role} must be able to open ECF from History.`);
+    assert(historic.data.actions.some(action=>action.action==='CHECK_APPROVED' && action.actor_role==='CHECKER'),
+      'Checker audit role must be correct.');
+  }
+
   const ecfOnlyCookie=await login('workflow-ecf-only');
   const ecfOnlyMe=await request('/api/me',{cookie:ecfOnlyCookie});
+  assert(!ecfOnlyMe.data.history.some(row=>row.id===id),'Unrelated Requestor cannot see another claim in History.');
+  assert((await request(`/api/requests/${id}`,{cookie:ecfOnlyCookie})).status===403,
+    'Unrelated Requestor cannot open another claim.');
   assert(ecfOnlyMe.data.employee.role==='NONE' && ecfOnlyMe.data.employee.ecfRole==='REQUESTOR',
     'ECF-only Requestor needs ECF access with no ERF access.');
   assert(ecfOnlyMe.data.requests.every(row=>row.form_type==='ECF') &&

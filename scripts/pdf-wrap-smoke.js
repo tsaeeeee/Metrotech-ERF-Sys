@@ -42,6 +42,23 @@ try{
   const shortPdf=await getDocument({data:new Uint8Array(await fs.readFile(path.join(dir,'short.pdf'))),useSystemFonts:true}).promise;
   assert(shortPdf.numPages===1,'Short forms should still fit on one page.');
   await shortPdf.destroy();
+
+  const ecfPath=path.join(dir,'ecf.pdf');
+  await buildFormPdf({
+    request:{...request,form_type:'ECF',request_type:'EXPENSE',status:'APPROVED',
+      checker_name:'Example Checker'},
+    items:[{category:'Tools',purpose:'Short claim purpose',payment_date:'2026-09-25',amount:100000}],
+    outPath:ecfPath
+  });
+  const ecfPdf=await getDocument({data:new Uint8Array(await fs.readFile(ecfPath)),useSystemFonts:true}).promise;
+  let ecfText='';
+  for(let i=1;i<=ecfPdf.numPages;i++){
+    const page=await ecfPdf.getPage(i);
+    ecfText+=(await page.getTextContent()).items.map(item=>item.str).join(' ')+' ';
+  }
+  for(const label of ['EXPENSE CLAIM FORM','Prepared By','Checked By','Reviewed By','Approved By'])
+    assert(ecfText.includes(label),`ECF PDF is missing ${label}.`);
+  await ecfPdf.destroy();
   console.log('PDF_WRAP_SMOKE_OK');
 }finally{
   await fs.rm(dir,{recursive:true,force:true});
