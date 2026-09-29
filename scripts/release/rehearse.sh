@@ -28,6 +28,8 @@ db_image=$(docker inspect -f '{{.Image}}' "$prod_db")
 cleanup_failure(){
   code=$?
   if (( code != 0 )); then
+    docker logs --tail=120 "$clone_app" > "$run/app-failure.log" 2>&1 || true
+    docker inspect "$clone_app" > "$run/app-state.json" 2>&1 || true
     docker stop "$clone_app" "$clone_db" >/dev/null 2>&1 || true
     echo "REHEARSAL FAILED. Production was not stopped or migrated. Keep $run for diagnosis."
   fi
@@ -109,6 +111,7 @@ INSERT INTO app_settings(key,value,is_secret) VALUES
 ON CONFLICT(key) DO UPDATE SET value=excluded.value,is_secret=false;
 SQL
 docker run -d --name "$clone_app" --network "$network" \
+  --network-alias app \
   --env-file "$run/app.env" --env-file "$run/db.env" \
   -e POSTGRES_HOST=db -e POSTGRES_PORT=5432 -e PORT=8080 -e PDF_MODE=mock \
   -e MAIL_GATEWAY_URL= -e MAIL_GATEWAY_SECRET= \
@@ -116,13 +119,31 @@ docker run -d --name "$clone_app" --network "$network" \
   -p 127.0.0.1:18089:8080 "$candidate_image" >/dev/null
 ready=false
 for attempt in $(seq 1 60); do
-  if curl -fsS http://127.0.0.1:18089/health > "$run/health.json" 2>/dev/null; then ready=true; break; fi
+  if docker exec "$clone_app" node -e '
+    fetch("http://127.0.0.1:8080/health")
+      .then(async response=>{process.stdout.write(await response.text());if(!response.ok)process.exit(1)})
+      .catch(error=>{console.error(error.message);process.exit(1)});
+  ' > "$run/health.json" 2>/dev/null; then
+    ready=true
+    break
+  fi
   sleep 1
 done
 test "$ready" = true
+
+# A Docker internal network may deliberately block the host from reaching a
+# published port even while the app is healthy. Record that separately; it is
+# a preview-access issue, not an application-health failure.
+host_ready=false
+if curl -fsS --max-time 5 http://127.0.0.1:18089/health > "$run/health-host.json" 2>/dev/null; then
+  host_ready=true
+else
+  echo 'Host preview port is not reachable; internal app health is still valid.' | tee "$run/host-preview-warning.txt"
+fi
 docker exec "$clone_db" psql -v ON_ERROR_STOP=1 -U metrotech_rehearsal -d metrotech_rehearsal \
   -c 'SELECT status,count(*) FROM requests GROUP BY status ORDER BY status;'
 printf '\nREHEARSAL_READY\nCandidate: %s\nDirectory: %s\nURL: http://127.0.0.1:18089\n' "$candidate" "$run"
+printf 'Internal app health: OK\nHost preview port: %s\n' "$([ "$host_ready" = true ] && echo reachable || echo blocked-by-isolated-network)"
 echo 'Only the clone was migrated. Live production remains unchanged.'
 echo 'Keep this directory private: it contains production data and runtime secrets.'
 echo 'This online snapshot is for rehearsal. Take a fresh maintenance-window backup before live rollout.'
