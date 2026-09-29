@@ -407,17 +407,6 @@ openRequest=async function(id){
     const {request}=await api(`/api/requests/${id}`);
     emsDetail=request;
     if(request.form_type==='ECF'){
-      const extraFields=[
-        ['Service order',request.service_order_number],
-        ['Payment to',request.payment_to],['Bank',request.bank_name],
-        ['Account',request.account_number],['Checker',request.checker_name||request.checker_email]
-      ];
-      const extraRows=[];
-      for(let i=0;i<extraFields.length;i+=2){
-        extraRows.push(`<tr>${extraFields.slice(i,i+2).map(([label,value])=>
-          `<th scope="row">${esc(label)}</th><td>${esc(value||'—')}</td>`).join('')}</tr>`);
-      }
-      $('#detailSummary tbody')?.insertAdjacentHTML('beforeend',extraRows.join(''));
       $('.pdf-label').textContent='Expense Claim Form';
     }else $('.pdf-label').textContent='Expense Request Form';
     const checker=request.form_type==='ECF'&&request.status==='PENDING_CHECK'&&

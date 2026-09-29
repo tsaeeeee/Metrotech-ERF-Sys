@@ -1116,15 +1116,19 @@ async function renderPdfDocument(url,targetSelector){
 
 function renderDetailSummary(r){
   const assignee=key=>String(r[`${key}_name`]||'').trim()||String(r[`${key}_email`]||'').trim()||'—';
-  const fields=[
+  const fields=r.form_type==='ECF'?[
+    ['Checker',assignee('checker')], ['Reviewer',assignee('reviewer')],
+    ['Approver',assignee('approver')]
+  ]:[
     ['Request Date',String(r.request_date).slice(0,10)], ['Employee ID',r.employee_id],
     ['Department',r.department], ['Location',r.location],
     ['Division',r.division], ['Total',rupiah(r.total)],
     ['Reviewer',assignee('reviewer')], ['Approver',assignee('approver')]
   ];
   const rows=[];
-  for(let i=0;i<fields.length;i+=2){
-    rows.push(`<tr>${fields.slice(i,i+2).map(([label,value])=>`<th scope="row">${esc(label)}</th><td>${esc(value??'—')}</td>`).join('')}</tr>`);
+  const columns=r.form_type==='ECF'?1:2;
+  for(let i=0;i<fields.length;i+=columns){
+    rows.push(`<tr>${fields.slice(i,i+columns).map(([label,value])=>`<th scope="row">${esc(label)}</th><td>${esc(value??'—')}</td>`).join('')}</tr>`);
   }
   $('#detailSummary').innerHTML=`<table class="detail-summary-table" aria-label="Request summary"><tbody>${rows.join('')}</tbody></table>`;
 }
