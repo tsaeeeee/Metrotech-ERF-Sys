@@ -35,6 +35,21 @@ function int(v,fallback){
   return Number.isFinite(n)?Math.round(n):fallback;
 }
 
+async function getEcfRoleSnapshot(){
+  const {rows}=await pool.query(`
+    select email,primary_role,ecf_role,ecf_role_inherited,active
+    from admin_ecf_roles
+    order by lower(name),lower(email)
+  `);
+  return rows.map(row=>({
+    email:row.email,
+    primaryRole:row.primary_role,
+    ecfRole:row.ecf_role,
+    ecfRoleInherited:Boolean(row.ecf_role_inherited),
+    active:Boolean(row.active)
+  }));
+}
+
 export async function ensureAppSettings(){
   await pool.query(`
     create table if not exists app_settings(
@@ -144,7 +159,8 @@ export async function getPublicAppSettings(){
     cookieSecure:runtime.cookieSecure,
     loginRateLimit:runtime.loginRateLimit,
     sessionSecretConfigured:Boolean(flags.session_secret),
-    masterKeyExternal:Boolean(process.env.APP_CONFIG_MASTER_KEY)
+    masterKeyExternal:Boolean(process.env.APP_CONFIG_MASTER_KEY),
+    ecfRoles:await getEcfRoleSnapshot()
   };
 }
 
@@ -198,10 +214,21 @@ function validateInput(input){
   return clean;
 }
 
+function normalizeEcfRoleAssignment(input){
+  if(input===undefined || input===null) return null;
+  const email=String(input.email||'').trim().toLowerCase();
+  const role=String(input.role||'').trim().toUpperCase();
+  if(!email) throw Object.assign(new Error('ECF employee email is required.'),{status:400});
+  if(!['REQUESTOR','CHECKER','NONE'].includes(role))
+    throw Object.assign(new Error('ECF role must be Requestor, Checker, or No Access.'),{status:400});
+  return {email,role,replaceChecker:Boolean(input.replaceChecker)};
+}
+
 export async function saveAppSettings(input,actorEmail=''){
   await ensureAppSettings();
   const current=await getRuntimeAppSettings();
   const clean=validateInput(input||{});
+  const ecfRoleAssignment=normalizeEcfRoleAssignment(input?.ecfRoleAssignment);
 
   const nextLocal=input.localLoginEnabled===undefined
     ? current.localLoginEnabled
@@ -256,9 +283,22 @@ export async function saveAppSettings(input,actorEmail=''){
         [key,value,MASTER_KEY,actorEmail]
       );
     }
+
+    if(ecfRoleAssignment){
+      await client.query(
+        `select * from set_ecf_employee_role($1,$2,$3)`,
+        [ecfRoleAssignment.email,ecfRoleAssignment.role,ecfRoleAssignment.replaceChecker]
+      );
+    }
+
     await client.query('commit');
   }catch(e){
     await client.query('rollback');
+    if(!e.status){
+      if(e.code==='P0002') e.status=404;
+      else if(e.code==='22023') e.status=400;
+      else if(e.code==='P0001' || e.code==='23505') e.status=409;
+    }
     throw e;
   }finally{
     client.release();

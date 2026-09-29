@@ -131,6 +131,8 @@ async function embedSignature(doc, filename){
 function signatureVisibility(request){
   return {
     requestor:true,
+    checker:request.form_type==='ECF' &&
+      ['PENDING_REVIEW','REVIEW_REJECTED','PENDING_APPROVAL','APPROVAL_REJECTED','APPROVED'].includes(request.status),
     reviewer:['PENDING_APPROVAL','APPROVAL_REJECTED','APPROVED'].includes(request.status),
     approver:request.status==='APPROVED'
   };
@@ -332,7 +334,7 @@ async function buildMockFormPdf({request,items,outPath}) {
     page.drawImage(brandLogo,{x:42,y:786,width:logoW,height:logoH});
   }
 
-  const formTitle=requestFormTitle(request);
+  const formTitle=request.form_type==='ECF'?'EXPENSE CLAIM FORM':requestFormTitle(request);
   const formTitleSize=formTitle==='REIMBURSEMENT FORM'?15.5:16.5;
   page.drawText(formTitle,{
     x:centeredX(bold,formTitle,formTitleSize,0,595),
@@ -374,17 +376,47 @@ async function buildMockFormPdf({request,items,outPath}) {
     ['Location',request.location],
     ['Division',request.division]
   ];
-  let infoY=725;
-  for(const [label,value] of infoRows){
-    page.drawRectangle({x:42,y:infoY,width:511,height:20,borderWidth:.55,borderColor:line});
-    page.drawRectangle({x:42,y:infoY,width:120,height:20,color:pale,borderWidth:.55,borderColor:line});
-    page.drawText(label,{x:51,y:infoY+6,size:7.5,font:bold,color:grey});
-    page.drawText(String(value||''),{x:173,y:infoY+6,size:8.5,font:normal,color:navy});
-    infoY-=20;
+  let infoBottom=645;
+  if(request.form_type==='ECF'){
+    const bankRows=[
+      ['Payment To',request.payment_to],
+      ['Bank Name',request.bank_name],
+      ['Bank Code',request.bank_code],
+      ['Account Number',request.account_number]
+    ];
+    let rowTop=745;
+    infoRows.forEach(([label,value],index)=>{
+      const cells=[
+        {x:42,width:85,text:label,label:true},
+        {x:127,width:170,text:value},
+        {x:297,width:88,text:bankRows[index]?.[0],label:true},
+        {x:385,width:168,text:bankRows[index]?.[1]}
+      ].map(cell=>({...cell,lines:wrapPdfText(String(cell.text??''),cell.label?bold:normal,7.5,cell.width-16)}));
+      const height=Math.max(20,...cells.map(cell=>cell.lines.length*10+10));
+      for(const cell of cells){
+        page.drawRectangle({x:cell.x,y:rowTop-height,width:cell.width,height,
+          borderWidth:.55,borderColor:line,...(cell.label?{color:pale}:{})});
+        cell.lines.forEach((text,index)=>{
+          if(text) page.drawText(text,{x:cell.x+8,y:rowTop-13-index*10,size:7.5,
+            font:cell.label?bold:normal,color:cell.label?grey:navy});
+        });
+      }
+      rowTop-=height;
+    });
+    infoBottom=rowTop;
+  }else{
+    let infoY=725;
+    for(const [label,value] of infoRows){
+      page.drawRectangle({x:42,y:infoY,width:511,height:20,borderWidth:.55,borderColor:line});
+      page.drawRectangle({x:42,y:infoY,width:120,height:20,color:pale,borderWidth:.55,borderColor:line});
+      page.drawText(label,{x:51,y:infoY+6,size:7.5,font:bold,color:grey});
+      page.drawText(String(value||''),{x:173,y:infoY+6,size:8.5,font:normal,color:navy});
+      infoY-=20;
+    }
   }
 
   // Expense table
-  const tableTop=600;
+  const tableTop=infoBottom-45;
   const x0=42;
   const widths=[28,100,214,75,94];
   const heads=['No.','Category','Purpose of Payment','Payment Date','Amount (IDR)'];
@@ -458,13 +490,22 @@ async function buildMockFormPdf({request,items,outPath}) {
   // Signature area
   const sigY=72;
   const sigTop=158;
-  const sigW=170.33;
+  const sigX=42;
   const visible=signatureVisibility(request);
-  const sigCols=[
-    {label:'Prepared By',name:request.employee_name,file:request.requestor_signature,show:visible.requestor,x:42},
-    {label:'Reviewed By',name:request.reviewer_name,file:request.reviewer_signature,show:visible.reviewer,x:42+sigW},
-    {label:'Approved By',name:request.approver_name,file:request.approver_signature,show:visible.approver,x:42+(sigW*2)}
-  ];
+  const sigCols=request.form_type==='ECF'
+    ? [
+      {label:'Prepared By',name:request.employee_name,file:request.requestor_signature,show:visible.requestor},
+      {label:'Checked By',name:request.checker_name,file:request.checker_signature,show:visible.checker},
+      {label:'Reviewed By',name:request.reviewer_name,file:request.reviewer_signature,show:visible.reviewer},
+      {label:'Approved By',name:request.approver_name,file:request.approver_signature,show:visible.approver}
+    ]
+    : [
+      {label:'Prepared By',name:request.employee_name,file:request.requestor_signature,show:visible.requestor},
+      {label:'Reviewed By',name:request.reviewer_name,file:request.reviewer_signature,show:visible.reviewer},
+      {label:'Approved By',name:request.approver_name,file:request.approver_signature,show:visible.approver}
+    ];
+  const sigW=511/sigCols.length;
+  sigCols.forEach((signature,index)=>{signature.x=sigX+(sigW*index)});
 
   for(const s of sigCols){
     page.drawRectangle({x:s.x,y:sigY,width:sigW,height:sigTop-sigY,borderWidth:.65,borderColor:line});
@@ -497,6 +538,7 @@ async function buildMockFormPdf({request,items,outPath}) {
 }
 
 export async function buildFormPdf(args) {
-  if(PDF_MODE==='google-sheet') return buildGoogleSheetFormPdf(args);
+  if(PDF_MODE==='google-sheet' && args.request?.form_type!=='ECF')
+    return buildGoogleSheetFormPdf(args);
   return buildMockFormPdf(args);
 }

@@ -168,7 +168,8 @@ async function submitFirstSignature(event){
 
 async function loadMe(){
   try{
-    const {employee,requests,history=[]}=await api('/api/me');
+    const {employee,requests,tasks,myRequests,history=[]}=await api('/api/me');
+    window.emsBootstrap={requests,tasks,myRequests,history};
     currentEmployee=employee;
     $('#loginCard').classList.add('hidden');
     $('#dashboard').classList.add('hidden');
@@ -177,7 +178,9 @@ async function loadMe(){
       .split(/\s+/).filter(Boolean).slice(0,2).map(x=>x[0]).join('').toUpperCase();
     $('#userAvatar').textContent=initials||'U';
     $('#userMenuName').textContent=employee.name||employee.email;
-    $('#userMenuRole').textContent=employee.role;
+    $('#userMenuRole').textContent=employee.role==='NONE'
+      ? employee.ecfRole==='NONE'?'No Access':`ECF ${employee.ecfRole==='CHECKER'?'Checker':'Requestor'}`
+      : employee.role;
     $('#userMenuFullName').textContent=employee.name||employee.email;
     $('#userMenuEmail').textContent=employee.email;
 
@@ -202,14 +205,8 @@ async function loadMe(){
       return;
     }
 
-    $('#roleTitle').textContent=employee.role==='REQUESTOR'?'Requestor Dashboard':employee.role==='REVIEWER'?'Reviewer Dashboard':'Approver Dashboard';
+    $('#roleTitle').textContent=employee.role==='REQUESTOR'?'Requestor Dashboard':employee.role==='REVIEWER'?'Reviewer Dashboard':employee.role==='APPROVER'?'Approver Dashboard':'Checker Dashboard';
     $('#queueTitle').textContent=employee.role==='REQUESTOR'?'My Requests':employee.role==='REVIEWER'?'Pending Review':'Pending Approval';
-    const showHistory=['REVIEWER','APPROVER'].includes(employee.role);
-    $('#decisionHistoryCard').classList.toggle('hidden',!showHistory);
-    if(showHistory){
-      $('#decisionHistoryTitle').textContent=employee.role==='REVIEWER'?'Review History':'Approval History';
-      renderRequests(history,'decisionHistoryTable','decisionHistoryBody','decisionHistoryEmpty');
-    }
     $('#requestForm').classList.toggle('hidden',employee.role!=='REQUESTOR');
 
     const fields=[
@@ -241,19 +238,24 @@ function renderRequests(requests,tableId='table',bodyId='tbody',emptyId='empty')
   $(`#${emptyId}`).classList.add('hidden');
   $(`#${tableId}`).classList.remove('hidden');
   $(`#${bodyId}`).innerHTML=requests.map(r=>{
-    const revisable=['REVIEW_REJECTED','APPROVAL_REJECTED','RECALLED'].includes(r.status);
-    const revise=currentEmployee?.role==='REQUESTOR' && revisable
+    const ownRequest=(r.form_type==='ECF'
+      ? currentEmployee?.ecfRole==='REQUESTOR'
+      : currentEmployee?.role==='REQUESTOR') &&
+      String(r.requester_email||'').toLowerCase()===String(currentEmployee.email).toLowerCase();
+    const revisable=['CHECK_REJECTED','REVIEW_REJECTED','APPROVAL_REJECTED','RECALLED'].includes(r.status);
+    const revise=ownRequest && revisable
       ? `<button class="btn tiny warning" onclick="startRevision('${r.id}')">${r.status==='RECALLED'?'Edit & Resubmit':'Revise'}</button>`
       : '';
-    const recall=currentEmployee?.role==='REQUESTOR' && r.status==='PENDING_REVIEW'
-      ? `<button class="btn tiny recall" onclick="recallRequest('${r.id}','${esc(r.ref_no)}')">Recall</button>`
+    const recall=ownRequest &&
+      r.status===(r.form_type==='ECF'?'PENDING_CHECK':'PENDING_REVIEW')
+      ? `<button class="btn tiny recall" onclick="recallRequest('${r.id}','${esc(r.ref_no)}','${r.form_type==='ECF'?'ECF':'ERF'}')">Recall</button>`
       : '';
     const canRecallDecision=(currentEmployee?.role==='APPROVER' && r.status==='APPROVED' &&
       String(r.approver_email).toLowerCase()===String(currentEmployee.email).toLowerCase()) ||
       (currentEmployee?.role==='REVIEWER' && r.status==='PENDING_APPROVAL' &&
       String(r.reviewer_email).toLowerCase()===String(currentEmployee.email).toLowerCase());
-    const approvalRecall=canRecallDecision
-      ? `<button class="btn tiny danger" onclick="openApprovalRecall('${r.id}',this)">Recall</button>` : '';
+    const approvalRecall=canRecallDecision && (r.form_type!=='ECF' || currentEmployee.role==='APPROVER')
+      ? `<button class="btn tiny danger" data-form-type="${r.form_type==='ECF'?'ECF':'ERF'}" onclick="openApprovalRecall('${r.id}',this)">Recall</button>` : '';
     const savePdf=r.status==='APPROVED'
       ? `<button class="btn tiny primary" onclick="downloadFinalPdf('${r.id}')">Save PDF</button>`
       : '';
@@ -292,7 +294,9 @@ function openProfileModal(){
     ['Department',currentEmployee.department],
     ['Location',currentEmployee.location],
     ['Division',currentEmployee.division],
-    ['Role',currentEmployee.role]
+    ['Role',currentEmployee.role==='NONE'
+      ? `ERF: No Access · ECF: ${currentEmployee.ecfRole==='CHECKER'?'Checker':currentEmployee.ecfRole==='REQUESTOR'?'Requestor':'No Access'}`
+      : currentEmployee.role]
   ];
   $('#lockedProfileGrid').innerHTML=fields.map(([label,value])=>`
     <div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>
@@ -572,7 +576,7 @@ function renderAdminUsers(){
       <td>${esc(u.email)}</td>
       <td>${esc(u.employee_id)}</td>
       <td>${esc(u.department)}</td>
-      <td><span class="role-chip">${esc(u.role)}</span></td>
+      <td><span class="role-chip">${esc(u.role==='NONE'?'No Access':u.role)}</span></td>
       <td>${u.has_signature?'<span class="signature-state ready">Uploaded</span>':'<span class="signature-state">Not uploaded</span>'}</td>
       <td>${u.must_change_password && u.must_upload_signature
         ? '<span class="signature-state">Password & signature required</span>'
@@ -667,7 +671,7 @@ function openAdminUserModal(encodedEmail=''){
   $('#adminLocation').value=user?.location||'';
   $('#adminDivision').value=user?.division||'';
   const roleValue=user?.role||'REQUESTOR';
-  const roleLabel=roleValue==='REVIEWER'?'Reviewer':roleValue==='APPROVER'?'Approver':'Requestor';
+  const roleLabel=roleValue==='REVIEWER'?'Reviewer':roleValue==='APPROVER'?'Approver':roleValue==='NONE'?'No Access':'Requestor';
   selectAdminRole(roleValue,roleLabel);
   $('#adminActive').checked=user?.active!==false;
   $('#adminActiveField').classList.toggle('hidden',!user);
@@ -901,7 +905,7 @@ async function startRevision(id){
     const recalled=data.request.status==='RECALLED';
     const reason=data.request.last_rejection_reason||'Please revise this request.';
 
-    revisionTarget={id,refNo};
+    revisionTarget={id,refNo,recalled,reason,formType:data.request.form_type||'ERF',missingEvidence:(data.items||[]).some(item=>item.evidenceReusable===false)};
     payments=(data.items||[]).map(item=>({
       category:String(item.category||''),
       purpose:String(item.purpose||''),
@@ -914,27 +918,32 @@ async function startRevision(id){
     renderPayments();
     resetPaymentForm();
 
-    $('#requestFormTitle').textContent=`${recalled?'Edit & Resubmit':'Revise'} ${refNo}`;
-    $('#revisionBanner').classList.remove('hidden');
-    $('#revisionBanner').innerHTML=recalled
-      ? `<strong>Recalled:</strong> ${esc(reason)} Edit the payment data below and resubmit for review.`
-      : `<strong>Rejected:</strong> ${esc(reason)} <span>Edit the existing payment data below and resubmit. Existing evidence is kept unless you replace it.</span>`;
-    if((data.items||[]).some(item=>item.evidenceReusable===false)){
-      $('#revisionBanner').innerHTML+=' <strong>Some original evidence is unavailable. Attach it again before resubmitting; the old approved packet remains in the audit trail.</strong>';
-    }
-    $('#cancelRevisionBtn').classList.remove('hidden');
-    $('#submitExpenseBtn').textContent='Submit Revision';
+    renderRevisionState();
     $('#requestForm').scrollIntoView({behavior:'smooth'});
   }catch(e){msg(e.message,'err')}
 }
 
-async function recallRequest(id,refNo){
-  if(!confirm(`Recall ${refNo}? It will be removed from the Reviewer queue until you resubmit it.`)) return;
+async function recallRequest(id,refNo,formType='ERF'){
+  const stage=formType==='ECF'?'Checker':'Reviewer';
+  if(!confirm(`Recall ${refNo}? It will be removed from the ${stage} queue until you resubmit it.`)) return;
   try{
     const r=await api(`/api/requests/${id}/recall`,{method:'POST',body:'{}'});
-    msg(`${r.refNo} recalled successfully. Reviewer can no longer action it until you resubmit.`,'ok');
+    msg(`${r.refNo} recalled successfully. ${stage} can no longer action it until you resubmit.`,'ok');
     await loadMe();
   }catch(e){msg(e.message,'err')}
+}
+
+function renderRevisionState(){
+  $('#revisionBanner').classList.toggle('hidden',!revisionTarget);
+  $('#cancelRevisionBtn').classList.toggle('hidden',!revisionTarget);
+  $('#requestFormTitle').textContent=revisionTarget
+    ? `${revisionTarget.recalled?'Edit & Resubmit':'Revise'} ${revisionTarget.refNo}`
+    : 'Create Expense Request';
+  $('#submitExpenseBtn').textContent=revisionTarget?'Submit Revision':'Submit Expense';
+  $('#revisionBanner').innerHTML=!revisionTarget?'':revisionTarget.recalled
+    ? `<strong>Recalled:</strong> ${esc(revisionTarget.reason)} Edit the payment data below and resubmit for review.`
+    : `<strong>Rejected:</strong> ${esc(revisionTarget.reason)} <span>Edit the existing payment data below and resubmit. Existing evidence is kept unless you replace it.</span>`;
+  if(revisionTarget?.missingEvidence) $('#revisionBanner').innerHTML+=' <strong>Some original evidence is unavailable. Attach it again before resubmitting; the old approved packet remains in the audit trail.</strong>';
 }
 
 let approvalRecallTarget=null;
@@ -946,7 +955,9 @@ function openApprovalRecall(id,trigger){
   if(typeof sigRequireWorkflowSignature==='function'&&!sigRequireWorkflowSignature('recall this approval')) return;
   $('#approvalRecallDescription').textContent=currentEmployee.role==='REVIEWER'
     ? 'Withdraw your review and return this request to the Requestor for revision. It will leave the Approver queue and require a new review and approval.'
-    : 'Return this request to the Requestor for revision. It will require a new review and approval. The previous approved PDF stays in the audit trail.';
+    : trigger?.dataset.formType==='ECF'
+      ? 'Return this claim to the Requestor for revision. It must pass Checker, Reviewer, and Approver again after resubmission. The previous approved PDF stays in the audit trail.'
+      : 'Return this request to the Requestor for revision. It will require a new review and approval. The previous approved PDF stays in the audit trail.';
   approvalRecallTarget=id;
   approvalRecallTrigger=trigger;
   $('#approvalRecallTitle').textContent=`Recall ${trigger?.closest('tr')?.querySelector('td strong')?.textContent||'approval'}`;
@@ -1007,10 +1018,7 @@ async function submitApprovalRecall(event){
 
 function cancelRevision(){
   revisionTarget=null; payments=[]; editingIndex=-1; renderPayments(); resetPaymentForm();
-  $('#requestFormTitle').textContent='Create Expense Request';
-  $('#revisionBanner').classList.add('hidden');
-  $('#cancelRevisionBtn').classList.add('hidden');
-  $('#submitExpenseBtn').textContent='Submit Expense';
+  renderRevisionState();
 }
 
 async function submitExpense(){
@@ -1108,15 +1116,19 @@ async function renderPdfDocument(url,targetSelector){
 
 function renderDetailSummary(r){
   const assignee=key=>String(r[`${key}_name`]||'').trim()||String(r[`${key}_email`]||'').trim()||'—';
-  const fields=[
+  const fields=r.form_type==='ECF'?[
+    ['Checker',assignee('checker')], ['Reviewer',assignee('reviewer')],
+    ['Approver',assignee('approver')]
+  ]:[
     ['Request Date',String(r.request_date).slice(0,10)], ['Employee ID',r.employee_id],
     ['Department',r.department], ['Location',r.location],
     ['Division',r.division], ['Total',rupiah(r.total)],
     ['Reviewer',assignee('reviewer')], ['Approver',assignee('approver')]
   ];
   const rows=[];
-  for(let i=0;i<fields.length;i+=2){
-    rows.push(`<tr>${fields.slice(i,i+2).map(([label,value])=>`<th scope="row">${esc(label)}</th><td>${esc(value??'—')}</td>`).join('')}</tr>`);
+  const columns=r.form_type==='ECF'?1:2;
+  for(let i=0;i<fields.length;i+=columns){
+    rows.push(`<tr>${fields.slice(i,i+columns).map(([label,value])=>`<th scope="row">${esc(label)}</th><td>${esc(value??'—')}</td>`).join('')}</tr>`);
   }
   $('#detailSummary').innerHTML=`<table class="detail-summary-table" aria-label="Request summary"><tbody>${rows.join('')}</tbody></table>`;
 }
@@ -1138,12 +1150,15 @@ async function openRequest(id){
       <td class="money">${rupiah(it.amount)}</td>
     </tr>`).join('');
 
-    $('#auditTrail').innerHTML=data.actions.length?data.actions.map(a=>`
+    $('#auditTrail').innerHTML=data.actions.length?data.actions.map(a=>{
+      const actorRole=['CHECK_APPROVED','CHECK_REJECTED'].includes(a.action)?'CHECKER':a.actor_role;
+      return `
       <div class="audit-row">
         <div class="audit-dot"></div>
-        <div><strong>${esc(a.action.replaceAll('_',' '))}</strong><span>${esc(a.actor_name)} · ${esc(a.actor_role)}</span>
+        <div><strong>${esc(a.action.replaceAll('_',' '))}</strong><span>${esc(a.actor_name)} · ${esc(actorRole)}</span>
         ${a.reason?`<p>${esc(a.reason)}</p>`:''}${a.action==='APPROVAL_RECALLED'?`<p><a href="/api/requests/${encodeURIComponent(id)}/approval-archive/${Number(a.revision)}">Previous approved PDF · revision ${Number(a.revision)} · superseded</a></p>`:''}<small>${new Date(a.created_at).toLocaleString('id-ID')}</small></div>
-      </div>`).join(''):'<div class="muted">No audit entries.</div>';
+      </div>`;
+    }).join(''):'<div class="muted">No audit entries.</div>';
 
     const stamp=Date.now();
     const formUrl=data.documents.form?`/api/requests/${id}/form?t=${stamp}`:null;
@@ -1187,10 +1202,12 @@ async function sendDecision(decision){
     closeDetail();
     msg(`Request updated to ${r.status}.`,'ok');
     await loadMe();
+    return true;
   }catch(e){
     msg(e.message,'err');
     $('#approveBtn').disabled=false;
     syncRejectButton();
+    return false;
   }
 }
 
@@ -1212,5 +1229,4 @@ async function logout(){
   setTimeout(()=>$('#loginUsername')?.focus(),0);
 }
 
-loadAuthMode();
-loadMe();
+// EMS starts authentication after all UI extensions have been installed.

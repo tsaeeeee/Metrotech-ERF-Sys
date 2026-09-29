@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { PDFDocument } from 'pdf-lib';
 
 process.env.POSTGRES_HOST ||= '127.0.0.1';
 process.env.POSTGRES_PORT ||= '5432';
@@ -10,8 +11,9 @@ process.env.APPROVER_NAME ||= 'Ervan Mardianto';
 
 const {
   pool,getEmployee,createExpenseRequest,transitionRequest,
-  reviseExpenseRequest,recallExpenseRequest,createManagedEmployee,setManagedEmployeeActive,
-  listRequestsForEmployee,listDecisionHistory,hasDecisionHistory
+  reviseExpenseRequest,recallExpenseRequest,createManagedEmployee,updateManagedEmployee,setManagedEmployeeActive,
+  createEcfClaim,listRequestsForEmployee,listMyRequests,listTasksForEmployee,getEmsDashboard,getEcfRole,
+  getRequestDetail,listDecisionHistory,hasDecisionHistory
 }=await import('../src/db.js');
 
 function assert(condition,message){
@@ -24,6 +26,10 @@ function items(label){
 try{
   const schema=await fs.readFile(new URL('../sql/schema.sql',import.meta.url),'utf8');
   await pool.query(schema);
+  for(const file of ['015-ems-foundation.sql','016-ems-claim-flow.sql','017-independent-erf-access.sql']){
+    const migration=await fs.readFile(new URL(`../sql/migrations/${file}`,import.meta.url),'utf8');
+    await pool.query(migration);
+  }
   const adminSeed=await fs.readFile(new URL('../sql/dev-accounts.sql',import.meta.url),'utf8');
   await pool.query(adminSeed);
 
@@ -67,6 +73,29 @@ try{
   const approver=await getEmployee('approver-test@metrotech.local');
   assert(requestor&&reviewer&&reviewer2&&approver,'Workflow test actors were not seeded.');
 
+  // Exercise the real ECF Admin role-assignment path so PL/pgSQL ambiguity or
+  // constraint regressions are caught by CI before reaching the browser.
+  await saveAppSettings({
+    ecfRoleAssignment:{
+      email:requestor.email,
+      role:'CHECKER',
+      replaceChecker:false
+    }
+  },bootstrapAdmin.email);
+  const {rows:ecfCheckerRows}=await pool.query(
+    `select role_code from employee_form_roles
+     where lower(employee_email)=lower($1) and form_type='ECF' and active=true`,
+    [requestor.email]
+  );
+  assert(ecfCheckerRows.some(row=>row.role_code==='CHECKER'),'ECF Requestor must be assignable as Checker.');
+  await saveAppSettings({
+    ecfRoleAssignment:{
+      email:requestor.email,
+      role:'REQUESTOR',
+      replaceChecker:false
+    }
+  },bootstrapAdmin.email);
+
   const first=await createExpenseRequest(requestor,items('Initial submit'));
   assert(first.status==='PENDING_REVIEW','Submit must enter PENDING_REVIEW.');
 
@@ -99,10 +128,72 @@ try{
   assert(!(await listDecisionHistory(reviewer2)).some(r=>r.id===first.id),'Another reviewer must not see the history.');
   assert(await hasDecisionHistory(first.id,reviewer),'Historic reviewer can read the request.');
   assert(!(await hasDecisionHistory(first.id,reviewer2)),'Unrelated reviewer cannot read the request.');
-  assert((await listDecisionHistory(requestor)).length===0,'Requestor has no decision history.');
+  assert((await listDecisionHistory(requestor)).some(r=>r.id===first.id),
+    'Requestor must see own request history.');
 
   const {testApprovalRecall}=await import('./approval-recall-smoke.js');
   await testApprovalRecall({request:finalApproved,requestor,reviewer,reviewer2,approver,admin:bootstrapAdmin});
+
+  // A separate Checker owns the first ECF stage. Claims are independent of ERF.
+  await pool.query(`insert into employees(
+      email,name,employee_id,department,location,division,role,signature_file,active,username,password_hash
+    ) values('checker-test@metrotech.local','Claim Checker','TEST-006','Finance','Jakarta',
+      'Finance','REQUESTOR','/tmp/ci-checker-signature.png',true,'workflow-checker',crypt('ci-only',gen_salt('bf',10)))`);
+  const checker=await getEmployee('checker-test@metrotech.local');
+  await saveAppSettings({ecfRoleAssignment:{email:checker.email,role:'CHECKER'}},bootstrapAdmin.email);
+  await updateManagedEmployee(checker.email,{
+    name:checker.name,username:checker.username,employeeId:checker.employee_id,
+    department:checker.department,location:checker.location,division:checker.division,
+    role:'NONE',active:true
+  });
+  const ecfOnlyChecker=await getEmployee(checker.email);
+  assert(ecfOnlyChecker.role==='NONE' && await getEcfRole(checker.email)==='CHECKER',
+    'Removing ERF access must keep an existing ECF Checker assignment.');
+  await pool.query(`insert into employee_payment_profiles
+    (employee_email,payment_to,bank_name,bank_code,account_number)
+    values($1,'Workflow Requestor','Bank Central Asia','BCA','123456789')`,[requestor.email]);
+  const claimItems=amount=>[{...items('Independent claim')[0],amount}];
+  const simultaneous=await Promise.allSettled([
+    createEcfClaim(requestor,claimItems(60000)),
+    createEcfClaim(requestor,claimItems(60000))
+  ]);
+  assert(simultaneous.every(result=>result.status==='fulfilled'),
+    'Concurrent ECF claims must not require or reserve ERF balance.');
+  const claim=simultaneous[0].value;
+  assert(claim.status==='PENDING_CHECK'&&claim.form_type==='ECF','ECF must start with Checker.');
+  assert((await pool.query('select source_erf_id from ecf_details where request_id=$1',[claim.id])).rows[0].source_erf_id===null,
+    'New ECF claims must not reference an ERF.');
+  await pool.query(`update employee_payment_profiles set account_number='999999999'
+    where employee_email=$1`,[requestor.email]);
+  const claimDetail=await getRequestDetail(claim.id);
+  assert(claimDetail.request.account_number==='123456789',
+    'Submitted claim must retain its original bank account snapshot.');
+  const {buildFormPdf}=await import('../src/documents.js');
+  const pdfPath='/tmp/ems-claim-smoke.pdf';
+  await buildFormPdf({...claimDetail,outPath:pdfPath});
+  const pdf=await PDFDocument.load(await fs.readFile(pdfPath));
+  assert(pdf.getPageCount()===1,'ECF should generate its own signed form page.');
+  await fs.rm(pdfPath,{force:true});
+  assert((await getEcfRole(checker.email))==='CHECKER','Assigned Checker must retain access.');
+  assert((await listTasksForEmployee(ecfOnlyChecker)).some(row=>row.id===claim.id),
+    'Checker must see the claim in My Tasks.');
+  await transitionRequest(claim.id,ecfOnlyChecker,'CHECK','REJECT','Please revise evidence.');
+  await reviseExpenseRequest(claim.id,requestor,claimItems(170000));
+  assert((await pool.query('select status from requests where id=$1',[claim.id])).rows[0].status==='PENDING_CHECK',
+    'Revised claim returns to Checker without an ERF balance check.');
+  await transitionRequest(claim.id,ecfOnlyChecker,'CHECK','APPROVE');
+  const checkedDetail=await getRequestDetail(claim.id);
+  assert(checkedDetail.actions.some(action=>
+    action.action==='CHECK_APPROVED' && action.actor_role==='CHECKER'
+  ),'Checker decisions must be labeled as CHECKER in the audit trail.');
+  assert(await hasDecisionHistory(claim.id,ecfOnlyChecker),
+    'Checker must see claims in history after checking them.');
+  const reviewerForClaim=await getEmployee(claim.reviewer_email);
+  await transitionRequest(claim.id,reviewerForClaim,'REVIEW','APPROVE');
+  await transitionRequest(claim.id,approver,'APPROVAL','APPROVE');
+  const analytics=await getEmsDashboard(requestor);
+  assert(analytics.totals.some(row=>row.form_type==='ECF'&&row.status==='APPROVED'),
+    'EMS dashboard must include approved ECF claims.');
 
   const recalledRequest=await createExpenseRequest(requestor,items('Recall flow'));
   const recalled=await recallExpenseRequest(recalledRequest.id,requestor);
@@ -138,6 +229,35 @@ try{
     duplicateApproverBlocked=e.status===409;
   }
   assert(duplicateApproverBlocked,'A second active Approver must be blocked.');
+
+  const ecfOnly=await createManagedEmployee({
+    name:'ECF Only Requestor',email:'ecf-only-test@metrotech.local',username:'workflow-ecf-only',
+    password:'ci-only',employeeId:'TEST-007',department:'Operations',location:'Jakarta',
+    division:'Service',role:'NONE'
+  });
+  await saveAppSettings({ecfRoleAssignment:{email:ecfOnly.email,role:'REQUESTOR'}},bootstrapAdmin.email);
+  await pool.query(`update employees set signature_file='/tmp/ci-ecf-only-signature.png',
+      must_change_password=false,must_upload_signature=false where email=$1`,[ecfOnly.email]);
+  await pool.query(`insert into employee_payment_profiles
+    (employee_email,payment_to,bank_name,bank_code,account_number)
+    values($1,'ECF Only Requestor','Bank Central Asia','BCA','1122334455')`,[ecfOnly.email]);
+  const ecfOnlyAccount=await getEmployee(ecfOnly.email);
+  ecfOnlyAccount.ecfRole=await getEcfRole(ecfOnly.email);
+  assert(ecfOnlyAccount.role==='NONE' && ecfOnlyAccount.ecfRole==='REQUESTOR',
+    'An ECF-only Requestor needs an independent ECF grant.');
+  const ownClaim=await createEcfClaim(ecfOnlyAccount,items('ECF only'), 'Asia/Jakarta');
+  assert((await listMyRequests(ecfOnlyAccount)).some(row=>row.id===ownClaim.id),
+    'An ECF-only Requestor must see their own claim in My Requests.');
+  assert((await listRequestsForEmployee(ecfOnlyAccount)).every(row=>row.form_type==='ECF'),
+    'No ERF requests should be exposed to an ECF-only account.');
+  assert((await getEmsDashboard(ecfOnlyAccount)).totals.every(row=>row.form_type==='ECF'),
+    'An ECF-only dashboard must not show ERF totals.');
+  await saveAppSettings({ecfRoleAssignment:{email:requestor.email,role:'NONE'}},bootstrapAdmin.email);
+  const erfOnlyAccount=await getEmployee(requestor.email);
+  erfOnlyAccount.ecfRole=await getEcfRole(requestor.email);
+  assert((await listMyRequests(erfOnlyAccount)).every(row=>row.form_type==='ERF'),
+    'An ERF-only Requestor must not receive ECF requests.');
+  await saveAppSettings({ecfRoleAssignment:{email:requestor.email,role:'REQUESTOR'}},bootstrapAdmin.email);
 
   console.log('WORKFLOW_SMOKE_OK');
 } finally {

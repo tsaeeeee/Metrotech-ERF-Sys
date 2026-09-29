@@ -1,0 +1,14 @@
+.git
+.env
+.env.*
+!.env.example
+node_modules
+backups
+secrets
+signatures
+tmp
+output
+*.dump
+*.tar
+*.tar.gz
+*.log

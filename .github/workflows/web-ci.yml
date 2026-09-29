@@ -46,11 +46,26 @@ jobs:
           node --check src/request-packet.js
           node --check src/mailer.js
           node --check src/settings.js
+          node --check src/ecf-bank-directory.js
+          node --check src/ecf-profile-preload.js
           node --check public/app.js
           node --check public/request-type.js
+          node --check public/ecf-admin.js
+          node --check public/ecf-profile.js
+          node --check public/ems.js
           node --check scripts/workflow-smoke.js
+          node --check scripts/ems-http-smoke.js
+          node --check scripts/ems-ui-smoke.js
           node --check scripts/pdf-wrap-smoke.js
       - name: Test workflow state machine
         run: npm run test:workflow
+      - name: Test production ERF to EMS upgrade and rollback
+        run: node scripts/release/upgrade-smoke.js
+      - name: Test EMS HTTP workflow
+        run: npm run test:ems-http
+      - name: Install browser for UI regression checks
+        run: npx playwright install --with-deps chromium
+      - name: Test role navigation and isolated form drafts
+        run: npm run test:ui
       - name: Test PDF long descriptions
         run: node scripts/pdf-wrap-smoke.js
