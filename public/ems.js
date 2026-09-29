@@ -178,38 +178,99 @@ function emsRenderTasks(){
     </div>`).join(''):'<div class="empty">No pending tasks.</div>';
 }
 
+function emsDashboardIcon(name,tone='navy'){
+  return `<span class="ems-metric-icon ${tone}" style="--icon:var(--icon-${name})" aria-hidden="true"></span>`;
+}
+
+function emsRenderTrend(rows,types){
+  const dates=rows.map(row=>row.month).filter(month=>/^\d{4}-\d{2}$/.test(month)).sort();
+  if(!dates.length) return '<div class="ems-chart-empty">No approved transactions in the last six months.</div>';
+  const parts=new Intl.DateTimeFormat('en',{timeZone:'Asia/Jakarta',year:'numeric',month:'2-digit'}).formatToParts(new Date());
+  const latest=[Number(parts.find(part=>part.type==='year').value),Number(parts.find(part=>part.type==='month').value)];
+  const months=Array.from({length:6},(_,i)=>{
+    const date=new Date(Date.UTC(latest[0],latest[1]-6+i,1));
+    return {key:date.toISOString().slice(0,7),label:date.toLocaleDateString('en-GB',{month:'short',timeZone:'UTC'})};
+  });
+  const amounts=months.map(month=>types.map(type=>rows.filter(row=>row.month===month.key&&row.form_type===type)
+    .reduce((sum,row)=>sum+Math.max(0,Number(row.amount)||0),0)));
+  const peak=Math.max(1,...amounts.flat());
+  const magnitude=10**Math.floor(Math.log10(peak));
+  const ceiling=Math.ceil(peak/magnitude)*magnitude;
+  const short=value=>new Intl.NumberFormat('en',{notation:'compact',maximumFractionDigits:1}).format(value);
+  const colors={ERF:'#0b3768',ECF:'#329b97'};
+  let svg='<svg class="ems-trend-svg" viewBox="0 0 600 270" role="img" aria-label="Approved monthly amounts. Exact values are available in the table below.">';
+  for(let tick=0;tick<=4;tick++){
+    const y=220-tick*47;
+    svg+=`<line x1="58" x2="586" y1="${y}" y2="${y}" stroke="#e9edf3" stroke-dasharray="3 4"/><text x="48" y="${y+4}" text-anchor="end">${short(ceiling*tick/4)}</text>`;
+  }
+  months.forEach((month,i)=>{
+    const center=102+i*88;
+    types.forEach((type,j)=>{
+      const height=amounts[i][j]/ceiling*188;
+      const x=center-(types.length*20)/2+j*20;
+      svg+=`<rect x="${x}" y="${220-height}" width="16" height="${height}" rx="3" fill="${colors[type]}"><title>${month.key} · ${type}: ${rupiah(amounts[i][j])}</title></rect>`;
+    });
+    svg+=`<text x="${center}" y="244" text-anchor="middle">${month.label}</text>`;
+  });
+  svg+='</svg>';
+  const legend=`<div class="ems-chart-legend">${types.map(type=>`<span><i style="background:${colors[type]}"></i>${type}</span>`).join('')}<small>Amounts in IDR</small></div>`;
+  const table=`<details class="ems-chart-data"><summary>View monthly amounts</summary><div class="table-wrap"><table><thead><tr><th>Month</th>${types.map(type=>`<th class="money">${type}</th>`).join('')}</tr></thead><tbody>${months.map((month,i)=>`<tr><td>${month.key}</td>${amounts[i].map(value=>`<td class="money">${rupiah(value)}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details>`;
+  return legend+svg+table;
+}
+
+function emsRenderDistribution(series){
+  const total=series.reduce((sum,row)=>sum+row.value,0);
+  if(total<=0) return '<div class="ems-chart-empty">No approved amounts yet.</div>';
+  let offset=0;
+  const arcs=series.map(row=>{
+    const share=row.value/total*100;
+    const arc=`<circle cx="110" cy="110" r="82" pathLength="100" fill="none" stroke="${row.color}" stroke-width="24" stroke-dasharray="${share} ${100-share}" stroke-dashoffset="${-offset}" transform="rotate(-90 110 110)"><title>${row.label}: ${rupiah(row.value)}</title></circle>`;
+    offset+=share;return arc;
+  }).join('');
+  return `<div class="ems-donut"><svg viewBox="0 0 220 220" role="img" aria-label="Approved amount distribution">${arcs}</svg><div class="ems-donut-center"><small>Total approved</small><strong>${rupiah(total)}</strong></div></div><div class="ems-distribution-legend">${series.map(row=>`<div><span><i style="background:${row.color}"></i>${row.label}</span><strong>${rupiah(row.value)}</strong><small>${Math.round(row.value/total*100)}%</small></div>`).join('')}</div>`;
+}
+
 async function emsLoadDashboard(){
   if(!currentEmployee || employeeNeedsSetup()) return;
+  const owner=currentEmployee.email;
   try{
     const data=await api('/api/ems/dashboard');
-    const amount=(type,states)=>data.totals.filter(row=>row.form_type===type&&states.includes(row.status))
-      .reduce((sum,row)=>sum+Number(row.amount),0);
-    const requested=amount('ERF',['APPROVED']);
-    const claimed=amount('ECF',['APPROVED']);
-    const inProgress=amount('ECF',['PENDING_CHECK','PENDING_REVIEW','PENDING_APPROVAL']);
+    if(currentEmployee?.email!==owner) return;
     const erfAccess=currentEmployee.role!=='NONE';
     const ecfAccess=currentEmployee.role==='ADMIN' || currentEmployee.ecfRole!=='NONE';
+    const types=[...(erfAccess?['ERF']:[]),...(ecfAccess?['ECF']:[])];
+    const total=(type,states,field)=>data.totals.filter(row=>row.form_type===type&&states.includes(row.status))
+      .reduce((sum,row)=>sum+Math.max(0,Number(row[field])||0),0);
+    const requested=total('ERF',['APPROVED'],'amount');
+    const claimed=total('ECF',['APPROVED'],'amount');
+    const pending=['PENDING_CHECK','PENDING_REVIEW','PENDING_APPROVAL'];
     const metrics=[
-      ...(erfAccess?[['Approved ERF',requested]]:[]),
-      ...(ecfAccess?[['Approved ECF',claimed],['ECF in progress',inProgress]]:[])
+      ...(erfAccess?[{label:'Approved ERF',value:requested,icon:'file',tone:'navy',subtitle:`${total('ERF',['APPROVED'],'count')} approved request${total('ERF',['APPROVED'],'count')===1?'':'s'}`}]:[]),
+      ...(ecfAccess?[
+        {label:'Approved ECF',value:claimed,icon:'claim',tone:'teal',subtitle:`${total('ECF',['APPROVED'],'count')} approved claim${total('ECF',['APPROVED'],'count')===1?'':'s'}`},
+        {label:'ECF in progress',value:total('ECF',pending,'amount'),icon:'history',tone:'amber',subtitle:`${total('ECF',pending,'count')} claim${total('ECF',pending,'count')===1?'':'s'} awaiting action`}
+      ]:[])
     ];
     $('#emsMetrics').style.gridTemplateColumns=`repeat(${Math.max(1,metrics.length)},minmax(0,1fr))`;
-    $('#emsMetrics').innerHTML=metrics.map(([label,value])=>
-      `<div><small>${esc(label)}</small><strong>${rupiah(value)}</strong></div>`).join('') ||
+    $('#emsMetrics').innerHTML=metrics.map(metric=>
+      `<div class="ems-metric">${emsDashboardIcon(metric.icon,metric.tone)}<div class="ems-metric-copy"><small>${metric.label}</small><strong>${rupiah(metric.value)}</strong><span>${metric.subtitle}</span></div></div>`).join('') ||
       '<div class="empty">No modules assigned yet.</div>';
-    const months=[...new Set(data.trend.map(row=>row.month))];
-    const max=Math.max(1,...data.trend.map(row=>Number(row.amount)));
-    $('#emsTrend').innerHTML=months.length?months.map(month=>{
-      const bars=[...(erfAccess?['ERF']:[]),...(ecfAccess?['ECF']:[])].map(type=>{
-        const value=Number(data.trend.find(row=>row.month===month&&row.form_type===type)?.amount||0);
-        return `<div class="ems-bar-line"><span>${type}</span><div class="ems-track"><i class="${type.toLowerCase()}" style="width:${Math.round(value/max*100)}%"></i></div><strong>${rupiah(value)}</strong></div>`;
-      }).join('');
-      return `<div class="ems-month"><b>${esc(month)}</b>${bars}</div>`;
-    }).join(''):'<div class="empty">No approved transactions in the last six months.</div>';
-    $('#emsCategories').innerHTML=data.categories.length?data.categories.map(row=>
-      `<div class="ems-category"><span>${esc(row.category)} <small>${esc(row.form_type)}</small></span><strong>${rupiah(row.amount)}</strong></div>`
-    ).join(''):'<div class="empty">No approved categories this month.</div>';
-  }catch(e){msg(e.message,'err')}
+    $('#emsTrend').innerHTML=emsRenderTrend(data.trend.filter(row=>types.includes(row.form_type)),types);
+    $('#emsDistribution').innerHTML=emsRenderDistribution([
+      ...(erfAccess?[{label:'ERF',value:requested,color:'#0b3768'}]:[]),
+      ...(ecfAccess?[{label:'ECF',value:claimed,color:'#329b97'}]:[])
+    ]);
+    const categories=data.categories.filter(row=>types.includes(row.form_type));
+    const highest=Math.max(1,...categories.map(row=>Number(row.amount)||0));
+    $('#emsCategories').innerHTML=categories.length?`<div class="table-wrap"><table><thead><tr><th>Category</th><th>Form</th><th class="ems-category-share">Relative amount</th><th class="money">Amount (IDR)</th></tr></thead><tbody>${categories.map(row=>
+      `<tr><td>${esc(row.category)}</td><td><span class="role-chip">${esc(row.form_type)}</span></td><td class="ems-category-share"><span class="ems-category-track"><i style="width:${Math.max(0,Number(row.amount)||0)/highest*100}%"></i></span></td><td class="money"><strong>${rupiah(row.amount)}</strong></td></tr>`
+    ).join('')}</tbody></table></div>`:'<div class="empty">No approved categories this month.</div>';
+  }catch(e){
+    if(currentEmployee?.email!==owner) return;
+    for(const id of ['emsMetrics','emsTrend','emsDistribution','emsCategories'])
+      $('#'+id).innerHTML='<div class="empty">Dashboard data could not be loaded. Reopen Dashboard to retry.</div>';
+    msg(e.message,'err');
+  }
 }
 
 const emsOriginalLoadMe=loadMe;
@@ -391,14 +452,10 @@ logout=async function(...args){
 loadAuthMode();
 loadMe();
 
-// Desktop uses the WMS header; keep mobile disclosure state from hiding links
-// when returning to a wider viewport.
+// Close the mobile drawer when switching viewport; disclosure choices persist.
 const emsCompactNavigation=window.matchMedia('(max-width: 1100px)');
 emsCompactNavigation.addEventListener('change',()=>{
   emsCloseSidebar();
-  if(!emsCompactNavigation.matches){
-    document.querySelectorAll('#emsNav details').forEach(group=>{group.open=true});
-  }
 });
 document.addEventListener('keydown',event=>{
   if(event.key==='Escape' && document.querySelector('#emsNav.open')){
