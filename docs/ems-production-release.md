@@ -1,11 +1,13 @@
 # ERF to EMS production release candidate
 
-Status: **rehearsal only; not approved for live rollout**.
+Status: **owner authorized production rollout after the real-data rehearsal**.
+Run the cutover only from the reviewed release commit after its CI passes.
 
 Verified source baselines:
 
 - Existing production: `332903bd57e645ca3683b4ed46a8658e45bf5641`.
 - Tested EMS source: `dfa55451bf0fa45c7514c4178fda670fb082b0b4`.
+- Accepted rehearsal application: `c3cc59c9c78ef02f25901ec585e0d19ca2859c9a`.
 - Candidate commit is supplied explicitly to the rehearsal script and recorded
   alongside the snapshot. Do not substitute a moving branch during deployment.
 
@@ -52,8 +54,9 @@ contents in chat. Only share the preservation report counts and error summary.
   changes cause the comparison to fail rather than claiming consistency.
 - Clone settings disable SMTP and Google login, enable local login and HTTP
   cookies, and use a local base URL. Gateway variables are cleared.
-- A Docker `--internal` network blocks external access. The app is reachable
-  only at `127.0.0.1:18089`, normally through an SSH tunnel.
+- A Docker `--internal` network isolates the clone. The localhost preview port
+  was not reachable on the actual VM; internal application health passed.
+  A printed preview URL therefore does not establish browser access.
 - Rendering is `PDF_MODE=mock` in rehearsal. If production uses Google Sheets,
   its renderer and external integration still require a separate controlled
   acceptance check. Rehearsal does not validate outbound mail delivery.
@@ -63,36 +66,63 @@ contents in chat. Only share the preservation report counts and error summary.
 This is an online rehearsal snapshot, **not** a final point-in-time rollback
 backup: the live service can accept new writes after/during the dump and copy.
 
-## Acceptance gate before live rollout
+## Evidence and remaining acceptance checks
 
-1. CI production-upgrade test passes using the exact production schema fixture;
-   full ERF/ECF, UI, PDF, and recall checks pass on the candidate.
-2. Real-data rehearsal reports unchanged legacy table contents and sequences.
-3. Existing users can log in with existing passwords; role access is correct.
-4. Existing Approved and Recalled records show unchanged amounts, items,
-   history, and available PDF/evidence. Old approved PDFs remain unchanged.
-5. In the clone, configure a Checker and test a new ERF and ECF through all
-   stages, rejection/revision, approval Recall, and PDF bank details.
-6. Record acceptance and verify production has not moved from its baseline.
-   Review actual production config without printing secrets.
+The actual VM rehearsal on 2026-09-29 preserved all seven legacy tables and
+sequences: 5 employees, 2 requests, 10 items, 13 workflow actions, 13 email log
+entries, 2 counters and 21 settings. Password hashes and existing record contents
+matched; PDF/signature copies matched. Only the clone was migrated.
+
+The candidate CI covers synthetic old-user login, old PDF bytes, full ERF/ECF
+workflows, UI, PDF and recalls. The Docker cutover CI additionally exercises the
+production scripts against a disposable old application/database, an injected
+failure after migration, full restoration, successful release, and rejection
+of rollback when new data exists.
+
+Browser UAT against the real-data clone and real outbound SMTP delivery have
+**not** been verified. The owner authorized proceeding with this limitation.
+After cutover, verify old-user login, old records/PDF, role access, and one Admin
+Test SMTP to an authorized internal inbox. Configure the ECF Checker explicitly
+before allowing ECF submissions. Health checks alone do not prove these flows.
 
 Do not run the synthetic CI fixture scripts against production. They are not
 production migration tools. Do not deploy merely because `/health` is green.
 
-## Live rollout and rollback gate (not automated by rehearsal)
+## Controlled live cutover
 
-After acceptance: schedule a write freeze/maintenance window, retain the old
-image, take fresh matching DB/documents/signature/config backups, restore-test
-them, build/pin the accepted image, then stop app writes and run the reviewed
-migration on the existing database. Reuse its existing credentials, volumes,
-master key, session settings and proxy networks. Start only the app container;
-validate old records and accounts before opening user access.
+Extract `scripts/release` from the pinned production release into a temporary
+directory, then run `bash cutover.sh FULL_PRODUCTION_RELEASE_SHA`. Do not pull
+the live checkout first. The script requires the exact old production baseline,
+a clean tracked tree, and the healthy accepted rehearsal container. It uses that
+container's immutable image ID and rejects any release with different runtime
+source, SQL, Dockerfile, dependency manifests or production Compose file.
 
-If migration fails, its outer transaction rolls back and the old app can remain
-on the baseline. If failure occurs after commit, keep writes stopped and restore
-the matching pre-upgrade database/documents plus old app image/config. Do not
-blindly roll back only code once new ECF transactions exist. Post-cutover writes
-require reconciliation before any snapshot restore to avoid losing new data.
+Before maintenance it captures runtime config privately and checks the resolved
+Compose environment matches. It disconnects only the application from the proxy
+and stops it, then takes a fresh DB dump, globals, PDF/signature and config backup.
+It restores that dump into a new isolated database and compares legacy contents
+before migrating the live DB. Existing DB credentials, volume, master key, mail
+settings and proxy identity are retained. The DB container is not recreated.
 
-Production merge/deployment commands will be pinned to the accepted candidate
-after the real-data rehearsal results are reviewed.
+After migration it verifies legacy data, document bytes, runtime environment,
+mounts, application image and internal health before reopening proxy access.
+The Git checkout advances only to the pinned source. Maintenance lasts through
+the backup, restore test and validation; the application is unavailable during
+that interval. Backup files contain production data/secrets and remain private
+under `$HOME/metrotech-ems-cutover/TIMESTAMP`.
+
+External mail is not sent by the cutover or its CI. Runtime/settings preservation
+protects no-reply configuration, but delivery still needs the controlled check.
+
+## Rollback
+
+Before public access opens, a failed migration/startup/validation triggers a
+matching database/PDF restore and old image/config restart. Restoration failure
+keeps access closed and prints the backup directory for diagnosis.
+
+After public access opens, use the backup's `tooling/rollback.sh` with its backup
+directory argument. It pauses writes, compares every public table except session
+and all sequences/documents to the release snapshot, and refuses restoration if
+they changed. In that case it resumes the current app; reconcile the new data
+before any restore. Successful guarded rollback restores the old database/image,
+PDF and checkout. Never restore an earlier snapshot blindly after new work exists.

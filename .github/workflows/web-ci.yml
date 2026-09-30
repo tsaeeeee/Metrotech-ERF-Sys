@@ -69,3 +69,20 @@ jobs:
         run: npm run test:ui
       - name: Test PDF long descriptions
         run: node scripts/pdf-wrap-smoke.js
+
+  production-cutover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check release script syntax
+        run: |
+          bash -n scripts/release/cutover.sh
+          bash -n scripts/release/cutover-common.sh
+          bash -n scripts/release/rollback.sh
+          bash -n scripts/release/cutover-smoke.sh
+          node --check scripts/release/cutover-check.js
+      - name: Test Docker production cutover and rollback
+        run: bash scripts/release/cutover-smoke.sh
