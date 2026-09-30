@@ -47,7 +47,7 @@ if(mode==='prepare'){
   await fs.writeFile('/release/db.env',db.Config.Env.join('\n')+'\n',{mode:0o600});
   // Compose interpolates dollars; double each one in saved runtime values.
   const environment=Object.fromEntries(Object.entries(env).map(([key,value])=>[key,value.replaceAll('$',()=> '$$')]));
-  for(const [name,image] of [['candidate',target],['rollback',app.Image]])
+  for(const [name,image] of [['candidate',target],['rollback',app.Config.Image]])
     await save(`/release/${name}.compose.json`,{services:{app:{image,environment}}});
   const endpoint=app.NetworkSettings.Networks.metrotech_proxy;
   assert(endpoint.IPAddress,'Missing production proxy address');

@@ -65,6 +65,7 @@ restore_release(){
     restore_database
     helper check /release/before.json
   fi
+  docker image tag "$old_image" "$default_image"
   dc rollback up --no-start --no-deps --no-build --pull never --force-recreate app
   disconnect_proxy
   docker inspect metrotech-erf-app > "$run/app-restored.json"

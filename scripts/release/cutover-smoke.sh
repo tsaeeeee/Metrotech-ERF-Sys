@@ -9,7 +9,8 @@ baseline=332903bd57e645ca3683b4ed46a8658e45bf5641
 accepted=c3cc59c9c78ef02f25901ec585e0d19ca2859c9a
 sudo mkdir -p /srv/metrotech
 sudo chown "$(id -u):$(id -g)" /srv/metrotech
-git worktree add -b production-erf /srv/metrotech/erf "$baseline"
+git switch --detach "$source_sha"
+git worktree add -B production-erf /srv/metrotech/erf "$baseline"
 umask 077
 cat > /srv/metrotech/erf/.env <<'ENV'
 POSTGRES_HOST=db
