@@ -78,7 +78,11 @@ try{
   for(const username of ['requestor','reviewer','approver','admin']){
     const login=await fetch(base+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({username,password:'Legacy-Test-Password1'})});
+    // Match the browser: consume the complete login response before the next
+    // request. Headers can arrive while express-session is still saving it.
+    const loginBody=await login.json();
     assert.equal(login.status,200,`Legacy ${username} login`);
+    assert.equal(loginBody.ok,true);
     const headers={Cookie:login.headers.get('set-cookie').split(';')[0]};
     const me=await fetch(base+'/api/me',{headers});assert.equal(me.status,200);
     if(username==='admin')continue;
