@@ -55,6 +55,12 @@ if(mode==='prepare'){
     'Custom proxy aliases require review before cutover');
   await fs.writeFile('/release/proxy-ip',endpoint.IPAddress+'\n');
   await save('/release/proxy-aliases.json',endpoint.Aliases||[]);
+  // The archived image can have root-only code directories. Run this helper as
+  // root, but return private generated files to the invoking host account.
+  assert(/^\d+:\d+$/.test(extra),'Host UID:GID required');
+  const [uid,gid]=extra.split(':').map(Number);
+  for(const file of ['runtime.env','db.env','candidate.compose.json','rollback.compose.json','proxy-ip','proxy-aliases.json'])
+    await fs.chown(`/release/${file}`,uid,gid);
   console.log(JSON.stringify({runtimePreserved:true,pdfMode:env.PDF_MODE||'mock',
     mailGatewayConfigured:Boolean(env.MAIL_GATEWAY_URL&&env.MAIL_GATEWAY_SECRET)}));
 }else if(mode==='config'){

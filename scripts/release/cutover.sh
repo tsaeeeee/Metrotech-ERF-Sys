@@ -32,9 +32,9 @@ docker inspect metrotech-erf-app > "$run/app-before.json"
 docker inspect metrotech-erf-db > "$run/db-before.json"
 cp -p "$repo/.env" "$run/config.env"
 docker image tag "$old_image" "metrotech-erf:rollback-$stamp"
-docker run --rm --network none --user "$(id -u):$(id -g)" \
+docker run --rm --network none \
   -v "$run:/release" -v "$run/tooling:/app/scripts/release:ro" --entrypoint node "$candidate_image" \
-  scripts/release/cutover-check.js prepare "$candidate_image"
+  scripts/release/cutover-check.js prepare "$candidate_image" "$(id -u):$(id -g)"
 restore_db="ems-cutover-restore-$stamp"
 restore_network="$restore_db-net"
 for key in repo baseline accepted source_sha candidate_image old_image db_image default_image compose_project run restore_db restore_network; do

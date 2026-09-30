@@ -62,6 +62,7 @@ chmod +x /tmp/cutover-fault-bin/docker
 if PATH="/tmp/cutover-fault-bin:$PATH" bash scripts/release/cutover.sh "$source_sha"; then
   echo 'Expected rollback test failure was not injected'; exit 1
 fi
+test ! -e /tmp/cutover-inject-failure
 test "$(docker inspect -f '{{.Image}}' metrotech-erf-app)" = "$old_image"
 test "$(docker inspect -f '{{.State.Running}}' metrotech-erf-app)" = true
 test "$(git -C /srv/metrotech/erf rev-parse HEAD)" = "$baseline"
