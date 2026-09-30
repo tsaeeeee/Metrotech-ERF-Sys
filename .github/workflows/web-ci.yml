@@ -71,6 +71,8 @@ jobs:
         run: node scripts/pdf-wrap-smoke.js
 
   production-cutover:
+    # This one-time release targets a pinned old production baseline/image.
+    if: github.event_name == 'pull_request' && github.head_ref == 'codex/release-ems-prod'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

@@ -89,7 +89,7 @@ docker run -d --name "$clone_db" --network "$network" --network-alias db \
   --env-file "$run/db.env" -v "$project-db-data:/var/lib/postgresql/data" "$db_image" >/dev/null
 ready=false
 for attempt in $(seq 1 60); do
-  if docker exec "$clone_db" pg_isready -U metrotech_rehearsal -d metrotech_rehearsal >/dev/null 2>&1; then ready=true; break; fi
+  if docker exec "$clone_db" psql -h 127.0.0.1 -U metrotech_rehearsal -d metrotech_rehearsal -Atqc 'SELECT 1' >/dev/null 2>&1; then ready=true; break; fi
   sleep 1
 done
 test "$ready" = true
