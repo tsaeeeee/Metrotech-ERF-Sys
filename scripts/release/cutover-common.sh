@@ -37,13 +37,30 @@ disconnect_proxy(){
   fi
 }
 connect_proxy(){
-  local networks
+  local networks previous_ip actual_ip error
   networks=$(docker inspect -f '{{range $name, $v := .NetworkSettings.Networks}}{{println $name}}{{end}}' metrotech-erf-app)
   if [[ "$networks" == *metrotech_proxy* ]]; then
     return
   fi
-  docker network connect --ip "$(cat "$run/proxy-ip")" \
-    --alias metrotech-erf-app --alias app metrotech_proxy metrotech-erf-app
+  previous_ip=$(cat "$run/proxy-ip")
+  if ! docker network connect --ip "$previous_ip" \
+    --alias metrotech-erf-app --alias app metrotech_proxy metrotech-erf-app 2> "$run/network-connect.log"; then
+    error=$(cat "$run/network-connect.log")
+    if [[ "$error" == *'user specified IP address is supported only when connecting to networks with user configured subnets'* ]]; then
+      # Docker auto-created address pools reject --ip; let its allocator reuse
+      # the free endpoint, then verify the address before accepting access.
+      docker network connect --alias metrotech-erf-app --alias app metrotech_proxy metrotech-erf-app
+    else
+      printf '%s\n' "$error" >&2
+      return 1
+    fi
+  fi
+  actual_ip=$(docker inspect -f '{{(index .NetworkSettings.Networks "metrotech_proxy").IPAddress}}' metrotech-erf-app)
+  if [[ "$actual_ip" != "$previous_ip" ]]; then
+    docker network disconnect metrotech_proxy metrotech-erf-app
+    echo 'Proxy IP changed; access closed to avoid a stale upstream. Review proxy routing.' >&2
+    return 1
+  fi
 }
 restore_database(){
   # No application process is running while its DB is replaced.

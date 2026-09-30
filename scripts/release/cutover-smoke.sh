@@ -63,8 +63,15 @@ if PATH="/tmp/cutover-fault-bin:$PATH" bash scripts/release/cutover.sh "$source_
   echo 'Expected rollback test failure was not injected'; exit 1
 fi
 test ! -e /tmp/cutover-inject-failure
+rollback_run=$(python3 - <<'PY'
+from pathlib import Path
+print(sorted((Path.home()/'metrotech-ems-cutover').iterdir())[-1])
+PY
+)
+test "$(cat "$rollback_run/status")" = ROLLBACK_OK
 test "$(docker inspect -f '{{.Image}}' metrotech-erf-app)" = "$old_image"
 test "$(docker inspect -f '{{.State.Running}}' metrotech-erf-app)" = true
+test "$(docker inspect -f '{{(index .NetworkSettings.Networks "metrotech_proxy").IPAddress}}' metrotech-erf-app)" != ''
 test "$(git -C /srv/metrotech/erf rev-parse HEAD)" = "$baseline"
 test "$(docker exec metrotech-erf-db psql -At -U metrotech_erf -d metrotech_erf -c "SELECT to_regclass('public.ecf_details') IS NULL")" = t
 test "$(docker exec metrotech-erf-db psql -At -U metrotech_erf -d metrotech_erf -c 'SELECT count(*) FROM requests')" = 2

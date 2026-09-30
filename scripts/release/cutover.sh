@@ -120,8 +120,10 @@ document_helper check-files /release/files-before.json
 helper capture-all /release/after.json
 git -C "$repo" merge --ff-only "$source_sha"
 docker image tag "$candidate_image" "$default_image"
-connect_proxy
+# Once reconnection starts, a request could arrive. Any later failure must use
+# the guarded rollback path rather than blindly restoring a snapshot.
 published=true
+connect_proxy
 printf 'LIVE_RELEASED\n' > "$run/status"
 cat "$run/health.json"
 printf '\nLIVE_RELEASED\nSource: %s\nImage: %s\nBackup: %s\n' "$source_sha" "$candidate_image" "$run"
