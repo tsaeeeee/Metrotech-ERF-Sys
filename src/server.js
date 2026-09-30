@@ -10,7 +10,8 @@ import { fileURLToPath } from 'node:url';
 import {
   pool,workflowLockPool,pingDb,getEmployee,authenticateLocalUser,changeEmployeePassword,updateEmployeeSignature,listManagedEmployees,
   createManagedEmployee,updateManagedEmployee,setManagedEmployeeActive,ensureBootstrapAdminCredentials,
-  listRequestsForEmployee,listDecisionHistory,hasDecisionHistory,createExpenseRequest,
+  listRequestsForEmployee,listDecisionHistory,hasDecisionHistory,listTasksForEmployee,listMyRequests,getEcfRole,getEmsDashboard,
+  createExpenseRequest,createEcfClaim,
   getRequestDetail,setDocumentPaths,transitionRequest,recallExpenseRequest,recallReviewedExpenseRequest,recallApprovedExpenseRequest,reviseExpenseRequest
 } from './db.js';
 import { buildEvidencePdf,buildFormPdf } from './documents.js';
@@ -181,6 +182,7 @@ async function requireUser(req,res,next){
     const employee=await getEmployee(email);
     if(!employee) return res.status(403).json({error:'Employee is inactive or missing'});
     req.employee=employee;
+    employee.ecfRole=await getEcfRole(employee.email);
     if(employeeNeedsSetup(employee) && !setupAllowedPaths.has(req.path))
       return res.status(428).json({
         error:'Complete your first login setup before using the system.',
@@ -196,6 +198,11 @@ function requireAdmin(req,res,next){
 }
 
 function canAccess(employee,request){
+  if(request.form_type==='ECF' && employee.ecfRole==='CHECKER' &&
+     request.status==='PENDING_CHECK') return true;
+  if(request.form_type==='ECF' && employee.ecfRole==='NONE') return false;
+  if(request.form_type==='ECF' && employee.role==='NONE' && employee.ecfRole!=='NONE')
+    return String(request.requester_email).toLowerCase()===String(employee.email).toLowerCase();
   if(employee.role==='REQUESTOR') return String(request.requester_email).toLowerCase()===String(employee.email).toLowerCase();
   if(employee.role==='REVIEWER') return String(request.reviewer_email).toLowerCase()===String(employee.email).toLowerCase();
   if(employee.role==='APPROVER') return String(request.approver_email).toLowerCase()===String(employee.email).toLowerCase();
@@ -214,6 +221,7 @@ function normalizeRequestType(value){
 }
 
 function requestCode(request){
+  if(request?.form_type==='ECF') return 'ECF';
   return String(request?.request_type||'').toUpperCase()==='REIMBURSEMENT' || String(request?.ref_no||'').startsWith('RRF-')
     ? 'RRF'
     : 'ERF';
@@ -300,7 +308,7 @@ async function loadExistingEvidenceFiles(requestId,revision,lineNo,targetIndex,e
 
 async function parseRevisionItemsAndFiles(req,detail){
   const requestType=normalizeRequestType(detail.request?.request_type||'EXPENSE');
-  const evidenceRequired=requestType==='REIMBURSEMENT';
+  const evidenceRequired=detail.request?.form_type==='ECF'||requestType==='REIMBURSEMENT';
   let rawItems;
   try { rawItems=JSON.parse(String(req.body.items||'[]')); }
   catch { throw Object.assign(new Error('Invalid payment data.'),{status:400}); }
@@ -437,10 +445,15 @@ function withRequestWorkflowLock(handler){
 }
 
 app.get('/api/me',requireUser,async(req,res)=>{
-  const [requests,history]=await Promise.all([
-    listRequestsForEmployee(req.employee),listDecisionHistory(req.employee)
-  ]);
-  res.json({employee:req.employee,requests,history,setupRequired:employeeNeedsSetup(req.employee)});
+  const history=await listDecisionHistory(req.employee);
+  const requests=await listRequestsForEmployee(req.employee);
+  const tasks=await listTasksForEmployee(req.employee);
+  const myRequests=await listMyRequests(req.employee);
+  res.json({employee:req.employee,requests,tasks,myRequests,history,setupRequired:employeeNeedsSetup(req.employee)});
+});
+
+app.get('/api/ems/dashboard',requireUser,async(req,res,next)=>{
+  try{res.json(await getEmsDashboard(req.employee))}catch(e){next(e)}
 });
 
 app.put('/api/profile/password',requireUser,async(req,res,next)=>{
@@ -592,7 +605,8 @@ app.post('/api/admin/app-settings/test-smtp',requireUser,requireAdmin,async(req,
 app.post('/api/requests',requireUser,upload.any(),async(req,res,next)=>{
   try{
     if(req.employee.role!=='REQUESTOR') return res.status(403).json({error:'Only Requestor can create a request.'});
-    const requestType='EXPENSE'; // Production ERF: new submissions are ERF-only.
+    const requestType=normalizeRequestType(req.body.requestType||'EXPENSE');
+    if(requestType!=='EXPENSE') return res.status(400).json({error:'Use Expense Claim (ECF) for claims.'});
     const {items,files}=parseItemsAndFiles(req,requestType);
     const runtimeSettings=await getRuntimeAppSettings();
     const request=await createExpenseRequest(req.employee,items,runtimeSettings.timezone,requestType);
@@ -611,11 +625,35 @@ app.post('/api/requests',requireUser,upload.any(),async(req,res,next)=>{
   }catch(e){next(e)}
 });
 
+app.post('/api/ecf/claims',requireUser,upload.any(),async(req,res,next)=>{
+  try{
+    if(req.employee.ecfRole!=='REQUESTOR') return res.status(403).json({error:'ECF Requestor access required.'});
+    const {items,files}=parseItemsAndFiles(req,'REIMBURSEMENT');
+    const settings=await getRuntimeAppSettings();
+    const request=await createEcfClaim(req.employee,items,settings.timezone,
+      String(req.body.serviceOrderNumber||'').trim().slice(0,100));
+    await persistOriginals(request.id,1,files);
+    const {detail}=await generateSubmissionDocs(request.id,files);
+    await sendWorkflowMail({event:'SUBMITTED',request:detail.request,to:detail.request.checker_email,
+      subject:`[ECF] ${request.ref_no} pending check`,
+      text:`${request.employee_name} submitted ${request.ref_no} for checking.`});
+    res.status(201).json({ok:true,requestId:request.id,refNo:request.ref_no,status:request.status});
+  }catch(e){next(e)}
+});
+
 app.post('/api/requests/:id/recall',requireUser,withRequestWorkflowLock(async(req,res,next)=>{
   try{
     const approvedRecall=req.employee.role==='APPROVER';
     const reviewedRecall=req.employee.role==='REVIEWER';
     const decisionRecall=approvedRecall||reviewedRecall;
+    if(!decisionRecall){
+    const current=await getRequestDetail(req.params.id);
+    if(!current) return res.status(404).json({error:'Request not found'});
+    if(current.request.form_type==='ECF'
+      ? !['REQUESTOR','NONE'].includes(req.employee.role) || req.employee.ecfRole!=='REQUESTOR'
+      : req.employee.role!=='REQUESTOR')
+      return res.status(403).json({error:'Requestor access required to recall this request.'});
+    }
     const request=approvedRecall
       ? await recallApprovedExpenseRequest(req.params.id,req.employee,req.body?.reason)
       : reviewedRecall
@@ -625,11 +663,11 @@ app.post('/api/requests/:id/recall',requireUser,withRequestWorkflowLock(async(re
     await sendWorkflowMail({
       event:approvedRecall?'APPROVAL_RECALLED':reviewedRecall?'REVIEW_RECALLED':'RECALLED',
       request:detail.request,
-      to:decisionRecall?detail.request.requester_email:detail.request.reviewer_email,
+      to:decisionRecall?detail.request.requester_email:detail.request.form_type==='ECF'?detail.request.checker_email:detail.request.reviewer_email,
       cc:approvedRecall?[detail.request.reviewer_email,(await getRuntimeAppSettings()).finalApprovedCc]:reviewedRecall?detail.request.approver_email:undefined,
       subject:`[${requestCode(detail.request)}] ${detail.request.ref_no} ${approvedRecall?'approval recalled':reviewedRecall?'review recalled':'recalled by requestor'}`,
       text:decisionRecall
-        ? `${detail.request.ref_no} ${approvedRecall?'approval':'review'} was recalled by ${req.employee.name}. Reason: ${request.last_rejection_reason}. The previous approval is no longer current. Requestor must revise and resubmit for a new review and approval.`
+        ? `${detail.request.ref_no} ${approvedRecall?'approval':'review'} was recalled by ${req.employee.name}. Reason: ${request.last_rejection_reason}. The previous approval is no longer current. Requestor must revise and resubmit for ${detail.request.form_type==='ECF'?'a new check, review, and approval':'a new review and approval'}.`
         : `${detail.request.ref_no} was recalled by ${req.employee.name} and no longer requires review.`
     });
     res.json({ok:true,status:detail.request.status,refNo:detail.request.ref_no});
@@ -638,23 +676,27 @@ app.post('/api/requests/:id/recall',requireUser,withRequestWorkflowLock(async(re
 
 app.post('/api/requests/:id/revise',requireUser,upload.any(),withRequestWorkflowLock(async(req,res,next)=>{
   try{
-    if(req.employee.role!=='REQUESTOR') return res.status(403).json({error:'Only Requestor can revise a request.'});
-
     const currentDetail=await getRequestDetail(req.params.id);
     if(!currentDetail) return res.status(404).json({error:'Request not found'});
+    if(currentDetail.request.form_type==='ECF'
+      ? !['REQUESTOR','NONE'].includes(req.employee.role) || req.employee.ecfRole!=='REQUESTOR'
+      : req.employee.role!=='REQUESTOR')
+      return res.status(403).json({error:'Requestor access required to revise this request.'});
     if(!canAccess(req.employee,currentDetail.request)) return res.status(403).json({error:'Access denied'});
 
     const {items,files}=await parseRevisionItemsAndFiles(req,currentDetail);
-    const request=await reviseExpenseRequest(req.params.id,req.employee,items);
+    const request=await reviseExpenseRequest(req.params.id,req.employee,items,{
+      serviceOrderNumber:req.body.serviceOrderNumber
+    });
     await persistOriginals(request.id,request.revision,files);
     const {detail}=await generateSubmissionDocs(request.id,files);
     await sendWorkflowMail({
-      event:'REVISED',request:detail.request,to:detail.request.reviewer_email,
+      event:'REVISED',request:detail.request,to:detail.request.form_type==='ECF'?detail.request.checker_email:detail.request.reviewer_email,
       subject:`[${requestCode(detail.request)}] ${detail.request.ref_no} revised and pending review`,
       text:`${detail.request.employee_name} submitted revision ${detail.request.revision} of ${detail.request.ref_no}.`
     });
     res.json({
-      ok:true,requestId:request.id,refNo:request.ref_no,status:'PENDING_REVIEW',revision:request.revision,
+      ok:true,requestId:request.id,refNo:request.ref_no,status:request.status,revision:request.revision,
       requestType:detail.request.request_type
     });
   }catch(e){next(e)}
@@ -738,6 +780,20 @@ app.post('/api/requests/:id/review',requireUser,withRequestWorkflowLock(async(re
     res.json({ok:true,status:detail.request.status});
   }catch(e){next(e)}
 }));
+
+app.post('/api/requests/:id/check',requireUser,async(req,res,next)=>{
+  try{
+    const request=await transitionRequest(req.params.id,req.employee,'CHECK',req.body.decision,req.body.reason||'');
+    const detail=await regenerateForm(request.id);
+    const passed=request.status==='PENDING_REVIEW';
+    await sendWorkflowMail({event:passed?'CHECK_APPROVED':'CHECK_REJECTED',request:detail.request,
+      to:passed?request.reviewer_email:request.requester_email,
+      subject:`[ECF] ${request.ref_no} ${passed?'pending review':'rejected by Checker'}`,
+      text:passed?`${request.ref_no} has passed the Checker stage.`:
+        `${request.ref_no} was rejected by Checker. Reason: ${req.body.reason}`});
+    res.json({ok:true,status:request.status});
+  }catch(e){next(e)}
+});
 
 app.post('/api/requests/:id/approve',requireUser,withRequestWorkflowLock(async(req,res,next)=>{
   try{

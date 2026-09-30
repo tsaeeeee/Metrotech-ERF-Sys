@@ -89,34 +89,6 @@ function rtInjectStyles(){
   const style=document.createElement('style');
   style.id='requestTypeStyles';
   style.textContent=`
-    .request-type-row{
-      display:flex;align-items:center;justify-content:space-between;gap:18px;
-      margin:14px 0 18px;padding:14px 16px;border:1px solid #e2e8f0;
-      border-radius:14px;background:#f8fafc;
-    }
-    .request-type-copy{display:flex;flex-direction:column;gap:3px;min-width:0}
-    .request-type-copy strong{font-size:14px;color:#0f2744}
-    .request-type-copy small{color:#64748b;font-size:12px}
-    .request-type-control{
-      display:grid;grid-template-columns:1fr 1fr;align-items:center;
-      width:340px;max-width:100%;padding:4px;
-      border-radius:999px;background:#155da8;
-      box-shadow:inset 0 0 0 1px rgba(15,39,68,.08);
-    }
-    .request-type-option{
-      appearance:none;border:0;background:transparent;color:#fff;
-      min-height:40px;padding:8px 18px;border-radius:999px;
-      font:inherit;font-size:12px;font-weight:800;line-height:1.15;
-      white-space:nowrap;cursor:pointer;transition:background .18s ease,color .18s ease,box-shadow .18s ease,transform .12s ease;
-    }
-    .request-type-option:hover:not(:disabled){background:rgba(255,255,255,.11)}
-    .request-type-option:active:not(:disabled){transform:scale(.985)}
-    .request-type-option.active{
-      background:#fff;color:#155da8;
-      box-shadow:0 2px 7px rgba(15,39,68,.18);
-    }
-    .request-type-option:disabled{cursor:not-allowed;opacity:.66}
-    .request-type-control.is-locked{opacity:.76}
     .evidence-mode-note{display:block;margin-top:5px;font-size:11px;color:#64748b}
     .signature-required-notice{
       display:flex;align-items:center;justify-content:space-between;gap:14px;
@@ -242,9 +214,6 @@ function rtInjectStyles(){
       to{transform:rotate(360deg)}
     }
     @media(max-width:700px){
-      .request-type-row{align-items:flex-start;flex-direction:column}
-      .request-type-control{width:100%}
-      .request-type-option{min-height:38px;padding:8px 10px;font-size:11.5px}
       .signature-required-notice{align-items:flex-start;flex-direction:column}
       .signature-mini-preview{align-items:flex-start;flex-direction:column}
       .signature-mini-preview img{max-width:100%}
@@ -279,7 +248,7 @@ function sigSyncWorkflowUi(){
     notice?.remove();
   }
 
-  if(currentEmployee.role==='REQUESTOR' && missing){
+  if((currentEmployee.role==='REQUESTOR' || currentEmployee.ecfRole==='REQUESTOR') && missing){
     const submit=$('#submitExpenseBtn');
     if(submit) submit.disabled=true;
   }
@@ -409,15 +378,7 @@ function rtSetRequestType(type){
 
 function rtEnsureControl(){
   if(currentEmployee?.role!=='REQUESTOR') return;
-  const form=$('#requestForm');
-  if(!form) return;
   rtInjectStyles();
-
-  // Production ERF is ERF-only. Keep legacy reimbursement records readable,
-  // but do not expose a request-type selector for new submissions.
-  if(!revisionTarget) rtRequestType='EXPENSE';
-  $('#requestTypeRow')?.remove();
-
   rtApplyUi();
 }
 
@@ -552,8 +513,11 @@ recallRequest=async function(...args){
 };
 
 const sigOriginalSendDecision=sendDecision;
+let sigDecisionBusy=false;
 sendDecision=async function(decision){
+  if(sigDecisionBusy || !currentDetailId) return;
   const rejecting=String(decision).toUpperCase()==='REJECT';
+  if(rejecting && !$('#decisionReason').value.trim()) return;
   const role=currentEmployee?.role;
   const action=role==='REVIEWER'
     ? (rejecting?'reject this request':'review and approve this request')
@@ -570,14 +534,6 @@ sendDecision=async function(decision){
   const refNo=String($('#detailRef')?.textContent||'Request').trim()||'Request';
   let nextApprover='';
 
-  if(role==='REVIEWER' && !rejecting && requestId){
-    try{
-      const data=await api(`/api/requests/${encodeURIComponent(requestId)}`);
-      const resolved=workflowAssigneeName(data?.request,'approver');
-      if(resolved!=='—') nextApprover=resolved;
-    }catch{}
-  }
-
   if(activeBtn){
     activeBtn.classList.add('decision-action-loading');
     activeBtn.setAttribute('aria-busy','true');
@@ -587,15 +543,27 @@ sendDecision=async function(decision){
 
   if(approveBtn) approveBtn.disabled=true;
   if(rejectBtn) rejectBtn.disabled=true;
+  sigDecisionBusy=true;
+  $('#decisionReason').disabled=true;
 
   try{
+    if(role==='REVIEWER' && !rejecting){
+      try{
+        const data=await api(`/api/requests/${encodeURIComponent(requestId)}`);
+        const resolved=workflowAssigneeName(data?.request,'approver');
+        if(resolved!=='—') nextApprover=resolved;
+      }catch{}
+    }
     const result=await sigOriginalSendDecision(decision);
-    if(role==='REVIEWER' && !rejecting && nextApprover){
+    if(result && role==='REVIEWER' && !rejecting && nextApprover){
       clearMsg();
       msg(`${refNo} approved by Reviewer and forwarded to ${nextApprover} for final approval.`,'ok');
     }
     return result;
   }finally{
+    sigDecisionBusy=false;
+    $('#decisionReason').disabled=false;
+    if(currentDetailId===requestId) syncRejectButton();
     if(approveBtn){
       approveBtn.classList.remove('decision-action-loading');
       approveBtn.removeAttribute('aria-busy');
@@ -613,7 +581,7 @@ sendDecision=async function(decision){
 const sigOriginalSyncRejectButton=syncRejectButton;
 syncRejectButton=function(...args){
   sigOriginalSyncRejectButton(...args);
-  if(!sigHasDigitalSignature() && $('#rejectBtn')) $('#rejectBtn').disabled=true;
+  if((sigDecisionBusy || $('#decisionReason')?.disabled || !sigHasDigitalSignature()) && $('#rejectBtn')) $('#rejectBtn').disabled=true;
 };
 
 const evidencePreviewUrls=new WeakMap();
@@ -810,7 +778,4 @@ renderPdfDocument=async function(url,targetSelector){
   }
 };
 
-// The first loadMe() call starts at the end of the base app.js before this extension
-// is evaluated, so run lightweight follow-up syncs once login state settles.
-setTimeout(()=>{rtEnsureControl();sigSyncWorkflowUi();},350);
-setTimeout(()=>{rtEnsureControl();sigSyncWorkflowUi();},1200);
+// Initial account loading runs from ems.js after every extension is installed.
