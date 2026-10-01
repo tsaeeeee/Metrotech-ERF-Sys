@@ -20,7 +20,7 @@ async function api(url,opt={}){
   const headers=opt.body instanceof FormData ? (opt.headers||{}) : {'Content-Type':'application/json',...(opt.headers||{})};
   const r=await fetch(url,{...opt,headers});
   const body=await r.json().catch(()=>({}));
-  if(!r.ok) throw new Error(body.error||`HTTP ${r.status}`);
+  if(!r.ok) throw Object.assign(new Error(body.error||`HTTP ${r.status}`),{status:r.status});
   return body;
 }
 
@@ -167,8 +167,16 @@ async function submitFirstSignature(event){
 }
 
 async function loadMe(){
+  const startingSession=!$('#sessionStatus').classList.contains('hidden');
+  if(startingSession){
+    $('#sessionMessage').textContent='Loading your workspace…';
+    $('#sessionRetry').classList.add('hidden');
+    $('#sessionStatus').setAttribute('aria-busy','true');
+  }
   try{
     const {employee,requests,tasks,myRequests,history=[]}=await api('/api/me');
+    $('#sessionStatus').classList.add('hidden');
+    $('#sessionStatus').setAttribute('aria-busy','false');
     window.emsBootstrap={requests,tasks,myRequests,history};
     currentEmployee=employee;
     $('#loginCard').classList.add('hidden');
@@ -219,6 +227,14 @@ async function loadMe(){
     renderRequests(requests);
     if(employee.role==='REQUESTOR' && !$('#paymentDate').value) $('#paymentDate').value=new Date().toISOString().slice(0,10);
   }catch(e){
+    $('#sessionStatus').setAttribute('aria-busy','false');
+    if(startingSession && !currentEmployee && e.status!==401){
+      $('#sessionStatus').classList.remove('hidden');
+      $('#sessionMessage').textContent='Unable to load your workspace. Please try again.';
+      $('#sessionRetry').classList.remove('hidden');
+      return;
+    }
+    $('#sessionStatus').classList.add('hidden');
     currentEmployee=null;
     clearMsg();
     $('#loginCard').classList.remove('hidden');
