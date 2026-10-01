@@ -44,7 +44,12 @@
 <div class="shell">
 <div id="msg"></div>
 
-<section id="loginCard" class="login-shell">
+<section id="sessionStatus" class="session-status" aria-live="polite" aria-busy="true">
+  <p id="sessionMessage" role="status">Loading your workspace…</p>
+  <button id="sessionRetry" class="btn ghost hidden" type="button" onclick="loadMe()">Try again</button>
+</section>
+<noscript><p class="notice">Please enable JavaScript to use Metrotech EMS.</p></noscript>
+<section id="loginCard" class="login-shell hidden">
   <div class="login-card">
     <div class="login-mark">EMS</div>
     <h2>Sign in to Metrotech EMS</h2>
@@ -555,6 +560,7 @@
       </div>
     </div>
 
+    <div class="detail-content">
     <div id="detailSummary" class="detail-summary"></div>
 
     <div class="detail-section">
@@ -581,6 +587,8 @@
     <div class="detail-section">
       <h3>Audit Trail</h3>
       <div id="auditTrail" class="audit"></div>
+    </div>
+
     </div>
 
     <div id="decisionPanel" class="decision-panel hidden">

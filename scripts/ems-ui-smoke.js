@@ -154,6 +154,68 @@ async function addPayment(page,purpose,{evidence=false}={}){
 try{
   browser=await chromium.launch({headless:true,
     executablePath:process.env.EMS_UI_CHROMIUM_PATH||undefined});
+  // A delayed session response must never expose the login form during refresh.
+  const refreshing=await session(employee('APPROVER'));
+  const refreshPage=refreshing.page;
+  for(const outcome of ['authenticated','guest','unavailable']){
+    let releaseSession;
+    const sessionGate=new Promise(resolve=>{releaseSession=resolve});
+    await refreshPage.route(`${origin}/api/me`,async route=>{
+      await sessionGate;
+      if(outcome==='authenticated')await route.fallback();
+      else await route.fulfill({status:outcome==='guest'?401:503,
+        contentType:'application/json',body:JSON.stringify({error:'Session unavailable'})});
+    });
+    await refreshPage.reload({waitUntil:'domcontentloaded'});
+    assert(!await refreshPage.locator('#loginCard').isVisible(),'Do not flash login while checking the session.');
+    assert(await refreshPage.locator('#sessionStatus').isVisible(),'Show a neutral session loading state.');
+    releaseSession();
+    if(outcome==='authenticated')await refreshPage.locator('#emsHome').waitFor({state:'visible'});
+    else if(outcome==='guest')await refreshPage.locator('#loginCard').waitFor({state:'visible'});
+    else{
+      await refreshPage.locator('#sessionRetry').waitFor({state:'visible'});
+      assert(!await refreshPage.locator('#loginCard').isVisible(),'A server error does not mean the session expired.');
+    }
+    await refreshPage.unroute(`${origin}/api/me`);
+    if(outcome==='unavailable'){
+      await refreshPage.locator('#sessionRetry').click();
+      await refreshPage.locator('#emsHome').waitFor({state:'visible'});
+    }
+  }
+  await refreshing.context.close();
+
+  // Action controls must fit and receive taps without landscape or horizontal scrolling.
+  for(const [role,ecfRole] of [['NONE','CHECKER'],['REVIEWER','REVIEWER'],['APPROVER','APPROVER']]){
+    const mobile=await session(employee(role,ecfRole));
+    const page=mobile.page;
+    await page.evaluate(()=>openRequest('task'));
+    await page.locator('#decisionPanel').waitFor({state:'visible'});
+    await page.evaluate(()=>{
+      document.querySelector('#detailRef').textContent='ECF-METROTECH-2026-000000000000012345';
+      document.querySelector('#detailItems').innerHTML='<tr><td>1</td><td>Accommodation</td><td>'+('Long payment description '.repeat(20))+'</td><td>2026-09-30</td><td>'+('receipt'.repeat(30))+'.pdf</td><td class="money">Rp123.456.789</td></tr>';
+    });
+    for(const viewport of [{width:320,height:568},{width:390,height:844},{width:844,height:390},{width:390,height:400}]){
+      await page.setViewportSize(viewport);
+      await page.locator('#decisionReason').fill('Please correct the receipt');
+      for(const selector of ['#approveBtn','#rejectBtn','#detailModal .modal-head-actions .btn:last-child']){
+        const reachable=await page.locator(selector).evaluate(el=>{
+          const r=el.getBoundingClientRect();
+          return r.left>=0 && r.right<=innerWidth && r.top>=0 && r.bottom<=innerHeight &&
+            el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));
+        });
+        assert(reachable,`${role}/${ecfRole} ${selector} must be fully visible and tappable at ${viewport.width}x${viewport.height}.`);
+        await page.locator(selector).click({trial:true});
+      }
+      assert(await page.locator('#detailModal .modal-panel').evaluate(el=>el.scrollWidth<=el.clientWidth),'The modal must not scroll sideways.');
+      assert(await page.locator('#detailItems .money').evaluate(el=>getComputedStyle(el).whiteSpace==='nowrap'),'Keep amounts together.');
+      if(process.env.EMS_UI_SCREENSHOTS && role==='APPROVER'){
+        await fs.mkdir(process.env.EMS_UI_SCREENSHOTS,{recursive:true});
+        await page.screenshot({path:`${process.env.EMS_UI_SCREENSHOTS}/approval-${viewport.width}x${viewport.height}.png`});
+      }
+    }
+    await mobile.context.close();
+  }
+
   const admin=await session(employee('ADMIN','NONE'));
   await assertAdmin(admin.page);
   assert.equal(await admin.page.locator('#roleTitle').innerText(),'Admin Dashboard');

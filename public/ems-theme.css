@@ -238,3 +238,43 @@ body.ems-theme {
 .ems-theme .ems-panel-heading h2::before,.ems-theme .ems-overview>h2::before {content:"";display:inline-block;width:16px;height:16px;vertical-align:-3px;margin-right:8px;color:var(--navy);background:currentColor;mask:var(--icon-chart) center/contain no-repeat;-webkit-mask:var(--icon-chart) center/contain no-repeat}
 
 .ems-theme #emsMetrics .ems-metric-copy small::before {display:none}
+
+/* Resolve the session before choosing the login or authenticated workspace. */
+.ems-theme .session-status {min-height:40vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--muted);text-align:center}
+
+/* Keep modal actions outside the scrolling document body. Dynamic viewport
+   units account for mobile browser chrome; safe areas protect edge controls. */
+.ems-theme #detailModal .modal-panel {display:flex;flex-direction:column;overflow:hidden;padding:0;min-width:0;height:min(92vh,980px);height:min(92dvh,980px);max-height:100%}
+.ems-theme #detailModal .modal-head {position:static;flex:none;min-width:0;gap:12px;flex-wrap:wrap;margin:0;padding:16px 20px}
+.ems-theme #detailModal .modal-head>div:first-child {flex:1 1 220px;min-width:0}
+.ems-theme #detailRef,.ems-theme #detailMeta {overflow-wrap:anywhere}
+.ems-theme #detailModal .modal-head-actions {flex:none;flex-wrap:wrap;max-width:100%}
+.ems-theme #detailModal .detail-content {flex:1 1 auto;min-height:0;min-width:0;overflow:auto;overscroll-behavior:contain;padding:0 20px 20px}
+.ems-theme #detailModal .pdf-split>div {min-width:0}
+.ems-theme #detailModal .audit-row {grid-template-columns:14px minmax(0,1fr);overflow-wrap:anywhere}
+.ems-theme #detailModal .decision-panel {position:static;flex:none;margin:0;padding:12px 20px;max-height:50%;overflow:auto}
+.ems-theme #detailModal .decision-panel textarea {display:block;resize:none;height:64px}
+.ems-theme #detailModal .decision-actions {flex-direction:row}
+.ems-theme #detailModal .decision-actions .btn {width:auto;min-width:100px;min-height:44px;white-space:nowrap}
+.ems-theme .status,.ems-theme .role-chip,.ems-theme .actions .btn {white-space:nowrap}
+.ems-theme #detailItems .money,.ems-theme #paymentBody .money {white-space:nowrap;overflow-wrap:normal}
+@media(max-width:900px){
+  .ems-theme #detailModal {padding:0}
+  .ems-theme #detailModal .modal-panel {width:100%;height:100vh;height:100dvh;border-radius:0}
+  .ems-theme #detailModal .modal-head {padding:12px max(16px,env(safe-area-inset-right)) 12px max(16px,env(safe-area-inset-left))}
+  .ems-theme #detailModal .detail-content {padding:0 max(16px,env(safe-area-inset-right)) 16px max(16px,env(safe-area-inset-left))}
+  .ems-theme #detailModal .decision-panel {padding:10px max(16px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+  .ems-theme #detailModal .decision-actions .btn {flex:1}
+  .ems-theme #detailModal .decision-panel label {font-size:12px;margin-bottom:4px}
+  .ems-theme #detailModal .decision-panel textarea {height:48px;font-size:16px}
+  .ems-theme #detailModal .decision-actions {margin-top:8px}
+  .ems-theme #detailModal .detail-section table {min-width:720px;table-layout:fixed}
+  .ems-theme #detailModal .detail-section th:nth-child(1) {width:40px}
+  .ems-theme #detailModal .detail-section th:nth-child(2) {width:140px}
+  .ems-theme #detailModal .detail-section th:nth-child(3) {width:220px}
+  .ems-theme #detailModal .detail-section th:nth-child(4) {width:110px}
+  .ems-theme #detailModal .detail-section th:nth-child(5) {width:160px}
+  .ems-theme #detailModal .detail-section th:nth-child(6) {width:160px}
+  .ems-theme #table,.ems-theme #decisionHistoryTable,.ems-theme #requestForm .table-wrap table {min-width:780px}
+  .ems-theme .ems-task strong {white-space:normal;overflow-wrap:anywhere}
+}
