@@ -176,7 +176,7 @@ function eventPresentation(event,request,fallbackText=''){
       badgeBg:'#b91c1c',
       message:reason
         ? `The request was rejected during the review stage. Remarks: ${reason}`
-        : 'The request was rejected during the review stage. Please check the remarks in the ERF system and revise it if necessary.',
+        : 'The request was rejected during the review stage. Please check the remarks in Metrotech EMS and revise it if necessary.',
       cta:'View Request'
     },
     APPROVAL_REJECTED:{
@@ -185,7 +185,7 @@ function eventPresentation(event,request,fallbackText=''){
       badgeBg:'#b91c1c',
       message:reason
         ? `The request was rejected during the approval stage. Remarks: ${reason}`
-        : 'The request was rejected during the approval stage. Please check the remarks in the ERF system and revise it if necessary.',
+        : 'The request was rejected during the approval stage. Please check the remarks in Metrotech EMS and revise it if necessary.',
       cta:'View Request'
     },
     FINAL_APPROVED:{
@@ -266,7 +266,7 @@ function buildWorkflowHtml({event,request,recipientName,settings,text}){
   const presentation=eventPresentation(event,request,text);
   const rows=summaryRows(request,presentation);
   const appUrl=String(settings.appBaseUrl||'').replace(/\/$/,'');
-  const preheader=`${presentation.title} — ${String(request?.ref_no||'ERF request')}`;
+  const preheader=`${presentation.title} — ${String(request?.ref_no||'EMS request')}`;
   const attachmentNote=event==='FINAL_APPROVED'
     ? `<tr><td style="padding:18px 22px 0 22px;">
          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#0b162b;border:1px solid #263652;border-radius:12px;">
@@ -307,7 +307,7 @@ function buildWorkflowHtml({event,request,recipientName,settings,text}){
           <tr>
             <td align="center" style="padding:34px 28px 10px 28px;">
               <div style="font-family:Arial,Helvetica,sans-serif;font-size:27px;line-height:32px;font-weight:800;color:#45b8ff;letter-spacing:-.5px;">METROTECH</div>
-              <div style="margin-top:7px;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:16px;letter-spacing:2px;text-transform:uppercase;color:#72839f;">Expense Request System</div>
+              <div style="margin-top:7px;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:16px;letter-spacing:2px;text-transform:uppercase;color:#72839f;">Expense Management System</div>
             </td>
           </tr>
           <tr>
@@ -342,7 +342,7 @@ function buildWorkflowHtml({event,request,recipientName,settings,text}){
           </tr>
           <tr>
             <td align="center" style="padding:6px 38px 32px 38px;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:18px;color:#71819b;">
-              This is an automated notification from Metrotech Expense Request System.<br>
+              This is an automated notification from Metrotech Expense Management System.<br>
               Please do not reply to this email.
             </td>
           </tr>
@@ -362,10 +362,10 @@ function buildTestHtml(){
 <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:600px;background:#101b31;border-radius:18px;overflow:hidden;">
 <tr><td style="height:5px;background:#2f9eea;font-size:0;line-height:0;">&nbsp;</td></tr>
 <tr><td align="center" style="padding:34px 28px 8px 28px;font-family:Arial,Helvetica,sans-serif;font-size:27px;font-weight:800;color:#45b8ff;">METROTECH</td></tr>
-<tr><td align="center" style="padding:0 28px;font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#72839f;">Expense Request System</td></tr>
+<tr><td align="center" style="padding:0 28px;font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#72839f;">Expense Management System</td></tr>
 <tr><td align="center" style="padding:28px 32px 8px 32px;"><span style="display:inline-block;background:#15803d;color:#fff;border-radius:999px;padding:6px 12px;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;">Mail Gateway Connected</span></td></tr>
 <tr><td align="center" style="padding:10px 32px 0 32px;font-family:Arial,Helvetica,sans-serif;font-size:23px;font-weight:800;line-height:30px;color:#fff;">Email delivery is working</td></tr>
-<tr><td align="center" style="padding:12px 42px 32px 42px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:22px;color:#aebbd0;">Email delivery has been verified successfully. Workflow notifications can now be delivered from the Metrotech Expense Request System.</td></tr>
+<tr><td align="center" style="padding:12px 42px 32px 42px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:22px;color:#aebbd0;">Email delivery has been verified successfully. Workflow notifications can now be delivered from the Metrotech Expense Management System.</td></tr>
 <tr><td style="padding:0 38px;"><div style="height:1px;background:#25344e;font-size:0;line-height:0;">&nbsp;</div></td></tr>
 <tr><td align="center" style="padding:22px 38px 30px 38px;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:18px;color:#71819b;">This is an automated test message. Please do not reply to this email.</td></tr>
 </table>
@@ -388,8 +388,8 @@ export async function testSmtp(to){
   const settings=await getRuntimeAppSettings();
   if(!to) throw Object.assign(new Error('Test recipient is required.'),{status:400});
 
-  const subject='Metrotech ERF Email Delivery Test';
-  const text='Email delivery is working. This is a test message from Metrotech Expense Request System.';
+  const subject='Metrotech EMS Email Delivery Test';
+  const text='Email delivery is working. This is a test message from Metrotech Expense Management System.';
   const html=buildTestHtml();
 
   if(gatewayReady()){
@@ -403,7 +403,7 @@ export async function testSmtp(to){
   const transport=createTransport(settings);
   await transport.verify();
   await transport.sendMail({
-    from:{name:settings.mailSenderName||'Metrotech Expense Approval System',address:settings.mailFrom},
+    from:{name:settings.mailSenderName||'Metrotech EMS',address:settings.mailFrom},
     to,subject,text,html
   });
 }
@@ -453,7 +453,7 @@ export async function sendWorkflowMail({event,request,to,cc='',subject,text,atta
     }else{
       const transport=createTransport(settings);
       await transport.sendMail({
-        from:{name:settings.mailSenderName||'Metrotech Expense Approval System',address:settings.mailFrom},
+        from:{name:settings.mailSenderName||'Metrotech EMS',address:settings.mailFrom},
         to:toText,
         cc:ccText||undefined,
         subject:mailSubject,
