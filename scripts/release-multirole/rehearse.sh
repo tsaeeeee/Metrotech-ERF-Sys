@@ -3,6 +3,8 @@
 set -Eeuo pipefail
 umask 077
 repo=/srv/metrotech/erf
+exec 9>"$HOME/.ems-multirole-release.lock"
+flock -n 9 || { echo 'Another EMS rehearsal/deployment is running'; exit 1; }
 baseline=0673cfa86ead5d4451798858c7ff8d949d3645dc
 candidate=${1:?Usage: bash rehearse.sh FULL_CANDIDATE_SHA}
 [[ "$candidate" =~ ^[0-9a-f]{40}$ ]]
@@ -12,7 +14,7 @@ git -C "$repo" diff --quiet
 git -C "$repo" diff --cached --quiet
 git -C "$repo" merge-base --is-ancestor "$baseline" "$candidate"
 # Abort before building/snapshotting if there is insufficient headroom.
-test "$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)" -ge 1572864 || { echo 'Need at least 1.5 GiB available RAM for rehearsal'; exit 1; }
+test "$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)" -ge 2097152 || { echo 'Need at least 2 GiB available RAM for rehearsal'; exit 1; }
 test "$(df -Pk "$HOME" | awk 'END {print $4}')" -ge 5242880 || { echo 'Need at least 5 GiB free disk'; exit 1; }
 run=$(mktemp -d "$HOME/ems-multirole-rehearsal.XXXXXX")
 mkdir "$run/code" "$run/exports"

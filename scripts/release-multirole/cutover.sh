@@ -2,6 +2,8 @@
 set -Eeuo pipefail
 umask 077
 repo=/srv/metrotech/erf
+exec 9>"$HOME/.ems-multirole-release.lock"
+flock -n 9 || { echo 'Another EMS rehearsal/deployment is running'; exit 1; }
 baseline=0673cfa86ead5d4451798858c7ff8d949d3645dc
 source_sha=${1:?Usage: bash cutover.sh FULL_CANDIDATE_SHA REHEARSAL_DIRECTORY}
 rehearsal_run=${2:?Supply the successful rehearsal directory}
@@ -19,8 +21,9 @@ test "$(docker image inspect -f '{{.Id}}' "$candidate_image")" = "$candidate_ima
 test "$(docker inspect -f '{{.Image}}' metrotech-erf-app)" = "$(cat "$rehearsal_run/source-image")"
 test "$(docker inspect -f '{{.State.Running}}' metrotech-erf-app)" = true
 # Use exactly the scripts packaged in the tested candidate, not a different checkout.
-script_root=$(cd "$(dirname "$0")/../.." && pwd)
-git -C "$repo" archive "$source_sha" scripts/release-multirole | tar -xO scripts/release-multirole/cutover.sh | cmp - "$0"
+for script in "$(dirname "$0")/"*.sh "$(dirname "$0")/"*.js; do
+  git -C "$repo" show "$source_sha:scripts/release-multirole/$(basename "$script")" | cmp - "$script"
+done
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 run="$HOME/metrotech-ems-multirole-cutover/$stamp"
 mkdir -p "$run/tooling" "$run/pdfs" "$run/signatures"
@@ -91,7 +94,7 @@ document_helper check-backup-files /release/files-before.json
 echo 'Restoring the fresh backup in an isolated database before migration.'
 docker network create --internal "$restore_network" >/dev/null
 docker volume create "$restore_db-data" >/dev/null
-docker run -d --name "$restore_db" --network "$restore_network" --network-alias db \
+docker run -d --name "$restore_db" --cpus 0.5 --memory 384m --network "$restore_network" --network-alias db \
   --env-file "$run/db.env" -v "$restore_db-data:/var/lib/postgresql/data" "$db_image" >/dev/null
 ready=false
 for attempt in $(seq 1 60); do
@@ -115,7 +118,7 @@ docker run --rm --network "$restore_network" --env-file "$run/runtime.env" \
   -e POSTGRES_HOST=db -e POSTGRES_PORT=5432 -v "$run:/release" --entrypoint node "$candidate_image" \
   scripts/release-multirole/cutover-check.js check /release/before.json
 docker stop "$restore_db" >/dev/null
-echo 'FRESH_BACKUP_RESTORE_AND_UPGRADE_VERIFIED' 
+echo 'FRESH_BACKUP_RESTORE_AND_UPGRADE_VERIFIED'
 
 migration_attempted=true
 docker run --rm --name "ems-cutover-migration-$stamp" --network metrotech_erf_internal \

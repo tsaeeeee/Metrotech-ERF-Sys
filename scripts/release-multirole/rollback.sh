@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+exec 9>"$HOME/.ems-multirole-release.lock"
+flock -n 9 || { echo 'Another EMS rehearsal/deployment is running'; exit 1; }
 run=${1:?Usage: bash rollback.sh CUTOVER_BACKUP_DIRECTORY}
 test -f "$run/state.env"
 source "$run/state.env"
