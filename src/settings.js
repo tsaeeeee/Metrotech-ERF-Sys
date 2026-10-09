@@ -51,6 +51,8 @@ async function getEcfRoleSnapshot(){
 }
 
 export async function ensureAppSettings(){
+  // Staging restores an existing schema; missing values use runtime defaults.
+  if(process.env.EMS_STAGING==='true') return;
   await pool.query(`
     create table if not exists app_settings(
       key text primary key,
@@ -100,6 +102,14 @@ export async function getRuntimeAppSettings(){
   const raw={...defaults};
   for(const row of rows) raw[row.key]=row.value;
 
+  const staging=process.env.EMS_STAGING==='true';
+  if(staging){
+    if(!process.env.EMS_STAGE_SESSION_SECRET) throw new Error('Staging requires its own session secret.');
+    Object.assign(raw,{app_base_url:process.env.EMS_STAGE_URL||'http://127.0.0.1:18090',
+      local_login_enabled:'true',google_enabled:'false',cookie_secure:'false',
+      smtp_enabled:'true',smtp_host:'mailpit',smtp_port:'1025',smtp_secure:'false',
+      smtp_user:'',smtp_pass:'',mail_override_to:'',session_secret:process.env.EMS_STAGE_SESSION_SECRET});
+  }
   const baseUrl=String(raw.app_base_url||'').replace(/\/$/,'');
   return {
     appBaseUrl:baseUrl,
@@ -285,6 +295,9 @@ export async function saveAppSettings(input,actorEmail=''){
     }
 
     if(ecfRoleAssignment){
+      await client.query('select pg_advisory_xact_lock(77123001)');
+      const explicit=(await client.query('select workflow_roles from employees where lower(email)=lower($1)',[ecfRoleAssignment.email])).rows[0];
+      if(explicit?.workflow_roles!=null) throw Object.assign(new Error('Use User Management to edit multi-role access.'),{status:409});
       await client.query(
         `select * from set_ecf_employee_role($1,$2,$3)`,
         [ecfRoleAssignment.email,ecfRoleAssignment.role,ecfRoleAssignment.replaceChecker]
@@ -325,8 +338,8 @@ export async function getAppReadiness(){
   const settings=await getRuntimeAppSettings();
   const {rows}=await pool.query(`
     select
-      count(*) filter(where role='REVIEWER' and active=true)::int as reviewers,
-      count(*) filter(where role='APPROVER' and active=true)::int as approvers
+      count(*) filter(where employee_has_workflow_role(email,'ERF','REVIEWER'))::int as reviewers,
+      count(*) filter(where employee_has_workflow_role(email,'ERF','APPROVER'))::int as approvers
     from employees
   `);
   const counts=rows[0]||{reviewers:0,approvers:0};

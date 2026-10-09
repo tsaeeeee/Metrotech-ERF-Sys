@@ -26,7 +26,7 @@ function items(label){
 try{
   const schema=await fs.readFile(new URL('../sql/schema.sql',import.meta.url),'utf8');
   await pool.query(schema);
-  for(const file of ['015-ems-foundation.sql','016-ems-claim-flow.sql','017-independent-erf-access.sql']){
+  for(const file of ['015-ems-foundation.sql','016-ems-claim-flow.sql','017-independent-erf-access.sql','018-assigned-multi-role.sql']){
     const migration=await fs.readFile(new URL(`../sql/migrations/${file}`,import.meta.url),'utf8');
     await pool.query(migration);
   }

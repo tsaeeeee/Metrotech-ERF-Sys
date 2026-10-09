@@ -10,6 +10,7 @@ const assets={
   '/':['index.html'],
   '/styles.css':['styles.css'],
   '/ems-theme.css':['ems-theme.css'],
+  '/workflow-access.js':['workflow-access.js'],
   '/app.js':['app.js','request-type.js'],
   '/ecf-admin.js':['ecf-admin.js','ecf-profile.js'],
   '/ems.js':['ems.js']
@@ -45,7 +46,7 @@ function employee(role,ecfRole=role){
 function row(form_type,status,id){
   return {id,ref_no:`${form_type}-${id}`,form_type,request_type:'EXPENSE',status,
     requester_email:'requestor@example.test',employee_name:'UI Requestor',
-    reviewer_email:'reviewer@example.test',approver_email:'approver@example.test',
+    checker_email:'checker@example.test',reviewer_email:'reviewer@example.test',approver_email:'approver@example.test',
     request_date:'2026-09-23',total:100000,revision:1,last_rejection_reason:''};
 }
 const revisionRow={...row('ECF','CHECK_REJECTED','revision'),last_rejection_reason:'Update receipt',
@@ -124,16 +125,12 @@ async function assertAdmin(page){
   await page.locator('#adminUsersTable').waitFor({state:'visible'});
   assert((await page.locator('#adminUsersTable').innerText()).includes('ECF Access'));
   await page.getByRole('button',{name:'+ Create User',exact:true}).click();
-  assert(await page.locator('#adminEcfAccessButton').isVisible());
-  await page.locator('#adminRoleButton').click();
-  await page.locator('#adminRoleMenu [data-value="NONE"]').click();
-  assert.equal(await page.locator('#adminRoleLabel').innerText(),'No Access');
-  await page.locator('#adminEcfAccessButton').click();
-  await page.locator('#adminEcfAccessMenu [data-value="CHECKER"]').click();
-  assert.equal(await page.locator('#adminEcfAccessLabel').innerText(),'Checker');
-  assert.equal(await page.locator('#adminEcfAccess').inputValue(),'CHECKER');
-  await page.locator('#adminEcfAccessButton').click();
-  await page.locator('#adminEcfAccessMenu [data-value="REQUESTOR"]').click();
+  assert(await page.locator('#adminWorkflowRoles').isVisible());
+  const erfRequestor=page.locator('#adminWorkflowRoles input[data-form="ERF"][value="REQUESTOR"]');
+  await erfRequestor.uncheck();
+  await page.locator('#adminWorkflowRoles input[data-form="ECF"][value="CHECKER"]').check();
+  await page.locator('#adminWorkflowRoles input[data-form="ECF"][value="REQUESTOR"]').check();
+  assert.deepEqual(await page.evaluate(()=>adminSelectedWorkflowRoles()),{ERF:[],ECF:['REQUESTOR','CHECKER']});
   await page.evaluate(()=>closeAdminUserModal());
   await page.locator('#adminAppTab').click();
   await page.waitForFunction(()=>document.querySelector('#appBaseUrl').value==='https://ems.example.test');
@@ -288,8 +285,8 @@ try{
   await assertAdmin(fresh.page);
   await fresh.page.locator('#adminUsersTab').click();
   await fresh.page.getByRole('button',{name:'+ Create User',exact:true}).click();
-  await fresh.page.locator('#adminRoleButton').click();
-  await fresh.page.locator('#adminRoleMenu [data-value="NONE"]').click();
+  await fresh.page.locator('#adminWorkflowRoles input[data-form="ERF"][value="REQUESTOR"]').uncheck();
+  await fresh.page.locator('#adminWorkflowRoles input[data-form="ECF"][value="REQUESTOR"]').check();
   for(const [field,value] of [
     ['adminName','ECF Only'],['adminEmail','ecf-only@example.test'],
     ['adminUsername','ecf-only'],['adminPassword','ci-password'],
@@ -298,11 +295,10 @@ try{
   ]) await fresh.page.locator('#'+field).fill(value);
   await fresh.page.locator('#saveAdminUserBtn').click();
   await fresh.page.locator('#adminUserModal').waitFor({state:'hidden'});
-  assert(fresh.writes.some(write=>write.path==='/api/admin/users' &&
-    JSON.parse(write.body).role==='NONE'),'Admin must save ERF No Access.');
-  assert(fresh.writes.some(write=>write.path==='/api/admin/app-settings' &&
-    JSON.parse(write.body).ecfRoleAssignment?.role==='REQUESTOR'),
-    'Admin must save independent ECF Requestor access.');
+  const savedUser=fresh.writes.find(write=>write.path==='/api/admin/users');
+  assert(savedUser,'Admin must save the user.');
+  assert.deepEqual(JSON.parse(savedUser.body).workflowRoles,{ERF:[],ECF:['REQUESTOR']},'User details and permissions must save in one request.');
+  assert(!fresh.writes.some(write=>write.path==='/api/admin/app-settings'),'No separate settings write for user permissions.');
   await fresh.context.close();
 
   for(const [role,ecfRole,title,erf,ecf,requests,tasks] of [
@@ -415,6 +411,16 @@ try{
       await actor.context.close();
     }
   }
+
+  const ownerUser={...employee('APPROVER'),workflow_roles:{ERF:['REQUESTOR','REVIEWER','APPROVER'],ECF:['REQUESTOR','CHECKER','REVIEWER','APPROVER']}};
+  const ownerSession=await session(ownerUser);
+  for(const view of ['erf','ecf','requests','tasks','history']) assert(await ownerSession.page.locator(`[data-ems-view="${view}"]`).isVisible(),`Owner must have ${view} navigation.`);
+  await ownerSession.page.locator('[data-ems-view="tasks"]').click();
+  await ownerSession.page.locator('#emsTaskRows button').first().click();
+  await ownerSession.page.waitForFunction(()=>emsDetail?.id==='task');
+  assert.equal(await ownerSession.page.evaluate(()=>currentDecisionRole),'APPROVER','Multi-role account must use the pending stage, not a primary/first role.');
+  assert(await ownerSession.page.locator('#approveBtn').isEnabled());
+  await ownerSession.context.close();
 
   const recallApprover=await session(employee('APPROVER'));
   await recallApprover.page.locator('[data-ems-view="history"]').click();

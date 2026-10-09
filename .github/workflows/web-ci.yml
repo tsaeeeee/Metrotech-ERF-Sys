@@ -61,6 +61,8 @@ jobs:
         run: npm run test:workflow
       - name: Test production ERF to EMS upgrade and rollback
         run: node scripts/release/upgrade-smoke.js
+      - name: Test assigned multi-role and single-approver policy
+        run: node scripts/multi-role-smoke.js
       - name: Test EMS HTTP workflow
         run: npm run test:ems-http
       - name: Install browser for UI regression checks
@@ -98,3 +100,23 @@ jobs:
           node --check scripts/release/cutover-check.js
       - name: Test Docker production cutover and rollback
         run: bash scripts/release/cutover-smoke.sh
+
+  staging-clone:
+    if: github.event_name == 'pull_request' && github.head_ref == 'feature/assigned-multi-role'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test isolated EMS clone and local mail capture
+        run: bash scripts/staging/smoke.sh
+
+  multirole-release:
+    if: github.event_name == 'pull_request' && github.head_ref == 'feature/assigned-multi-role'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Test current EMS rehearsal, cutover and guarded rollback
+        run: bash scripts/release-multirole/cutover-smoke.sh

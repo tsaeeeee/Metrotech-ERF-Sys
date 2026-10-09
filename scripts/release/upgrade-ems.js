@@ -8,7 +8,7 @@ export const migrations=[
   '008-ecf-foundation.sql','009-ecf-role-management.sql',
   '010-sync-ecf-role-with-primary-user-state.sql','011-fix-ecf-role-assignment-ambiguity.sql',
   '012-fix-ecf-role-upsert-conflict.sql','015-ems-foundation.sql',
-  '016-ems-claim-flow.sql','017-independent-erf-access.sql'
+  '016-ems-claim-flow.sql','017-independent-erf-access.sql','018-assigned-multi-role.sql'
 ];
 const tables=['employees','requests','request_items','workflow_actions','email_log','daily_counters','app_settings'];
 
@@ -16,7 +16,7 @@ export async function snapshot(client){
   const result={};
   for(const table of tables){
     // Ignore only the new discriminator; all other stored values must match.
-    const row=table==='requests'?"to_jsonb(t)-'form_type'":'to_jsonb(t)';
+    const row=table==='requests'?"to_jsonb(t)-'form_type'":table==='employees'?"to_jsonb(t)-'workflow_roles'":'to_jsonb(t)';
     const {rows}=await client.query(`SELECT count(*)::text AS count,
       md5(coalesce(jsonb_agg(${row} ORDER BY (${row})::text)::text,'[]')) AS digest FROM ${table} t`);
     result[table]=rows[0];

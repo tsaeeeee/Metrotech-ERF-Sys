@@ -161,8 +161,10 @@ try{
   const recallResults=await Promise.all([1,2].map(()=>request(`/api/requests/${id}/recall`,{
     method:'POST',body:{reason:'Correct the claim amount'},cookie:approverCookie
   })));
-  assert(recallResults.map(result=>result.status).sort().join(',')==='200,409',
+  assert(recallResults.filter(result=>result.status===200).length===1 && recallResults.every(result=>[200,403,409].includes(result.status)),
     'Duplicate ECF recalls must produce exactly one successful transition.');
+  const recallMails=(await pool.query("select mail_to,mail_cc from email_log where request_id=$1 and event='APPROVAL_RECALLED'",[id])).rows;
+  assert(recallMails.length===1 && recallMails[0].mail_cc.split(',').includes(approver.email), 'Approval Recall must email its assigned Approver exactly once.');
   const recalledEcf=await getRequestDetail(id);
   assert(recalledEcf.request.status==='RECALLED','Approved ECF must become Recalled.');
   const recallActions=recalledEcf.actions.filter(action=>action.action==='APPROVAL_RECALLED');

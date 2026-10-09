@@ -1,0 +1,53 @@
+services:
+  db:
+    image: postgres:17-alpine
+    env_file: runtime.env
+    volumes:
+      - staging_database:/var/lib/postgresql/data
+    networks: [isolated]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U ems_staging -d ems_staging']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  app:
+    build:
+      context: ./code
+    env_file: [decryption.env, runtime.env]
+    environment:
+      EMS_STAGING: 'true'
+      PORT: '8080'
+      NODE_ENV: production
+      POSTGRES_HOST: db
+      POSTGRES_PORT: '5432'
+      PDF_DIR: /data/pdfs
+      PDF_MODE: mock
+      MAIL_GATEWAY_URL: ''
+      MAIL_GATEWAY_SECRET: ''
+    volumes:
+      - ./pdfs:/data/pdfs
+      - ./signatures:/data/signatures
+    networks: [isolated]
+    depends_on:
+      db:
+        condition: service_healthy
+  mailpit:
+    image: axllent/mailpit:v1.27.4
+    networks: [isolated]
+    environment:
+      MP_MAX_MESSAGES: '500'
+  preview:
+    image: caddy:2-alpine
+    ports:
+      - '127.0.0.1:18090:8080'
+      - '127.0.0.1:18091:8081'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    networks: [isolated, ingress]
+    depends_on: [app, mailpit]
+volumes:
+  staging_database:
+networks:
+  isolated:
+    internal: true
+  ingress: {}

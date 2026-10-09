@@ -16,7 +16,7 @@ function createTransport(settings){
 }
 
 function gatewayReady(){
-  return Boolean(MAIL_GATEWAY_URL && MAIL_GATEWAY_SECRET);
+  return process.env.EMS_STAGING!=='true' && Boolean(MAIL_GATEWAY_URL && MAIL_GATEWAY_SECRET);
 }
 
 function smtpReady(settings){
@@ -388,7 +388,7 @@ export async function testSmtp(to){
   const settings=await getRuntimeAppSettings();
   if(!to) throw Object.assign(new Error('Test recipient is required.'),{status:400});
 
-  const subject='Metrotech EMS Email Delivery Test';
+  const subject=(process.env.EMS_STAGING==='true'?'[STAGING] ':'')+'Metrotech EMS Email Delivery Test';
   const text='Email delivery is working. This is a test message from Metrotech Expense Management System.';
   const html=buildTestHtml();
 
@@ -417,13 +417,13 @@ export async function sendWorkflowMail({event,request,to,cc='',subject,text,atta
     : uniqueRecipients(baseCc);
 
   const originalTo=toRecipients.join(',');
-  const originalCc=finalCc.join(',');
+  const originalCc=finalCc.filter(email=>!toRecipients.some(to=>to.toLowerCase()===email.toLowerCase())).join(',');
   const override=String(settings.mailOverrideTo||'').trim();
   const toText=override||originalTo;
   const ccText=override?'':originalCc;
   if(!toText) return;
 
-  const mailSubject=workflowSubject(event,request,subject);
+  const mailSubject=(process.env.EMS_STAGING==='true'?'[STAGING] ':'')+workflowSubject(event,request,subject);
   const recipientName=await resolveRecipientName(toRecipients[0]||toText);
   const plainText=`${text}\n\nReference: ${request?.ref_no||'-'}\nRequest Type: ${requestTypeLabel(request)}\nRequestor: ${request?.employee_name||'-'}\nTotal: ${formatMoney(request?.total)}\n\nThis is an automated notification. Please do not reply to this email.`;
   const html=buildWorkflowHtml({event,request,recipientName,settings,text});

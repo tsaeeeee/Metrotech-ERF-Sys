@@ -1,0 +1,6 @@
+:8080 {
+    reverse_proxy app:8080
+}
+:8081 {
+    reverse_proxy mailpit:8025
+}

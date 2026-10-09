@@ -121,19 +121,12 @@ function emsNavigate(view){
   const admin=currentEmployee.role==='ADMIN';
   if(admin && !['home','admin-users','admin-app'].includes(view)) view='admin-users';
   if(!admin && view.startsWith('admin-')) view='home';
-  if(!admin && view==='erf' && currentEmployee.role!=='REQUESTOR')
-    view=currentEmployee.ecfRole==='REQUESTOR'?'ecf':'home';
-  if(!admin && view==='ecf' && currentEmployee.ecfRole!=='REQUESTOR')
-    view=currentEmployee.role==='REQUESTOR'?'erf':'home';
-  if(!admin && view==='requests' && currentEmployee.role!=='REQUESTOR' &&
-    !(currentEmployee.role==='NONE' && currentEmployee.ecfRole==='REQUESTOR')) view='home';
-  if(!admin && view==='tasks' && !['REVIEWER','APPROVER'].includes(currentEmployee.role)
-    && currentEmployee.ecfRole!=='CHECKER') view='home';
-  const canActivity=currentEmployee.role==='REQUESTOR' ||
-    (currentEmployee.role==='NONE' && currentEmployee.ecfRole!=='NONE') ||
-    ['REVIEWER','APPROVER'].includes(currentEmployee.role) ||
-    currentEmployee.ecfRole==='CHECKER';
-  if(!admin && view==='history' && !canActivity) view='home';
+  const canRequest=hasRole(currentEmployee,'ERF','REQUESTOR')||hasRole(currentEmployee,'ECF','REQUESTOR');
+  const canWork=['ERF','ECF'].some(form=>rolesFor(currentEmployee,form).some(role=>role!=='REQUESTOR'));
+  if(!admin && ['erf','ecf'].includes(view) && !hasRole(currentEmployee,view.toUpperCase(),'REQUESTOR')) view='home';
+  if(!admin && view==='requests' && !canRequest) view='home';
+  if(!admin && view==='tasks' && !canWork) view='home';
+  if(!admin && view==='history' && !canRequest && !canWork) view='home';
   if(!admin && ['erf','ecf'].includes(view) && view!==emsFormView){
     emsStoreDraft();
     emsRestoreDraft(view);
@@ -152,14 +145,14 @@ function emsNavigate(view){
   $('#workflowDashboard').classList.toggle('hidden',!['erf','ecf','requests'].includes(view));
   $('#adminDashboard').classList.toggle('hidden',!view.startsWith('admin-'));
   $('#requestQueueCard').classList.toggle('hidden',!['erf','ecf','requests'].includes(view));
-  const canCreate=(view==='erf' && currentEmployee.role==='REQUESTOR') ||
-    (view==='ecf' && currentEmployee.ecfRole==='REQUESTOR');
+  const canCreate=(view==='erf' && hasRole(currentEmployee,'ERF','REQUESTOR')) ||
+    (view==='ecf' && hasRole(currentEmployee,'ECF','REQUESTOR'));
   $('#requestForm').classList.toggle('hidden',!canCreate);
   $('#emsClaimFields').classList.toggle('hidden',view!=='ecf');
   if(view==='erf'||view==='ecf'||view==='requests'){
     $('#queueTitle').textContent=view==='requests'?'My Requests':view==='erf'?'Expense Requests':'Expense Claims';
     const data=window.emsBootstrap||{};
-    const source=view==='ecf'&&currentEmployee.ecfRole!=='REQUESTOR'
+    const source=view==='ecf'&&!hasRole(currentEmployee,'ECF','REQUESTOR')
       ? data.tasks||[] : data.requests||[];
     const rows=view==='requests'?data.myRequests||[]:
       source.filter(row=>row.form_type===(view==='ecf'?'ECF':'ERF'));
@@ -178,12 +171,7 @@ function emsNavigate(view){
   if(view==='tasks') emsRenderTasks();
   if(view==='history'){
     const data=window.emsBootstrap||{};
-    const role=currentEmployee.ecfRole==='CHECKER' && currentEmployee.role!=='REVIEWER' && currentEmployee.role!=='APPROVER'
-      ? 'Checker'
-      : currentEmployee.role==='REVIEWER'?'Review'
-      : currentEmployee.role==='APPROVER'?'Approval'
-      : 'Request';
-    $('#decisionHistoryTitle').textContent=`${role} History`;
+    $('#decisionHistoryTitle').textContent='Activity History';
     renderRequests(data.history||[],'decisionHistoryTable','decisionHistoryBody','decisionHistoryEmpty');
   }
   if(view==='home') emsLoadDashboard();
@@ -197,7 +185,7 @@ function emsRenderTasks(){
       <div><strong>${esc(row.ref_no)}</strong> <span class="status ${esc(row.status)}">${esc(row.status)}</span>
       <small>${esc(row.employee_name)} · ${row.form_type==='ECF'?'Claim':'Request'}</small></div>
       <strong>${rupiah(row.total)}</strong>
-      <button class="btn tiny primary" onclick="openRequest('${row.id}')">Review</button>
+      <button class="btn tiny primary" onclick="openRequest('${row.id}')">${row.task_role==='CHECKER'?'Check':row.task_role==='APPROVER'?'Approve':'Review'}</button>
     </div>`).join(''):'<div class="empty">No pending tasks.</div>';
 }
 
@@ -259,8 +247,8 @@ async function emsLoadDashboard(){
   try{
     const data=await api('/api/ems/dashboard');
     if(currentEmployee?.email!==owner) return;
-    const erfAccess=currentEmployee.role!=='NONE';
-    const ecfAccess=currentEmployee.role==='ADMIN' || currentEmployee.ecfRole!=='NONE';
+    const erfAccess=currentEmployee.role==='ADMIN'||rolesFor(currentEmployee,'ERF').length>0;
+    const ecfAccess=currentEmployee.role==='ADMIN'||rolesFor(currentEmployee,'ECF').length>0;
     const types=[...(erfAccess?['ERF']:[]),...(ecfAccess?['ECF']:[])];
     const total=(type,states,field)=>data.totals.filter(row=>row.form_type===type&&states.includes(row.status))
       .reduce((sum,row)=>sum+Math.max(0,Number(row[field])||0),0);
@@ -301,21 +289,19 @@ loadMe=async function(...args){
   await emsOriginalLoadMe(...args);
   if(!currentEmployee||employeeNeedsSetup()) return;
   const admin=currentEmployee.role==='ADMIN';
-  const canRequest=currentEmployee.role==='REQUESTOR' ||
-    (currentEmployee.role==='NONE' && currentEmployee.ecfRole==='REQUESTOR');
-  const canWork=['REVIEWER','APPROVER'].includes(currentEmployee.role) ||
-    currentEmployee.ecfRole==='CHECKER';
+  const canRequest=hasRole(currentEmployee,'ERF','REQUESTOR')||hasRole(currentEmployee,'ECF','REQUESTOR');
+  const canWork=['ERF','ECF'].some(form=>rolesFor(currentEmployee,form).some(role=>role!=='REQUESTOR'));
   $('#emsTransactionsNav').classList.toggle('hidden',admin ||
-    (currentEmployee.role!=='REQUESTOR' && currentEmployee.ecfRole!=='REQUESTOR'));
+    (!hasRole(currentEmployee,'ERF','REQUESTOR') && !hasRole(currentEmployee,'ECF','REQUESTOR')));
   $('#emsActivityNav').classList.toggle('hidden',admin || (!canRequest && !canWork));
   $('#emsNav [data-ems-view="requests"]').classList.toggle('hidden',!canRequest);
   $('#emsNav [data-ems-view="tasks"]').classList.toggle('hidden',!canWork);
   $('#emsNav [data-ems-view="history"]').classList.toggle('hidden',!canRequest&&!canWork);
   $('#emsAdminNav').classList.toggle('hidden',!admin);
-  $('#emsNav [data-ems-view="erf"]').classList.toggle('hidden',currentEmployee.role!=='REQUESTOR');
-  $('#emsNav [data-ems-view="ecf"]').classList.toggle('hidden',currentEmployee.ecfRole!=='REQUESTOR');
+  $('#emsNav [data-ems-view="erf"]').classList.toggle('hidden',!hasRole(currentEmployee,'ERF','REQUESTOR'));
+  $('#emsNav [data-ems-view="ecf"]').classList.toggle('hidden',!hasRole(currentEmployee,'ECF','REQUESTOR'));
   $('#profile').classList.toggle('hidden',admin);
-  $('#roleTitle').textContent=admin?'Admin Dashboard':
+  const legacyTitle=admin?'Admin Dashboard':
     currentEmployee.role==='REVIEWER'?'Reviewer Dashboard':
     currentEmployee.role==='APPROVER'?'Approver Dashboard':
     currentEmployee.ecfRole==='CHECKER' && currentEmployee.role==='REQUESTOR'
@@ -324,6 +310,8 @@ loadMe=async function(...args){
     currentEmployee.role==='NONE'
       ? currentEmployee.ecfRole==='REQUESTOR'?'ECF Requestor Dashboard':'Dashboard'
       : 'Requestor Dashboard';
+  const roleLabels=[...new Set([...rolesFor(currentEmployee,'ERF'),...rolesFor(currentEmployee,'ECF')])];
+  $('#roleTitle').textContent=currentEmployee.workflow_roles==null?legacyTitle:roleLabels.length===1?`${roleLabels[0][0]}${roleLabels[0].slice(1).toLowerCase()} Dashboard`:'Dashboard';
   const tasks=window.emsBootstrap?.tasks||[];
   $('#emsTaskCount').textContent=tasks.length?String(tasks.length):'';
   if(emsDraftOwner!==currentEmployee.email){
@@ -406,12 +394,12 @@ openRequest=async function(id){
   try{
     const {request}=await api(`/api/requests/${id}`);
     emsDetail=request;
+    currentDecisionRole=assignedRole(currentEmployee,request);
     if(request.form_type==='ECF'){
       $('.pdf-label').textContent='Expense Claim Form';
     }else $('.pdf-label').textContent='Expense Request Form';
     const checker=request.form_type==='ECF'&&request.status==='PENDING_CHECK'&&
-      currentEmployee.ecfRole==='CHECKER'&&
-      String(request.requester_email).toLowerCase()!==String(currentEmployee.email).toLowerCase();
+      assignedRole(currentEmployee,request)==='CHECKER';
     if(checker){$('#decisionPanel').classList.remove('hidden');$('#approveBtn').disabled=false}
   }catch(e){msg(e.message,'err')}
 };
