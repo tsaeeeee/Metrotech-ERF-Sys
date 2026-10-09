@@ -109,3 +109,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Test isolated EMS clone and local mail capture
         run: bash scripts/staging/smoke.sh
+
+  multirole-release:
+    if: github.event_name == 'pull_request' && github.head_ref == 'feature/assigned-multi-role'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Test current EMS rehearsal, cutover and guarded rollback
+        run: bash scripts/release-multirole/cutover-smoke.sh

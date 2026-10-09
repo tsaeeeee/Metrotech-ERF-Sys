@@ -29,29 +29,11 @@ export async function ensureBootstrapAdminCredentials() {
        email,name,employee_id,department,location,division,role,
        signature_file,active,username,password_hash
      )
-     values(
-       'admin-dev@metrotech.local',
-       'ERF Administrator',
-       'ADMIN-001',
-       'IT',
-       'Jakarta',
-       'Administration',
-       'ADMIN',
-       '',
-       true,
-       'Administrator',
-       $1
-     )
-     on conflict(email) do update
-     set name=excluded.name,
-         employee_id=excluded.employee_id,
-         department=excluded.department,
-         location=excluded.location,
-         division=excluded.division,
-         role='ADMIN',
-         active=true,
-         username=coalesce(employees.username,excluded.username),
-         password_hash=coalesce(employees.password_hash,excluded.password_hash)`,
+     select 'admin-dev@metrotech.local','EMS Administrator','ADMIN-001',
+       'IT','Jakarta','Administration','ADMIN','',true,'Administrator',$1
+     where not exists (select 1 from employees where role='ADMIN')
+       and not exists (select 1 from employees where lower(username)='administrator')
+     on conflict do nothing`,
     [BOOTSTRAP_ADMIN_PASSWORD_HASH]
   );
 }

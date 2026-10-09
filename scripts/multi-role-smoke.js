@@ -27,6 +27,12 @@ try{
   await adminDb.connect();await adminDb.query(`CREATE DATABASE ${database}`);created=true;
   const db=await import('../src/db.js');pool=db.pool;lockPool=db.workflowLockPool;
   await pool.query(await fs.readFile(new URL('../sql/schema.sql',import.meta.url),'utf8'));
+  // Startup creates an admin only when absent; existing identity/security flags stay intact.
+  await db.ensureBootstrapAdminCredentials();
+  await pool.query("update employees set name='Existing Owner Admin',department='Custom',active=false,username='renamed-admin' where role='ADMIN'");
+  const adminBefore=(await pool.query("select to_jsonb(e) as row from employees e where role='ADMIN'")).rows;
+  await db.ensureBootstrapAdminCredentials();await db.ensureBootstrapAdminCredentials();
+  assert.deepEqual((await pool.query("select to_jsonb(e) as row from employees e where role='ADMIN'")).rows,adminBefore);
   const before=(await pool.query("select coalesce(jsonb_agg(to_jsonb(e)-'workflow_roles'),'[]') as data from employees e")).rows[0].data;
   const migration=await fs.readFile(new URL('../sql/migrations/018-assigned-multi-role.sql',import.meta.url),'utf8');
   await pool.query(migration);await pool.query(migration);
