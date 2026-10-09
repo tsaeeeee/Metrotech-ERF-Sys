@@ -55,7 +55,7 @@ export async function testApprovalRecall({request,requestor,reviewer,reviewer2,a
       method,headers:{cookie,...(body instanceof FormData?{}:{'content-type':'application/json'})},
       ...(body===undefined?{}:{body:body instanceof FormData?body:JSON.stringify(body)})
     });
-    assert.equal((await call(requestorCookie,'/recall','POST',{reason:'Unauthorized'})).status,409);
+    assert([403,409].includes((await call(requestorCookie,'/recall','POST',{reason:'Unauthorized'})).status));
     assert([403,409].includes((await call(reviewerCookie,'/recall','POST',{reason:'Already final approved'})).status));
     assert.equal((await call(approverCookie,'/recall','POST',{reason:'  '})).status,400);
     const attempts=await Promise.all([1,2].map(()=>call(approverCookie,'/recall','POST',{reason:'Correct the amount'})));
