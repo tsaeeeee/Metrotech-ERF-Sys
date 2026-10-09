@@ -26,7 +26,7 @@ services:
       MAIL_GATEWAY_SECRET: ''
     volumes:
       - ./pdfs:/data/pdfs
-      - ./signatures:/data/signatures:ro
+      - ./signatures:/data/signatures
     networks: [isolated]
     depends_on:
       db:

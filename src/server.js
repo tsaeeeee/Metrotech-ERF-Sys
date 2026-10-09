@@ -43,7 +43,8 @@ const signatureUpload=multer({
   limits:{fileSize:5*1024*1024,files:1}
 });
 
-await ensureBootstrapAdminCredentials();
+// A production snapshot already contains its accounts. Never bootstrap/reset a clone.
+if(process.env.EMS_STAGING!=='true') await ensureBootstrapAdminCredentials();
 await ensureAppSettings();
 const bootSettings=await getRuntimeAppSettings();
 configureAuth(bootSettings);

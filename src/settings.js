@@ -51,6 +51,8 @@ async function getEcfRoleSnapshot(){
 }
 
 export async function ensureAppSettings(){
+  // Staging restores an existing schema; missing values use runtime defaults.
+  if(process.env.EMS_STAGING==='true') return;
   await pool.query(`
     create table if not exists app_settings(
       key text primary key,

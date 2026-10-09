@@ -9,7 +9,7 @@ assert.equal(process.env.CI,'true','Run only in CI; creates and deletes a dedica
 const originalDb=process.env.POSTGRES_DB;
 const adminDb=new pg.Client({host:process.env.POSTGRES_HOST,port:process.env.POSTGRES_PORT,user:process.env.POSTGRES_USER,password:process.env.POSTGRES_PASSWORD,database:originalDb});
 const database='ems_multirole_ci';
-let created=false,app,pool,logs='';
+let created=false,app,pool,lockPool,logs='';
 const captured=[];
 const gateway=http.createServer(async(req,res)=>{
   let body='';for await(const part of req)body+=part;
@@ -25,7 +25,7 @@ process.env.PORT='18996';
 const origin='http://127.0.0.1:18996';
 try{
   await adminDb.connect();await adminDb.query(`CREATE DATABASE ${database}`);created=true;
-  const db=await import('../src/db.js');pool=db.pool;
+  const db=await import('../src/db.js');pool=db.pool;lockPool=db.workflowLockPool;
   await pool.query(await fs.readFile(new URL('../sql/schema.sql',import.meta.url),'utf8'));
   const before=(await pool.query("select coalesce(jsonb_agg(to_jsonb(e)-'workflow_roles'),'[]') as data from employees e")).rows[0].data;
   const migration=await fs.readFile(new URL('../sql/migrations/018-assigned-multi-role.sql',import.meta.url),'utf8');
@@ -110,7 +110,10 @@ try{
   assert.equal((await fetch(origin+'/api/admin/users',{headers:{cookie}})).status,403,'Multi-role must not grant Admin.');
   console.log('MULTI_ROLE_SMOKE_OK');
 }finally{
-  if(app){app.kill('SIGKILL');await new Promise(resolve=>app.once('exit',resolve));}
+  if(app&&app.exitCode===null&&app.signalCode===null){
+    const closed=new Promise(resolve=>app.once('close',resolve));app.kill('SIGKILL');await closed;
+  }
+  if(lockPool)await lockPool.end();
   if(pool)await pool.end();await new Promise(resolve=>gateway.close(resolve));
-  if(created)await adminDb.query(`DROP DATABASE ${database} WITH (FORCE)`);await adminDb.end();
+  if(created)await adminDb.query(`DROP DATABASE ${database}`);await adminDb.end();
 }

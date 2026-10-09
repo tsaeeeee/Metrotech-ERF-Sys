@@ -46,5 +46,6 @@ for attempt in $(seq 1 45); do
   sleep 1
 done
 test "$ready" = true
+"${compose[@]}" run --rm --no-deps -v "$run/db-before.json:/snapshot/db-before.json:ro" app node scripts/staging/verify-clone.js --compare /snapshot/db-before.json
 printf '\nSTAGING_READY\nDirectory: %s\nProject: %s\nCandidate: %s\nApp: http://127.0.0.1:18090\nCaptured email: http://127.0.0.1:18091\n' "$run" "$project" "$candidate"
 echo 'Use an SSH tunnel for access. Workflow email is captured locally, never relayed to real recipients.'
