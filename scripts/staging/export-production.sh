@@ -2,9 +2,9 @@
 # Read-only production snapshot; does not stop services, switch code, or migrate DB.
 set -Eeuo pipefail
 umask 077
-repo=/srv/metrotech/erf
+repo=${EMS_SOURCE_REPO:-/srv/metrotech/erf}
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-bundle=$(mktemp -d "$HOME/ems-staging-snapshot.XXXXXX")
+bundle=$(mktemp -d "${EMS_SNAPSHOT_ROOT:-$HOME}/ems-staging-snapshot.XXXXXX")
 mkdir "$bundle/pdfs" "$bundle/signatures"
 app=metrotech-erf-app
 db=metrotech-erf-db

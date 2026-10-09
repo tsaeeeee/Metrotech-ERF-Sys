@@ -100,3 +100,12 @@ jobs:
           node --check scripts/release/cutover-check.js
       - name: Test Docker production cutover and rollback
         run: bash scripts/release/cutover-smoke.sh
+
+  staging-clone:
+    if: github.event_name == 'pull_request' && github.head_ref == 'feature/assigned-multi-role'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test isolated EMS clone and local mail capture
+        run: bash scripts/staging/smoke.sh
