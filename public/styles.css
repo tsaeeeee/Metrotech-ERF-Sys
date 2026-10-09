@@ -1085,3 +1085,11 @@ h1{margin:0;color:var(--navy);font-size:26px}h2{margin:0 0 12px;color:var(--navy
 .approval-recall-error{color:var(--red);font-size:13px;margin-top:10px}
 .approval-recall-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
 @media(max-width:760px){#approvalRecallModal{padding:16px}}
+
+.workflow-role-fields { grid-column:1/-1; min-width:0; }
+.workflow-role-fields fieldset { border:1px solid #dbe3ed; border-radius:10px; padding:12px; margin:0 0 12px; min-width:0; }
+.workflow-role-fields legend { color:#172c4c; font-weight:700; padding:0 6px; }
+.workflow-role-options { display:flex; flex-wrap:wrap; gap:12px 20px; }
+.workflow-role-options label { display:flex; align-items:center; gap:8px; margin:0; font-weight:500; }
+.workflow-role-options input[type=checkbox] { width:18px; height:18px; margin:0; accent-color:#172c4c; }
+.workflow-role-fields small { display:block; line-height:1.5; color:#64748b; }

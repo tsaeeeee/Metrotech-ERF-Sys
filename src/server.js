@@ -1,3 +1,4 @@
+import {hasRole,sameEmail,recallRole} from './access.js';
 import 'dotenv/config';
 import express from 'express';
 import helmet from 'helmet';
@@ -198,15 +199,9 @@ function requireAdmin(req,res,next){
 }
 
 function canAccess(employee,request){
-  if(request.form_type==='ECF' && employee.ecfRole==='CHECKER' &&
-     request.status==='PENDING_CHECK') return true;
-  if(request.form_type==='ECF' && employee.ecfRole==='NONE') return false;
-  if(request.form_type==='ECF' && employee.role==='NONE' && employee.ecfRole!=='NONE')
-    return String(request.requester_email).toLowerCase()===String(employee.email).toLowerCase();
-  if(employee.role==='REQUESTOR') return String(request.requester_email).toLowerCase()===String(employee.email).toLowerCase();
-  if(employee.role==='REVIEWER') return String(request.reviewer_email).toLowerCase()===String(employee.email).toLowerCase();
-  if(employee.role==='APPROVER') return String(request.approver_email).toLowerCase()===String(employee.email).toLowerCase();
-  return false;
+  const form=request.form_type||'ERF';
+  return [['REQUESTOR','requester_email'],['CHECKER','checker_email'],['REVIEWER','reviewer_email'],['APPROVER','approver_email']]
+    .some(([role,field])=>hasRole(employee,form,role)&&sameEmail(employee.email,request[field]));
 }
 
 async function canViewRequest(employee,request){
@@ -604,7 +599,7 @@ app.post('/api/admin/app-settings/test-smtp',requireUser,requireAdmin,async(req,
 
 app.post('/api/requests',requireUser,upload.any(),async(req,res,next)=>{
   try{
-    if(req.employee.role!=='REQUESTOR') return res.status(403).json({error:'Only Requestor can create a request.'});
+    if(!hasRole(req.employee,'ERF','REQUESTOR')) return res.status(403).json({error:'Only Requestor can create a request.'});
     const requestType=normalizeRequestType(req.body.requestType||'EXPENSE');
     if(requestType!=='EXPENSE') return res.status(400).json({error:'Use Expense Claim (ECF) for claims.'});
     const {items,files}=parseItemsAndFiles(req,requestType);
@@ -627,7 +622,7 @@ app.post('/api/requests',requireUser,upload.any(),async(req,res,next)=>{
 
 app.post('/api/ecf/claims',requireUser,upload.any(),async(req,res,next)=>{
   try{
-    if(req.employee.ecfRole!=='REQUESTOR') return res.status(403).json({error:'ECF Requestor access required.'});
+    if(!hasRole(req.employee,'ECF','REQUESTOR')) return res.status(403).json({error:'ECF Requestor access required.'});
     const {items,files}=parseItemsAndFiles(req,'REIMBURSEMENT');
     const settings=await getRuntimeAppSettings();
     const request=await createEcfClaim(req.employee,items,settings.timezone,
@@ -643,17 +638,13 @@ app.post('/api/ecf/claims',requireUser,upload.any(),async(req,res,next)=>{
 
 app.post('/api/requests/:id/recall',requireUser,withRequestWorkflowLock(async(req,res,next)=>{
   try{
-    const approvedRecall=req.employee.role==='APPROVER';
-    const reviewedRecall=req.employee.role==='REVIEWER';
-    const decisionRecall=approvedRecall||reviewedRecall;
-    if(!decisionRecall){
     const current=await getRequestDetail(req.params.id);
     if(!current) return res.status(404).json({error:'Request not found'});
-    if(current.request.form_type==='ECF'
-      ? !['REQUESTOR','NONE'].includes(req.employee.role) || req.employee.ecfRole!=='REQUESTOR'
-      : req.employee.role!=='REQUESTOR')
-      return res.status(403).json({error:'Requestor access required to recall this request.'});
-    }
+    const role=recallRole(req.employee,current.request);
+    if(!role) return res.status(403).json({error:'Only the assigned user can recall this request at its current stage.'});
+    const approvedRecall=role==='APPROVER';
+    const reviewedRecall=role==='REVIEWER';
+    const decisionRecall=approvedRecall||reviewedRecall;
     const request=approvedRecall
       ? await recallApprovedExpenseRequest(req.params.id,req.employee,req.body?.reason)
       : reviewedRecall
@@ -664,7 +655,7 @@ app.post('/api/requests/:id/recall',requireUser,withRequestWorkflowLock(async(re
       event:approvedRecall?'APPROVAL_RECALLED':reviewedRecall?'REVIEW_RECALLED':'RECALLED',
       request:detail.request,
       to:decisionRecall?detail.request.requester_email:detail.request.form_type==='ECF'?detail.request.checker_email:detail.request.reviewer_email,
-      cc:approvedRecall?[detail.request.reviewer_email,(await getRuntimeAppSettings()).finalApprovedCc]:reviewedRecall?detail.request.approver_email:undefined,
+      cc:approvedRecall?[detail.request.reviewer_email,detail.request.approver_email,(await getRuntimeAppSettings()).finalApprovedCc]:reviewedRecall?detail.request.approver_email:undefined,
       subject:`[${requestCode(detail.request)}] ${detail.request.ref_no} ${approvedRecall?'approval recalled':reviewedRecall?'review recalled':'recalled by requestor'}`,
       text:decisionRecall
         ? `${detail.request.ref_no} ${approvedRecall?'approval':'review'} was recalled by ${req.employee.name}. Reason: ${request.last_rejection_reason}. The previous approval is no longer current. Requestor must revise and resubmit for ${detail.request.form_type==='ECF'?'a new check, review, and approval':'a new review and approval'}.`
@@ -678,9 +669,7 @@ app.post('/api/requests/:id/revise',requireUser,upload.any(),withRequestWorkflow
   try{
     const currentDetail=await getRequestDetail(req.params.id);
     if(!currentDetail) return res.status(404).json({error:'Request not found'});
-    if(currentDetail.request.form_type==='ECF'
-      ? !['REQUESTOR','NONE'].includes(req.employee.role) || req.employee.ecfRole!=='REQUESTOR'
-      : req.employee.role!=='REQUESTOR')
+    if(!hasRole(req.employee,currentDetail.request.form_type,'REQUESTOR'))
       return res.status(403).json({error:'Requestor access required to revise this request.'});
     if(!canAccess(req.employee,currentDetail.request)) return res.status(403).json({error:'Access denied'});
 

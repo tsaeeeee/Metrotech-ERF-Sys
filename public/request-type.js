@@ -248,7 +248,7 @@ function sigSyncWorkflowUi(){
     notice?.remove();
   }
 
-  if((currentEmployee.role==='REQUESTOR' || currentEmployee.ecfRole==='REQUESTOR') && missing){
+  if((hasRole(currentEmployee,'ERF','REQUESTOR') || hasRole(currentEmployee,'ECF','REQUESTOR')) && missing){
     const submit=$('#submitExpenseBtn');
     if(submit) submit.disabled=true;
   }
@@ -256,7 +256,7 @@ function sigSyncWorkflowUi(){
   const decisionPanel=$('#decisionPanel');
   let decisionNote=$('#signatureDecisionNote');
   const decisionVisible=decisionPanel && !decisionPanel.classList.contains('hidden');
-  if(missing && decisionVisible && ['REVIEWER','APPROVER'].includes(currentEmployee.role)){
+  if(missing && decisionVisible && ['REVIEWER','APPROVER'].includes(currentDecisionRole)){
     if(!decisionNote){
       decisionNote=document.createElement('div');
       decisionNote.id='signatureDecisionNote';
@@ -377,13 +377,13 @@ function rtSetRequestType(type){
 }
 
 function rtEnsureControl(){
-  if(currentEmployee?.role!=='REQUESTOR') return;
+  if(!hasRole(currentEmployee,'ERF','REQUESTOR')&&!hasRole(currentEmployee,'ECF','REQUESTOR')) return;
   rtInjectStyles();
   rtApplyUi();
 }
 
 function rtApplyUi(){
-  if(currentEmployee?.role!=='REQUESTOR') return;
+  if(!hasRole(currentEmployee,'ERF','REQUESTOR')&&!hasRole(currentEmployee,'ECF','REQUESTOR')) return;
 
   const expenseButton=$('#requestTypeExpenseLabel');
   const reimbursementButton=$('#requestTypeReimbursementLabel');
@@ -439,7 +439,7 @@ function rtApplyUi(){
 const rtOriginalLoadMe=loadMe;
 loadMe=async function(...args){
   const result=await rtOriginalLoadMe(...args);
-  if(currentEmployee?.role==='REQUESTOR') rtEnsureControl();
+  if(hasRole(currentEmployee,'ERF','REQUESTOR')||hasRole(currentEmployee,'ECF','REQUESTOR')) rtEnsureControl();
   sigSyncWorkflowUi();
   return result;
 };
@@ -518,7 +518,7 @@ sendDecision=async function(decision){
   if(sigDecisionBusy || !currentDetailId) return;
   const rejecting=String(decision).toUpperCase()==='REJECT';
   if(rejecting && !$('#decisionReason').value.trim()) return;
-  const role=currentEmployee?.role;
+  const role=currentDecisionRole;
   const action=role==='REVIEWER'
     ? (rejecting?'reject this request':'review and approve this request')
     : (rejecting?'reject this request':'approve this request');

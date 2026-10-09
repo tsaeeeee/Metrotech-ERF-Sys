@@ -1,3 +1,5 @@
+let currentDecisionRole=null;
+let approvalRecallRole=null;
 const $=s=>document.querySelector(s);
 const rupiah=n=>'Rp'+Number(n||0).toLocaleString('id-ID');
 let currentEmployee=null;
@@ -186,9 +188,7 @@ async function loadMe(){
       .split(/\s+/).filter(Boolean).slice(0,2).map(x=>x[0]).join('').toUpperCase();
     $('#userAvatar').textContent=initials||'U';
     $('#userMenuName').textContent=employee.name||employee.email;
-    $('#userMenuRole').textContent=employee.role==='NONE'
-      ? employee.ecfRole==='NONE'?'No Access':`ECF ${employee.ecfRole==='CHECKER'?'Checker':'Requestor'}`
-      : employee.role;
+    $('#userMenuRole').textContent=employee.role==='ADMIN'?'ADMIN':[...new Set([...rolesFor(employee,'ERF'),...rolesFor(employee,'ECF')])].join(' · ')||'No Access';
     $('#userMenuFullName').textContent=employee.name||employee.email;
     $('#userMenuEmail').textContent=employee.email;
 
@@ -215,7 +215,7 @@ async function loadMe(){
 
     $('#roleTitle').textContent=employee.role==='REQUESTOR'?'Requestor Dashboard':employee.role==='REVIEWER'?'Reviewer Dashboard':employee.role==='APPROVER'?'Approver Dashboard':'Checker Dashboard';
     $('#queueTitle').textContent=employee.role==='REQUESTOR'?'My Requests':employee.role==='REVIEWER'?'Pending Review':'Pending Approval';
-    $('#requestForm').classList.toggle('hidden',employee.role!=='REQUESTOR');
+    $('#requestForm').classList.toggle('hidden',!hasRole(employee,'ERF','REQUESTOR'));
 
     const fields=[
       ['Employee ID',employee.employee_id],
@@ -225,7 +225,7 @@ async function loadMe(){
     ];
     $('#profile').innerHTML=fields.map(([a,b])=>`<div><label>${a}</label><strong>${esc(b)}</strong></div>`).join('');
     renderRequests(requests);
-    if(employee.role==='REQUESTOR' && !$('#paymentDate').value) $('#paymentDate').value=new Date().toISOString().slice(0,10);
+    if((hasRole(employee,'ERF','REQUESTOR')||hasRole(employee,'ECF','REQUESTOR')) && !$('#paymentDate').value) $('#paymentDate').value=new Date().toISOString().slice(0,10);
   }catch(e){
     $('#sessionStatus').setAttribute('aria-busy','false');
     if(startingSession && !currentEmployee && e.status!==401){
@@ -254,10 +254,7 @@ function renderRequests(requests,tableId='table',bodyId='tbody',emptyId='empty')
   $(`#${emptyId}`).classList.add('hidden');
   $(`#${tableId}`).classList.remove('hidden');
   $(`#${bodyId}`).innerHTML=requests.map(r=>{
-    const ownRequest=(r.form_type==='ECF'
-      ? currentEmployee?.ecfRole==='REQUESTOR'
-      : currentEmployee?.role==='REQUESTOR') &&
-      String(r.requester_email||'').toLowerCase()===String(currentEmployee.email).toLowerCase();
+    const ownRequest=hasRole(currentEmployee,r.form_type||'ERF','REQUESTOR') && sameEmail(r.requester_email,currentEmployee.email);
     const revisable=['CHECK_REJECTED','REVIEW_REJECTED','APPROVAL_REJECTED','RECALLED'].includes(r.status);
     const revise=ownRequest && revisable
       ? `<button class="btn tiny warning" onclick="startRevision('${r.id}')">${r.status==='RECALLED'?'Edit & Resubmit':'Revise'}</button>`
@@ -266,12 +263,9 @@ function renderRequests(requests,tableId='table',bodyId='tbody',emptyId='empty')
       r.status===(r.form_type==='ECF'?'PENDING_CHECK':'PENDING_REVIEW')
       ? `<button class="btn tiny recall" onclick="recallRequest('${r.id}','${esc(r.ref_no)}','${r.form_type==='ECF'?'ECF':'ERF'}')">Recall</button>`
       : '';
-    const canRecallDecision=(currentEmployee?.role==='APPROVER' && r.status==='APPROVED' &&
-      String(r.approver_email).toLowerCase()===String(currentEmployee.email).toLowerCase()) ||
-      (currentEmployee?.role==='REVIEWER' && r.status==='PENDING_APPROVAL' &&
-      String(r.reviewer_email).toLowerCase()===String(currentEmployee.email).toLowerCase());
-    const approvalRecall=canRecallDecision && (r.form_type!=='ECF' || currentEmployee.role==='APPROVER')
-      ? `<button class="btn tiny danger" data-form-type="${r.form_type==='ECF'?'ECF':'ERF'}" onclick="openApprovalRecall('${r.id}',this)">Recall</button>` : '';
+    const recallAs=recallRole(currentEmployee,r);
+    const approvalRecall=['APPROVER','REVIEWER'].includes(recallAs)
+      ? `<button class="btn tiny danger" data-recall-role="${recallAs}" data-form-type="${r.form_type==='ECF'?'ECF':'ERF'}" onclick="openApprovalRecall('${r.id}',this)">Recall</button>` : '';
     const savePdf=r.status==='APPROVED'
       ? `<button class="btn tiny primary" onclick="downloadFinalPdf('${r.id}')">Save PDF</button>`
       : '';
@@ -310,9 +304,7 @@ function openProfileModal(){
     ['Department',currentEmployee.department],
     ['Location',currentEmployee.location],
     ['Division',currentEmployee.division],
-    ['Role',currentEmployee.role==='NONE'
-      ? `ERF: No Access · ECF: ${currentEmployee.ecfRole==='CHECKER'?'Checker':currentEmployee.ecfRole==='REQUESTOR'?'Requestor':'No Access'}`
-      : currentEmployee.role]
+    ['Roles',`ERF: ${rolesFor(currentEmployee,'ERF').join(', ')||'No Access'} · ECF: ${rolesFor(currentEmployee,'ECF').join(', ')||'No Access'}`]
   ];
   $('#lockedProfileGrid').innerHTML=fields.map(([label,value])=>`
     <div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>
@@ -724,6 +716,7 @@ async function saveAdminUser(event){
     location:$('#adminLocation').value.trim(),
     division:$('#adminDivision').value.trim(),
     role:$('#adminRole').value,
+    workflowRoles:adminSelectedWorkflowRoles(),
     active:editingAdminEmail?$('#adminActive').checked:true
   };
 
@@ -967,9 +960,10 @@ let approvalRecallTrigger=null;
 let approvalRecallBusy=false;
 
 function openApprovalRecall(id,trigger){
-  if(!['APPROVER','REVIEWER'].includes(currentEmployee?.role)||approvalRecallBusy) return;
+  if(!['APPROVER','REVIEWER'].includes(trigger?.dataset.recallRole)||approvalRecallBusy) return;
+  approvalRecallRole=trigger.dataset.recallRole;
   if(typeof sigRequireWorkflowSignature==='function'&&!sigRequireWorkflowSignature('recall this approval')) return;
-  $('#approvalRecallDescription').textContent=currentEmployee.role==='REVIEWER'
+  $('#approvalRecallDescription').textContent=approvalRecallRole==='REVIEWER'
     ? 'Withdraw your review and return this request to the Requestor for revision. It will leave the Approver queue and require a new review and approval.'
     : trigger?.dataset.formType==='ECF'
       ? 'Return this claim to the Requestor for revision. It must pass Checker, Reviewer, and Approver again after resubmission. The previous approved PDF stays in the audit trail.'
@@ -1021,7 +1015,7 @@ async function submitApprovalRecall(event){
     approvalRecallBusy=false;
     closeApprovalRecall();
     await loadMe();
-    msg(`${r.refNo}: ${currentEmployee.role==='REVIEWER'?'review':'approval'} recalled. Requestor can revise and resubmit.`,'ok');
+    msg(`${r.refNo}: ${approvalRecallRole==='REVIEWER'?'review':'approval'} recalled. Requestor can revise and resubmit.`,'ok');
   }catch(e){$('#approvalRecallError').textContent=e.message;}
   finally{
     approvalRecallBusy=false;
@@ -1180,9 +1174,8 @@ async function openRequest(id){
     const formUrl=data.documents.form?`/api/requests/${id}/form?t=${stamp}`:null;
     const evidenceUrl=data.documents.evidence?`/api/requests/${id}/evidence?t=${stamp}`:null;
 
-    const email=String(currentEmployee.email).toLowerCase();
-    const actionable=(currentEmployee.role==='REVIEWER'&&r.status==='PENDING_REVIEW'&&String(r.reviewer_email).toLowerCase()===email) ||
-      (currentEmployee.role==='APPROVER'&&r.status==='PENDING_APPROVAL'&&String(r.approver_email).toLowerCase()===email);
+    currentDecisionRole=assignedRole(currentEmployee,r);
+    const actionable=Boolean(currentDecisionRole);
     $('#decisionPanel').classList.toggle('hidden',!actionable);
     $('#detailSavePdfBtn').classList.toggle('hidden',r.status!=='APPROVED');
     $('#decisionReason').value='';
@@ -1200,6 +1193,7 @@ function closeDetail(){
   $('#formPdfViewer').innerHTML='';
   $('#evidencePdfViewer').innerHTML='';
   currentDetailId=null;
+  currentDecisionRole=null;
   document.body.classList.remove('modal-open');
 }
 
@@ -1210,7 +1204,7 @@ async function sendDecision(decision){
   if(!currentDetailId) return;
   const reason=$('#decisionReason').value.trim();
   if(decision==='REJECT'&&!reason) return;
-  const isReviewer=currentEmployee.role==='REVIEWER';
+  const isReviewer=currentDecisionRole==='REVIEWER';
   const url=isReviewer?`/api/requests/${currentDetailId}/review`:`/api/requests/${currentDetailId}/approve`;
   $('#approveBtn').disabled=true; $('#rejectBtn').disabled=true;
   try{

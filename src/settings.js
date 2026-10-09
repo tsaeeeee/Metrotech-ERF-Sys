@@ -285,6 +285,9 @@ export async function saveAppSettings(input,actorEmail=''){
     }
 
     if(ecfRoleAssignment){
+      await client.query('select pg_advisory_xact_lock(77123001)');
+      const explicit=(await client.query('select workflow_roles from employees where lower(email)=lower($1)',[ecfRoleAssignment.email])).rows[0];
+      if(explicit?.workflow_roles!=null) throw Object.assign(new Error('Use User Management to edit multi-role access.'),{status:409});
       await client.query(
         `select * from set_ecf_employee_role($1,$2,$3)`,
         [ecfRoleAssignment.email,ecfRoleAssignment.role,ecfRoleAssignment.replaceChecker]
@@ -325,8 +328,8 @@ export async function getAppReadiness(){
   const settings=await getRuntimeAppSettings();
   const {rows}=await pool.query(`
     select
-      count(*) filter(where role='REVIEWER' and active=true)::int as reviewers,
-      count(*) filter(where role='APPROVER' and active=true)::int as approvers
+      count(*) filter(where employee_has_workflow_role(email,'ERF','REVIEWER'))::int as reviewers,
+      count(*) filter(where employee_has_workflow_role(email,'ERF','APPROVER'))::int as approvers
     from employees
   `);
   const counts=rows[0]||{reviewers:0,approvers:0};

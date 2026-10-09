@@ -417,7 +417,7 @@ export async function sendWorkflowMail({event,request,to,cc='',subject,text,atta
     : uniqueRecipients(baseCc);
 
   const originalTo=toRecipients.join(',');
-  const originalCc=finalCc.join(',');
+  const originalCc=finalCc.filter(email=>!toRecipients.some(to=>to.toLowerCase()===email.toLowerCase())).join(',');
   const override=String(settings.mailOverrideTo||'').trim();
   const toText=override||originalTo;
   const ccText=override?'':originalCc;

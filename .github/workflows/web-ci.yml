@@ -61,6 +61,8 @@ jobs:
         run: npm run test:workflow
       - name: Test production ERF to EMS upgrade and rollback
         run: node scripts/release/upgrade-smoke.js
+      - name: Test assigned multi-role and single-approver policy
+        run: node scripts/multi-role-smoke.js
       - name: Test EMS HTTP workflow
         run: npm run test:ems-http
       - name: Install browser for UI regression checks
