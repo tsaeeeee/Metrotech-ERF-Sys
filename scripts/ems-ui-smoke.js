@@ -412,6 +412,16 @@ try{
     }
   }
 
+  const ownerUser={...employee('APPROVER'),workflow_roles:{ERF:['REQUESTOR','REVIEWER','APPROVER'],ECF:['REQUESTOR','CHECKER','REVIEWER','APPROVER']}};
+  const ownerSession=await session(ownerUser);
+  for(const view of ['erf','ecf','requests','tasks','history']) assert(await ownerSession.page.locator(`[data-ems-view="${view}"]`).isVisible(),`Owner must have ${view} navigation.`);
+  await ownerSession.page.locator('[data-ems-view="tasks"]').click();
+  await ownerSession.page.locator('#emsTaskRows button').first().click();
+  await ownerSession.page.waitForFunction(()=>emsDetail?.id==='task');
+  assert.equal(await ownerSession.page.evaluate(()=>currentDecisionRole),'APPROVER','Multi-role account must use the pending stage, not a primary/first role.');
+  assert(await ownerSession.page.locator('#approveBtn').isEnabled());
+  await ownerSession.context.close();
+
   const recallApprover=await session(employee('APPROVER'));
   await recallApprover.page.locator('[data-ems-view="history"]').click();
   const recallButton=recallApprover.page.locator('#decisionHistoryBody').getByRole('button',{name:'Recall',exact:true});
