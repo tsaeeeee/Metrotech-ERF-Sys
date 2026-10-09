@@ -1093,3 +1093,5 @@ h1{margin:0;color:var(--navy);font-size:26px}h2{margin:0 0 12px;color:var(--navy
 .workflow-role-options label { display:flex; align-items:center; gap:8px; margin:0; font-weight:500; }
 .workflow-role-options input[type=checkbox] { width:18px; height:18px; margin:0; accent-color:#172c4c; }
 .workflow-role-fields small { display:block; line-height:1.5; color:#64748b; }
+
+.staging-banner { padding:8px 16px; text-align:center; background:#fff1c2; color:#653c00; font-size:12px; font-weight:700; position:relative; z-index:60; }

@@ -29,6 +29,11 @@ async function api(url,opt={}){
 async function loadAuthMode(){
   try{
     const mode=await api('/api/auth-mode');
+    if(mode.staging && !document.getElementById('stagingBanner')){
+      const banner=document.createElement('div');banner.id='stagingBanner';banner.className='staging-banner';
+      banner.textContent='STAGING · Production data copy · Test transactions only · Email captured locally';
+      document.body.prepend(banner);document.title='[STAGING] '+document.title;
+    }
     $('#loginForm').classList.toggle('hidden',!mode.localLoginEnabled);
     $('#googleLoginWrap').classList.toggle('hidden',!mode.googleAuthReady);
   }catch{

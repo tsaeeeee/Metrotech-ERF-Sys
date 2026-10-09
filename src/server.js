@@ -53,6 +53,7 @@ app.use(helmet({contentSecurityPolicy:false}));
 app.use(express.json({limit:'2mb'}));
 app.use(express.urlencoded({extended:false}));
 app.use(session({
+  name:process.env.EMS_STAGING==='true'?'ems.staging.sid':'connect.sid',
   store:new PgStore({pool,createTableIfMissing:true}),
   secret:bootSettings.sessionSecret || process.env.SESSION_SECRET || 'dev-only-change-me',
   resave:false,
@@ -101,6 +102,7 @@ app.get('/api/auth-mode',async(req,res,next)=>{
   try{
     const settings=await getRuntimeAppSettings();
     res.json({
+      staging:process.env.EMS_STAGING==='true',
       devAuth:settings.localLoginEnabled,
       localLoginEnabled:settings.localLoginEnabled,
       googleAuthReady:googleAuthReady(settings)

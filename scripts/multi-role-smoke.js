@@ -48,6 +48,7 @@ try{
   const items=[{category:'Transportation',purpose:'Multi-role regression',paymentDate:'2026-10-09',amount:10000,evidenceNames:[]}];
   await pool.query(`insert into employee_payment_profiles(employee_email,payment_to,bank_name,bank_code,account_number)
     select email,name,'Bank Central Asia','BCA','123456789' from employees`);
+  await pool.query("update employees set must_change_password=false,must_upload_signature=false,signature_file='/tmp/ci-signature.png'");
   let selfErf=await db.createExpenseRequest(owner,items);
   assert.equal(selfErf.approver_email,owner.email);assert.notEqual(selfErf.reviewer_email,owner.email);
   await assert.rejects(db.transitionRequest(selfErf.id,owner,'REVIEW','APPROVE'),e=>e.status===403);

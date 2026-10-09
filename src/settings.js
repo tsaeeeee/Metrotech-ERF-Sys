@@ -100,6 +100,14 @@ export async function getRuntimeAppSettings(){
   const raw={...defaults};
   for(const row of rows) raw[row.key]=row.value;
 
+  const staging=process.env.EMS_STAGING==='true';
+  if(staging){
+    if(!process.env.EMS_STAGE_SESSION_SECRET) throw new Error('Staging requires its own session secret.');
+    Object.assign(raw,{app_base_url:process.env.EMS_STAGE_URL||'http://127.0.0.1:18090',
+      local_login_enabled:'true',google_enabled:'false',cookie_secure:'false',
+      smtp_enabled:'true',smtp_host:'mailpit',smtp_port:'1025',smtp_secure:'false',
+      smtp_user:'',smtp_pass:'',mail_override_to:'',session_secret:process.env.EMS_STAGE_SESSION_SECRET});
+  }
   const baseUrl=String(raw.app_base_url||'').replace(/\/$/,'');
   return {
     appBaseUrl:baseUrl,
