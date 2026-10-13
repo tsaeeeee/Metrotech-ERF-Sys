@@ -407,22 +407,36 @@ export async function listMyRequests(employee){
   return rows;
 }
 
-// Past participation remains readable while the user retains access to that module.
+// Assigned participants can track progress from submission; past actors retain module-scoped history.
 function historyScope(){
   return `(employee_has_workflow_role($1,r.form_type,'REQUESTOR') or
     employee_has_workflow_role($1,r.form_type,'CHECKER') or
     employee_has_workflow_role($1,r.form_type,'REVIEWER') or
     employee_has_workflow_role($1,r.form_type,'APPROVER')) and
-    (lower(r.requester_email)=lower($1) or exists(select 1 from workflow_actions a
+    (lower(r.requester_email)=lower($1)
+      or (lower(r.reviewer_email)=lower($1) and employee_has_workflow_role($1,r.form_type,'REVIEWER'))
+      or (lower(r.approver_email)=lower($1) and employee_has_workflow_role($1,r.form_type,'APPROVER'))
+      or (employee_has_workflow_role($1,r.form_type,'CHECKER') and exists(select 1 from ecf_details hd
+        where hd.request_id=r.id and lower(hd.checker_email)=lower($1)))
+      or exists(select 1 from workflow_actions a
       where a.request_id=r.id and lower(a.actor_email)=lower($1)))`;
 }
 export async function hasDecisionHistory(requestId,employee){
   return (await pool.query(`select exists(select 1 from requests r where r.id=$2 and ${historyScope()}) as participated`,[employee.email,requestId])).rows[0].participated;
 }
 export async function listDecisionHistory(employee){
-  const tasks=await listTasksForEmployee(employee);
-  return (await pool.query(`select r.* from requests r where ${historyScope()}
-    and not(r.id=any($2::uuid[])) order by r.updated_at desc limit 100`,[employee.email,tasks.map(r=>r.id)])).rows;
+  // Progress includes current tasks too; only My Tasks determines whose turn it is.
+  return (await pool.query(`select r.*,d.checker_email,
+      case r.status when 'PENDING_CHECK' then 'Checker' when 'PENDING_REVIEW' then 'Reviewer'
+        when 'PENDING_APPROVAL' then 'Approver' end as waiting_for_role,
+      case r.status when 'PENDING_CHECK' then coalesce(c.name,d.checker_email)
+        when 'PENDING_REVIEW' then coalesce(v.name,r.reviewer_email)
+        when 'PENDING_APPROVAL' then coalesce(p.name,r.approver_email) end as waiting_for_name
+    from requests r left join ecf_details d on d.request_id=r.id
+    left join employees c on lower(c.email)=lower(d.checker_email)
+    left join employees v on lower(v.email)=lower(r.reviewer_email)
+    left join employees p on lower(p.email)=lower(r.approver_email)
+    where ${historyScope()} order by r.updated_at desc limit 100`,[employee.email])).rows;
 }
 
 export async function getEmsDashboard(employee){

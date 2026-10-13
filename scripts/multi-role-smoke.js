@@ -86,6 +86,14 @@ try{
   // No implicit Checker takeover: another permitted checker cannot act on this assignment.
   const claim=await db.createEcfClaim(requester,items);
   const cd=await db.getRequestDetail(claim.id);
+  const assignedChecker=await db.getEmployee(cd.request.checker_email);
+  const assignedReviewer=await db.getEmployee(cd.request.reviewer_email);
+  for(const actor of [requester,assignedChecker,assignedReviewer,owner])
+    assert((await db.listDecisionHistory(actor)).some(r=>r.id===claim.id&&r.status==='PENDING_CHECK'));
+  const bystander=await db.createManagedEmployee(userData('Bystander','NONE',{ERF:['REVIEWER'],ECF:['CHECKER','REVIEWER']}));
+  assert(!(await db.listDecisionHistory(bystander)).some(r=>r.id===claim.id));
+  assert.equal(await db.hasDecisionHistory(claim.id,bystander),false);
+
   const wrong=cd.request.checker_email===owner.email?outsider:owner;
   await assert.rejects(db.transitionRequest(claim.id,wrong,'CHECK','APPROVE'),e=>e.status===403);
   assert(!(await db.listTasksForEmployee(wrong)).some(r=>r.id===claim.id&&r.task_role==='CHECKER'));

@@ -52,13 +52,13 @@ function row(form_type,status,id){
 const revisionRow={...row('ECF','CHECK_REJECTED','revision'),last_rejection_reason:'Update receipt',
   service_order_number:'SO-ORIGINAL'};
 
-async function session(user,{signedIn=true,dashboard={totals:[],trend:[],categories:[]}}={}){
+async function session(user,{signedIn=true,dashboard={totals:[],trend:[],categories:[]},initialHistoryStatus='APPROVED'}={}){
   const context=await browser.newContext({viewport:{width:1440,height:1000}});
   const page=await context.newPage();
   page.setDefaultTimeout(10000);
   page.on('pageerror',error=>errors.push(error.message));
   let active=signedIn?user:null;
-  let historyStatus='APPROVED';
+  let historyStatus=initialHistoryStatus;
   const writes=[];
   await page.route(`${origin}/api/**`,async route=>{
     const request=route.request(),path=new URL(request.url()).pathname;
@@ -76,12 +76,12 @@ async function session(user,{signedIn=true,dashboard={totals:[],trend:[],categor
       data={employee:active,requests:user.role==='REQUESTOR'||
         (user.role==='NONE'&&user.ecfRole==='REQUESTOR')?[revisionRow]:tasks,
         tasks:user.ecfRole==='REQUESTOR'||user.ecfRole==='NONE'||user.role==='ADMIN'?[]:tasks,
-        history:[row('ECF',historyStatus,'history')],
+        history:[{...row('ECF',historyStatus,'history'),waiting_for_role:{PENDING_CHECK:'Checker',PENDING_REVIEW:'Reviewer',PENDING_APPROVAL:'Approver'}[historyStatus],waiting_for_name:'UI Assigned Person'}],
         myRequests:user.role==='REQUESTOR'||
           (user.role==='NONE'&&user.ecfRole==='REQUESTOR')?[revisionRow]:[]};
     }else if(path==='/api/ems/dashboard')data=dashboard;
     else if(path==='/api/requests/task' || path==='/api/requests/history'){
-      const state=path.endsWith('history')?'APPROVED':user.ecfRole==='CHECKER'?'PENDING_CHECK':
+      const state=path.endsWith('history')?historyStatus:user.ecfRole==='CHECKER'?'PENDING_CHECK':
         user.role==='REVIEWER'?'PENDING_REVIEW':'PENDING_APPROVAL';
       data={request:{...row('ECF',state,path.split('/').pop()),checker_name:'UI Checker',
         reviewer_name:'UI Reviewer',approver_name:'UI Approver',
@@ -421,6 +421,20 @@ try{
   assert.equal(await ownerSession.page.evaluate(()=>currentDecisionRole),'APPROVER','Multi-role account must use the pending stage, not a primary/first role.');
   assert(await ownerSession.page.locator('#approveBtn').isEnabled());
   await ownerSession.context.close();
+
+  for(const stage of ['PENDING_CHECK','PENDING_REVIEW','PENDING_APPROVAL']){
+    for(const role of ['REQUESTOR','CHECKER','REVIEWER','APPROVER']){
+      const actor=await session(employee(role==='CHECKER'?'NONE':role,role),{initialHistoryStatus:stage});
+      await actor.page.locator('[data-ems-view="history"]').click();
+      assert((await actor.page.locator('#decisionHistoryTitle').innerText()).includes('Progress'));
+      assert((await actor.page.locator('#decisionHistoryBody').innerText()).includes('Waiting for: UI Assigned Person'));
+      await actor.page.locator('#decisionHistoryBody').getByRole('button',{name:'Open',exact:true}).click();
+      await actor.page.waitForFunction(()=>emsDetail?.id==='history');
+      const turn={PENDING_CHECK:'CHECKER',PENDING_REVIEW:'REVIEWER',PENDING_APPROVAL:'APPROVER'}[stage];
+      assert.equal(await actor.page.locator('#decisionPanel').isVisible(),role===turn,`${role} must only act at ${turn} stage.`);
+      await actor.context.close();
+    }
+  }
 
   const recallApprover=await session(employee('APPROVER'));
   await recallApprover.page.locator('[data-ems-view="history"]').click();

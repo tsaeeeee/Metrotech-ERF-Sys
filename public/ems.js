@@ -171,7 +171,7 @@ function emsNavigate(view){
   if(view==='tasks') emsRenderTasks();
   if(view==='history'){
     const data=window.emsBootstrap||{};
-    $('#decisionHistoryTitle').textContent='Activity History';
+    $('#decisionHistoryTitle').textContent='History & Progress';
     renderRequests(data.history||[],'decisionHistoryTable','decisionHistoryBody','decisionHistoryEmpty');
   }
   if(view==='home') emsLoadDashboard();

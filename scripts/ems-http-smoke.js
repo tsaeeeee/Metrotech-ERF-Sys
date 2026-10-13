@@ -73,6 +73,35 @@ try{
     'Independent claim detail must include both document views.');
   assert((await pool.query('select status from requests where id=$1',[erf.id])).rows[0].status==='PENDING_REVIEW',
     'ECF submission must work without an approved ERF.');
+  const checkerCookie=await login('workflow-checker');
+  const reviewer=await getEmployee(detail.data.request.reviewer_email);
+  const reviewerCookie=await login(reviewer.username);
+  const approverCookie=await login(approver.username);
+  const participants=[['Requestor',requestorCookie],['Checker',checkerCookie],['Reviewer',reviewerCookie],['Approver',approverCookie]];
+  async function assertProgress(status,activeRole){
+    for(const [role,cookie] of participants){
+      const me=await request('/api/me',{cookie});
+      const progress=me.data.history.filter(row=>row.id===id);
+      assert(progress.length===1&&progress[0].status===status,`${role} must track ${status} exactly once.`);
+      assert(progress[0].waiting_for_role===activeRole&&progress[0].waiting_for_name,`${role} must see who is being waited on.`);
+      assert(me.data.tasks.some(row=>row.id===id)===(role===activeRole),`${role} task visibility must match its turn.`);
+      assert((await request(`/api/requests/${id}`,{cookie})).status===200,`${role} must open progress before acting.`);
+    }
+  }
+  await assertProgress('PENDING_CHECK','Checker');
+  const actionCount=(await pool.query('select count(*)::int as n from workflow_actions where request_id=$1',[id])).rows[0].n;
+  for(const [route,cookie] of [['review',reviewerCookie],['approve',approverCookie]]){
+    const denied=await request(`/api/requests/${id}/${route}`,{method:'POST',body:{decision:'APPROVE'},cookie});
+    assert([403,409].includes(denied.status),'Early visibility must not permit skipping Check.');
+  }
+  assert((await pool.query('select count(*)::int as n from workflow_actions where request_id=$1',[id])).rows[0].n===actionCount,
+    'Reading progress or denied early decisions must not fabricate audit history.');
+  for(const cookie of [requestorCookie,await login((await getEmployee(erf.reviewer_email)).username),approverCookie]){
+    const me=await request('/api/me',{cookie});
+    assert(me.data.history.some(row=>row.id===erf.id&&row.status==='PENDING_REVIEW'),'ERF must be visible from submission too.');
+  }
+  assert(!(await request('/api/me',{cookie:approverCookie})).data.tasks.some(row=>row.id===erf.id),
+    'Approver must not receive the ERF task before review.');
   const tasksCookie=await login('workflow-requestor');
   assert((await request('/api/me',{cookie:tasksCookie})).data.myRequests.some(row=>row.id===id),
     'My Requests must include the submitted ECF.');
@@ -104,7 +133,6 @@ try{
   assert(revisedDetail.data.items[0].evidence_names.includes('proof.pdf'),
     'ECF revision must retain existing evidence.');
 
-  const checkerCookie=await login('workflow-checker');
   const tasks=await request('/api/me',{cookie:checkerCookie});
   assert(tasks.data.employee.role==='NONE' && tasks.data.employee.ecfRole==='CHECKER',
     'ECF Checker must still work with no ERF access.');
@@ -112,12 +140,12 @@ try{
   assert((await request(`/api/requests/${id}/check`,{
     method:'POST',body:{decision:'APPROVE'},cookie:checkerCookie
   })).data.status==='PENDING_REVIEW','Checker must pass claim to Reviewer.');
-  const reviewer=await getEmployee(detail.data.request.reviewer_email);
-  const reviewerCookie=await login(reviewer.username);
+  await assertProgress('PENDING_REVIEW','Reviewer');
+  assert([403,409].includes((await request(`/api/requests/${id}/approve`,{method:'POST',body:{decision:'APPROVE'},cookie:approverCookie})).status),'Approver must still wait for review.');
   assert((await request(`/api/requests/${id}/review`,{
     method:'POST',body:{decision:'APPROVE'},cookie:reviewerCookie
   })).data.status==='PENDING_APPROVAL','Reviewer must pass claim to Approver.');
-  const approverCookie=await login(approver.username);
+  await assertProgress('PENDING_APPROVAL','Approver');
   assert((await request(`/api/requests/${id}/approve`,{
     method:'POST',body:{decision:'APPROVE'},cookie:approverCookie
   })).data.status==='APPROVED','Approver must finalize claim.');

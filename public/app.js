@@ -279,7 +279,7 @@ function renderRequests(requests,tableId='table',bodyId='tbody',emptyId='empty')
       <td>${esc(r.employee_name)}</td>
       <td>${String(r.request_date).slice(0,10)}</td>
       <td class="money">${rupiah(r.total)}</td>
-      <td class="status-col"><span class="status ${esc(r.status)}">${esc(r.status)}</span></td>
+      <td class="status-col"><span class="status ${esc(r.status)}">${esc(r.status)}</span>${tableId==='decisionHistoryTable'&&r.waiting_for_role?`<div class="progress-waiting">Waiting for: ${esc(r.waiting_for_name||r.waiting_for_role)} (${esc(r.waiting_for_role)})</div>`:''}</td>
       <td class="rev-col">${r.revision}</td>
       <td class="actions action-col"><button class="btn tiny ghost" onclick="openRequest('${r.id}')">Open</button> ${savePdf} ${approvalRecall} ${recall} ${revise}</td>
     </tr>`;
