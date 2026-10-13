@@ -4,7 +4,7 @@ on:
   push:
     branches: [web, production-erf]
   pull_request:
-    branches: [web, production-erf]
+    branches: [web, production-erf, feature/assigned-multi-role]
 
 jobs:
   syntax:
