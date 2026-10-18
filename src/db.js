@@ -178,10 +178,27 @@ async function assertWorkflowAccessChangeTx(client,email,roles,active){
     if(r.status!=='PENDING_APPROVAL'&&!r.workflow_plan?.bypass){
       if(r.workflow_plan&&!r.workflow_plan.reviewTakenOver)pending.push(...r.workflow_plan.reviewers.map(e=>['REVIEWER',e.email]));
       else pending.push(['REVIEWER',r.reviewer_email]);
+      if(r.workflow_plan&&!r.workflow_plan.reviewTakenOver&&!r.workflow_plan.reviewers.length)
+        pending.push(...r.workflow_plan.secondaryReviewers.map(e=>['REVIEWER',e.email]));
     }
     if(r.status==='PENDING_CHECK') pending.push(['CHECKER',r.checker_email]);
+    if(r.status==='PENDING_CHECK'&&r.workflow_plan&&!r.checker_email)
+      pending.push(...r.workflow_plan.secondaryCheckers.map(e=>['CHECKER',e.email]));
     if(pending.some(([role,assigned])=>sameEmail(email,assigned)&&(!active||!roles[r.form_type]?.includes(role))))
       throw Object.assign(new Error('Finish the assigned pending requests before removing this access or deactivating the user.'),{status:409});
+  }
+}
+
+async function assertManualFallbackOptionsTx(client,email,options){
+  const {rows}=await client.query(`select form_type,status,workflow_plan from requests
+    where status in ('PENDING_CHECK','PENDING_REVIEW') and lower(approver_email)=lower($1)
+      and workflow_plan is not null`,[email]);
+  for(const r of rows){
+    const plan=r.workflow_plan;if(plan.bypass)continue;
+    const reviewNeeded=!plan.reviewTakenOver&&!plan.reviewers.length&&plan.secondaryReviewers.some(e=>sameEmail(e.email,email));
+    const checkNeeded=r.status==='PENDING_CHECK'&&!plan.checkTakenOver&&!plan.checker&&plan.secondaryCheckers.some(e=>sameEmail(e.email,email));
+    if((reviewNeeded&&options?.[r.form_type]?.review!=='SECONDARY')||(checkNeeded&&options?.ECF?.check!=='SECONDARY'))
+      throw Object.assign(new Error('Complete the requests awaiting your manual takeover before removing this permission.'),{status:409});
   }
 }
 
@@ -322,6 +339,7 @@ export async function updateManagedEmployee(email,data) {
     if(workflowRoles){await persistWorkflowRolesTx(client,email,workflowRoles);rows[0].workflow_roles=workflowRoles;}
     const options=normalizeWorkflowOptions(data.workflowOptions===undefined?current.workflow_options:data.workflowOptions,
       workflowRoles||current.workflow_roles||{ERF:[role],ECF:[]});
+    await assertManualFallbackOptionsTx(client,email,options);
     await client.query('update employees set workflow_options=$2 where lower(email)=lower($1)',[email,options]);
     rows[0].workflow_options=options;
     await client.query('commit');

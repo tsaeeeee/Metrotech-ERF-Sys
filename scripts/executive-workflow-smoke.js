@@ -138,8 +138,17 @@ try{
   const ownClaim=await db.createEcfClaim(kilat,items);
   assert.equal((await db.getRequestDetail(ownClaim.id)).request.checker_email,null);
   await assert.rejects(decide(ownClaim,kilat,'CHECK'),e=>e.status===403);
+  await assert.rejects(db.updateManagedEmployee(owner.email,{...data('Owner',full,{...ownOptions,ECF:{...ownOptions.ECF,check:'PRIMARY'}}),password:''}),e=>e.status===409);
+  await assert.rejects(db.updateManagedEmployee(owner.email,{...data('Owner',{...full,ECF:['REQUESTOR','REVIEWER','APPROVER']},{...ownOptions,ECF:{...ownOptions.ECF,check:'PRIMARY'}}),password:''}),e=>e.status===409);
   await db.takeOverRequest(ownClaim.id,owner,'Independent check for requester',1);
   await decide(ownClaim,owner,'CHECK');assert(await task(dimas,ownClaim.id));
+  await pool.query('update employees set active=false where email=any($1::text[])',[[dimas.email,rizal.email]]);
+  const unavailable=await create();
+  assert.equal(unavailable.reviewer_email,null);assert(!await task(owner,unavailable.id));
+  await assert.rejects(db.updateManagedEmployee(owner.email,{...data('Owner',full,{...ownOptions,ERF:{...ownOptions.ERF,review:'ASSIGNED'}}),password:''}),e=>e.status===409);
+  await db.takeOverRequest(unavailable.id,owner,'Primary reviewers unavailable',1);
+  await decide(unavailable,owner,'REVIEW');
+  await pool.query('update employees set active=true where email=any($1::text[])',[[dimas.email,rizal.email]]);
   const ownBypassClaim=await db.createEcfClaim(owner,items,'Asia/Jakarta','',{bypass:true,bypassReason:'Executive claim'});
   assert.equal(ownBypassClaim.status,'PENDING_APPROVAL');
   await decide(ownBypassClaim,owner,'APPROVAL');
