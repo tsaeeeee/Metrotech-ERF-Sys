@@ -132,6 +132,12 @@ jobs:
     if: github.event_name == 'pull_request' && github.head_ref == 'feature/executive-review-workflow'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        image-reference: [tag, id]
+    env:
+      EMS_CI_IMAGE_REFERENCE: ${{ matrix.image-reference }}
     steps:
       - uses: actions/checkout@v4
         with:

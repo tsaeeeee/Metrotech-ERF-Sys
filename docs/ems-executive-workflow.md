@@ -74,6 +74,12 @@ database and documents. The saved `rollback.sh` refuses to rewind new writes
 after access opens. Do not run the historical ERF/EMS or multi-role cutover tools
 for this release.
 
+The live container may have been created from an immutable `sha256` image ID by
+an earlier guarded release. Cutover resolves the mutable app image tag from the
+base production Compose file for subsequent Compose commands, and pins rollback
+to the exact original image ID. Both tagged and ID-pinned starting containers are
+covered by the Docker deployment tests.
+
 Do not treat switching only the image as a safe rollback after new workflow
 requests exist: the previous application does not understand reviewer pools,
 bypass or nullable assignments. A rollback needs a validated compatibility plan

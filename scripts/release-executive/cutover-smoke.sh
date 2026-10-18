@@ -22,6 +22,21 @@ PDF_MODE=mock
 ENV
 docker network create metrotech_proxy >/dev/null
 docker compose -p erf --project-directory /srv/metrotech/erf -f /srv/metrotech/erf/docker-compose.prod.yml up -d --build
+image_reference=${EMS_CI_IMAGE_REFERENCE:-id}
+case "$image_reference" in
+  id)
+    # Reproduce production after an earlier guarded deployment: the running
+    # container was created from an immutable ID, while base Compose builds erf-app.
+    baseline_image=$(docker inspect -f '{{.Image}}' metrotech-erf-app)
+    printf '{"services":{"app":{"image":"%s"}}}\n' "$baseline_image" > "$HOME/executive-ci-pinned.compose.json"
+    docker compose -p erf --project-directory /srv/metrotech/erf \
+      -f /srv/metrotech/erf/docker-compose.prod.yml -f "$HOME/executive-ci-pinned.compose.json" \
+      up -d --no-deps --no-build --pull never --force-recreate app
+    test "$(docker inspect -f '{{.Config.Image}}' metrotech-erf-app)" = "$baseline_image"
+    ;;
+  tag) test "$(docker inspect -f '{{.Config.Image}}' metrotech-erf-app)" = erf-app ;;
+  *) echo 'Unknown CI image reference'; exit 1 ;;
+esac
 ready=false
 for attempt in $(seq 1 60); do
   if docker exec metrotech-erf-app node -e 'fetch("http://127.0.0.1:8080/health").then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))'; then ready=true; break; fi
@@ -56,6 +71,7 @@ cat > /tmp/cutover-fault-bin/docker <<'SH'
 #!/usr/bin/env bash
 if [[ "${1:-}" = image && "${2:-}" = tag && "${3:-}" = "$CUTOVER_FAULT_IMAGE" && "${4:-}" = erf-app && -f /tmp/cutover-inject-failure ]]; then
   unlink /tmp/cutover-inject-failure
+  "$CUTOVER_REAL_DOCKER" "$@" || exit "$?"
   echo 'CI deliberate pre-open deployment failure' >&2
   exit 42
 fi
@@ -74,6 +90,8 @@ PY
 test "$(cat "$rollback_run/status")" = ROLLBACK_OK
 test "$(docker inspect -f '{{.Image}}' metrotech-erf-app)" = "$old_image"
 test "$(docker inspect -f '{{.State.Running}}' metrotech-erf-app)" = true
+test "$(docker image inspect -f '{{.Id}}' erf-app)" = "$old_image"
+test "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["services"]["app"]["image"])' "$rollback_run/rollback.compose.json")" = "$old_image"
 test "$(docker inspect -f '{{(index .NetworkSettings.Networks "metrotech_proxy").IPAddress}}' metrotech-erf-app)" != ''
 test "$(git -C /srv/metrotech/erf rev-parse HEAD)" = "$baseline"
 test "$(docker exec metrotech-erf-db psql -At -U metrotech_erf -d metrotech_erf -c "SELECT NOT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='employees' AND column_name='workflow_options')")" = t
@@ -82,6 +100,7 @@ echo 'CUTOVER_AUTOMATIC_ROLLBACK_OK'
 
 bash scripts/release-executive/cutover.sh "$source_sha" "$rehearsal_run"
 test "$(docker inspect -f '{{.Image}}' metrotech-erf-app)" = "$candidate_image"
+test "$(docker image inspect -f '{{.Id}}' erf-app)" = "$candidate_image"
 test "$(git -C /srv/metrotech/erf rev-parse HEAD)" = "$source_sha"
 test "$(docker inspect -f '{{.NetworkSettings.Networks.metrotech_proxy.IPAddress}}' metrotech-erf-app)" != ''
 test "$(docker exec metrotech-erf-db psql -At -U metrotech_erf -d metrotech_erf -c 'SELECT count(*) FROM requests')" = 2

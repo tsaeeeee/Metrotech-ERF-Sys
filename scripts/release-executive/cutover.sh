@@ -30,9 +30,16 @@ mkdir -p "$run/tooling" "$run/pdfs" "$run/signatures"
 cp "$(dirname "$0")/"*.js "$(dirname "$0")/"*.sh "$run/tooling/"
 old_image=$(docker inspect -f '{{.Image}}' metrotech-erf-app)
 db_image=$(docker inspect -f '{{.Image}}' metrotech-erf-db)
-default_image=$(docker inspect -f '{{.Config.Image}}' metrotech-erf-app)
-[[ "$default_image" != sha256:* && "$default_image" != *@* ]] || { echo 'A mutable local image tag is required for Compose continuity.'; exit 1; }
 compose_project=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' metrotech-erf-app)
+# Previous guarded releases can pin the live container to an immutable image ID.
+# Resolve the tag used by the base Compose file, not that container's image input.
+# Rollback independently uses old_image, the exact running image captured above.
+default_image=$(docker compose -p "$compose_project" --project-directory "$repo" \
+  -f "$repo/docker-compose.prod.yml" config --images app)
+[[ -n "$default_image" && "$default_image" != *$'\n'* && "$default_image" != sha256:* && "$default_image" != *@* ]] || {
+  echo 'Base Compose app must resolve to one mutable image tag; production was not stopped or migrated.'
+  exit 1
+}
 docker inspect metrotech-erf-app > "$run/app-before.json"
 docker inspect metrotech-erf-db > "$run/db-before.json"
 cp -p "$repo/.env" "$run/config.env"
