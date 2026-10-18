@@ -24,7 +24,18 @@ async function files(roots){
   for(const [label,root] of Object.entries(roots))await walk(root,root,label);
   return values.sort((a,b)=>a[0].localeCompare(b[0]));
 }
-if(mode==='prepare'){
+if(mode==='image'){
+  const config=await read(target),app=config.services?.app;
+  assert.equal(config.name,extra,'Compose project name changed');
+  assert(app,'Missing app service in base Compose');
+  assert(app.image||app.build,'App service needs an image or build');
+  // Compose builds without an explicit image use <project>-<service>.
+  // Read only app: `config --images app` may also include dependency images.
+  const image=app.image||`${config.name}-app`;
+  assert(typeof image==='string'&&!/\s/.test(image)&&!image.startsWith('sha256:')&&!image.includes('@'),
+    'Base Compose app must use a mutable image tag');
+  console.log(image);
+}else if(mode==='prepare'){
   const [app]=await read('/release/app-before.json');
   const [db]=await read('/release/db-before.json');
   assert(!app.Config.Env.includes('EMS_STAGING=true'),'Live app must not use staging settings');

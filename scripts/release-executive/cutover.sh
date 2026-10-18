@@ -34,8 +34,10 @@ compose_project=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.
 # Previous guarded releases can pin the live container to an immutable image ID.
 # Resolve the tag used by the base Compose file, not that container's image input.
 # Rollback independently uses old_image, the exact running image captured above.
-default_image=$(docker compose -p "$compose_project" --project-directory "$repo" \
-  -f "$repo/docker-compose.prod.yml" config --images app)
+docker compose -p "$compose_project" --project-directory "$repo" \
+  -f "$repo/docker-compose.prod.yml" config --format json > "$run/compose-base.json"
+default_image=$(docker run --rm --network none -v "$run:/release" --entrypoint node "$candidate_image" \
+  scripts/release-executive/cutover-check.js image /release/compose-base.json "$compose_project")
 [[ -n "$default_image" && "$default_image" != *$'\n'* && "$default_image" != sha256:* && "$default_image" != *@* ]] || {
   echo 'Base Compose app must resolve to one mutable image tag; production was not stopped or migrated.'
   exit 1
