@@ -149,6 +149,66 @@ async function addPayment(page,purpose,{evidence=false}={}){
   await page.locator('#addPaymentBtn').click();
 }
 
+async function assertAdminWorkflowControls(page){
+  const reviewer={...employee('REVIEWER'),email:'ui-reviewer@example.test',name:'UI Reviewer',active:true,username:'ui-reviewer',
+    workflow_roles:{ERF:['REVIEWER'],ECF:['REVIEWER']}};
+  await page.evaluate(user=>{adminUsers.push(user);openAdminUserModal(encodeURIComponent(user.email))},reviewer);
+  await page.locator('#adminWorkflowDisplayName').fill('Dimas');
+  const erf=page.locator('#adminWorkflowReviewERFButton'),ecf=page.locator('#adminWorkflowReviewECFButton');
+  assert(await page.locator('[data-workflow-bypass="ERF"]').isDisabled());
+  await erf.click();
+  assert(await page.locator('#adminWorkflowReviewERFMenu [data-value="SECONDARY"]').isDisabled());
+  await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
+  assert.equal(await erf.locator('span').first().innerText(),'Primary — shared queue');
+  await ecf.click();await page.locator('#adminWorkflowReviewECFMenu [data-value="PRIMARY"]').click();
+  await erf.click();await page.keyboard.press('Escape');
+  assert.equal(await erf.getAttribute('aria-expanded'),'false');
+  assert.equal(await page.evaluate(()=>document.activeElement.id),'adminWorkflowReviewERFButton');
+  assert.equal(await page.locator('#adminWorkflowOptions select:visible').count(),0);
+  assert.equal(await page.locator('#adminWorkflowDisplayName').evaluate(el=>getComputedStyle(el).height),
+    await page.locator('#adminUsername').evaluate(el=>getComputedStyle(el).height));
+  for(const viewport of [{width:1440,height:1000},{width:390,height:844},{width:320,height:568}]){
+    await page.setViewportSize(viewport);
+    await ecf.click();
+    const option=page.locator('#adminWorkflowReviewECFMenu [data-value="PRIMARY"]');
+    assert(await option.evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight&&el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))}),
+      'Workflow options must remain fully visible and tappable.');
+    assert(await page.locator('#adminUserModal .profile-modal-panel').evaluate(el=>el.scrollWidth<=el.clientWidth));
+    if(process.env.EMS_UI_SCREENSHOTS){
+      await fs.mkdir(process.env.EMS_UI_SCREENSHOTS,{recursive:true});
+      await page.screenshot({path:`${process.env.EMS_UI_SCREENSHOTS}/admin-workflow-${viewport.width}.png`});
+    }
+    await option.click();
+    await page.locator('#saveAdminUserBtn').click({trial:true});
+  }
+  let submitted;
+  await page.route(`${origin}/api/admin/users/${encodeURIComponent(reviewer.email)}`,route=>{
+    submitted=JSON.parse(route.request().postData());
+    return route.fulfill({contentType:'application/json',body:JSON.stringify({ok:true})});
+  });
+  await page.locator('#saveAdminUserBtn').click();
+  await page.locator('#adminUserModal').waitFor({state:'hidden'});
+  await page.waitForFunction(()=>!document.querySelector('#saveAdminUserBtn').disabled);
+  assert.deepEqual(submitted.workflowOptions,{displayName:'Dimas',ERF:{review:'PRIMARY',check:'PRIMARY',bypass:false},ECF:{review:'PRIMARY',check:'PRIMARY',bypass:false}});
+  assert.deepEqual(submitted.workflowRoles,reviewer.workflow_roles);
+  await page.setViewportSize({width:1440,height:1000});
+  const owner={...employee('APPROVER'),email:'ui-owner@example.test',active:true,username:'ui-owner',
+    workflow_roles:{ERF:['REQUESTOR','REVIEWER','APPROVER'],ECF:['REQUESTOR','CHECKER','REVIEWER','APPROVER']},
+    workflow_options:{ERF:{review:'SECONDARY',bypass:true},ECF:{review:'SECONDARY',check:'SECONDARY',bypass:true}}};
+  await page.evaluate(user=>{adminUsers.push(user);openAdminUserModal(encodeURIComponent(user.email))},owner);
+  await page.locator('#adminWorkflowCheckButton').click();
+  assert(await page.locator('#adminWorkflowCheckMenu [data-value="SECONDARY"]').isEnabled());
+  await page.locator('#adminWorkflowCheckMenu [data-value="PRIMARY"]').click();
+  await page.locator('#adminWorkflowCheckButton').click();
+  await page.locator('#adminWorkflowCheckMenu [data-value="SECONDARY"]').click();
+  assert.equal(await page.evaluate(()=>adminSelectedWorkflowOptions().ECF.check),'SECONDARY');
+  await page.locator('#adminWorkflowRoles [data-form="ECF"][value="APPROVER"]').uncheck();
+  assert(await page.locator('[data-workflow-bypass="ECF"]').isDisabled());
+  assert.equal(await page.evaluate(()=>adminSelectedWorkflowOptions().ECF.review),'ASSIGNED');
+  assert.equal(await page.evaluate(()=>adminSelectedWorkflowOptions().ECF.check),'PRIMARY');
+  await page.evaluate(()=>closeAdminUserModal());
+}
+
 try{
   browser=await chromium.launch({headless:true,
     executablePath:process.env.EMS_UI_CHROMIUM_PATH||undefined});
@@ -216,6 +276,7 @@ try{
 
   const admin=await session(employee('ADMIN','NONE'));
   await assertAdmin(admin.page);
+  await assertAdminWorkflowControls(admin.page);
   assert.equal(await admin.page.locator('#roleTitle').innerText(),'Admin Dashboard');
   assert(!await admin.page.locator('#profile').isVisible(),'Admin has no employee details on Dashboard.');
   await admin.page.reload();
