@@ -57,7 +57,22 @@ Before live rollout: rehearse against a private production clone with outbound
 mail captured locally; take and restore-check a fresh database/documents backup
 while writes are paused; preserve the current runtime settings and mounts; apply
 the migration and start the pinned candidate; verify existing login, requests,
-PDFs and mail. No production cutover is included in this change.
+PDFs and mail.
+
+The `scripts/release-executive` release tools pin the deployed `dd100a9` baseline.
+`rehearse.sh FULL_SHA` builds tracked source outside the live checkout, restores
+an online snapshot to an isolated clone, tests dry-run/apply and startup while
+checking original rows and documents, then records `REHEARSAL_OK`. It does not
+stop or migrate production and exposes no clone ports or outbound email.
+
+`cutover.sh FULL_SHA REHEARSAL_DIRECTORY` accepts only that successful rehearsal,
+unchanged source baseline and original running image. It preserves runtime env
+and mounts, pauses app access, takes/restores/checks a fresh backup, migrates,
+recreates only the app using the rehearsed image, checks health/data/documents,
+then restores proxy access. A pre-open failure restores the matching old image,
+database and documents. The saved `rollback.sh` refuses to rewind new writes
+after access opens. Do not run the historical ERF/EMS or multi-role cutover tools
+for this release.
 
 Do not treat switching only the image as a safe rollback after new workflow
 requests exist: the previous application does not understand reviewer pools,

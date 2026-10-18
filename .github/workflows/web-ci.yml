@@ -127,3 +127,22 @@ jobs:
           fetch-depth: 0
       - name: Test current EMS rehearsal, cutover and guarded rollback
         run: bash scripts/release-multirole/cutover-smoke.sh
+
+  executive-release:
+    if: github.event_name == 'pull_request' && github.head_ref == 'feature/executive-review-workflow'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check executive deployment scripts
+        run: |
+          bash -n scripts/release-executive/rehearse.sh
+          bash -n scripts/release-executive/cutover.sh
+          bash -n scripts/release-executive/cutover-common.sh
+          bash -n scripts/release-executive/rollback.sh
+          bash -n scripts/release-executive/cutover-smoke.sh
+          node --check scripts/release-executive/cutover-check.js
+      - name: Test executive rehearsal, cutover, rollback and data protection
+        run: bash scripts/release-executive/cutover-smoke.sh
