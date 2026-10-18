@@ -4,7 +4,7 @@ on:
   push:
     branches: [web, production-erf]
   pull_request:
-    branches: [web, production-erf, feature/assigned-multi-role]
+    branches: [web, production-erf, feature/assigned-multi-role, feature/request-progress-visibility]
 
 jobs:
   syntax:
@@ -46,6 +46,8 @@ jobs:
           node --check src/request-packet.js
           node --check src/mailer.js
           node --check src/settings.js
+          node --check src/workflow-policy.js
+          node --check src/access.js
           node --check src/ecf-bank-directory.js
           node --check src/ecf-profile-preload.js
           node --check public/app.js
@@ -53,6 +55,9 @@ jobs:
           node --check public/ecf-admin.js
           node --check public/ecf-profile.js
           node --check public/ems.js
+          node --check public/executive-workflow.js
+          node --check scripts/executive-workflow-smoke.js
+          node --check scripts/release-executive/upgrade.js
           node --check scripts/workflow-smoke.js
           node --check scripts/ems-http-smoke.js
           node --check scripts/ems-ui-smoke.js
@@ -63,6 +68,8 @@ jobs:
         run: node scripts/release/upgrade-smoke.js
       - name: Test assigned multi-role and single-approver policy
         run: node scripts/multi-role-smoke.js
+      - name: Test executive bypass, shared review, manual takeover and notes
+        run: node scripts/executive-workflow-smoke.js
       - name: Test EMS HTTP workflow
         run: npm run test:ems-http
       - name: Install browser for UI regression checks

@@ -357,6 +357,7 @@ submitExpense=async function(){
   if(payments.some(item=>!(item.evidence||[]).length))
     return msg('Attach evidence for every payment.','err');
   const fd=new FormData();
+  if(window.emsSubmissionOptions)for(const [key,value] of Object.entries(window.emsSubmissionOptions))fd.append(key,String(value));
   fd.append('serviceOrderNumber',$('#emsServiceOrder').value);
   fd.append('items',JSON.stringify(payments.map(item=>({
     category:item.category,purpose:item.purpose,paymentDate:item.paymentDate,
@@ -374,7 +375,7 @@ submitExpense=async function(){
       {method:'POST',body:fd});
     cancelRevision();
     await loadMe();
-    msg(`${result.refNo} submitted. Waiting for Checker.`);
+    msg(`${result.refNo} submitted. ${result.status==='PENDING_APPROVAL'?'Pending approval.':'Waiting for Checker.'}`);
   }catch(e){
     msg(e.message,'err');
     button.disabled=false;
@@ -420,7 +421,7 @@ sendDecision=async function(decision){
   $('#approveBtn').disabled=true;$('#rejectBtn').disabled=true;
   try{
     const result=await api(`/api/requests/${currentDetailId}/check`,
-      {method:'POST',body:JSON.stringify({decision,reason})});
+      {method:'POST',body:JSON.stringify({decision,reason,revision:currentDetailRevision})});
     closeDetail();emsDetail=null;
     await loadMe();msg(`Claim updated to ${result.status}.`);
   }catch(e){

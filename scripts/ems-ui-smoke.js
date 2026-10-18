@@ -13,7 +13,8 @@ const assets={
   '/workflow-access.js':['workflow-access.js'],
   '/app.js':['app.js','request-type.js'],
   '/ecf-admin.js':['ecf-admin.js','ecf-profile.js'],
-  '/ems.js':['ems.js']
+  '/ems.js':['ems.js'],
+  '/executive-workflow.js':['executive-workflow.js']
 };
 const server=http.createServer(async(req,res)=>{
   const pathname=new URL(req.url,'http://localhost').pathname;
@@ -421,6 +422,58 @@ try{
   assert.equal(await ownerSession.page.evaluate(()=>currentDecisionRole),'APPROVER','Multi-role account must use the pending stage, not a primary/first role.');
   assert(await ownerSession.page.locator('#approveBtn').isEnabled());
   await ownerSession.context.close();
+
+  // Executive routing is an explicit modal choice for each submission.
+  const executive=await session({...ownerUser,workflow_options:{ERF:{review:'SECONDARY',bypass:true},ECF:{review:'SECONDARY',check:'SECONDARY',bypass:true}}});
+  const ep=executive.page;
+  for(const choice of ['cancel','normal','confirm']){
+    await ep.locator('[data-ems-view="erf"]').click();
+    if(choice==='cancel')await addPayment(ep,'Executive request');
+    if(choice==='confirm')await addPayment(ep,'Explicit bypass');
+    const before=executive.writes.filter(w=>w.path==='/api/requests').length;
+    await ep.locator('#submitExpenseBtn').click();
+    await ep.locator('#executiveChoiceModal').waitFor({state:'visible'});
+    assert.equal(await ep.evaluate(()=>document.activeElement.dataset.choice),'normal');
+    assert(await ep.locator('#executiveChoiceModal [data-choice="confirm"]').isDisabled());
+    assert.equal(executive.writes.filter(w=>w.path==='/api/requests').length,before);
+    if(choice==='confirm')await ep.locator('#executiveChoiceReason').fill('Executive direct approval');
+    await ep.locator(`#executiveChoiceModal [data-choice="${choice}"]`).click();
+    await ep.waitForFunction(()=>!executiveActionBusy);
+    if(choice==='cancel')assert.equal(executive.writes.filter(w=>w.path==='/api/requests').length,before);
+    else{
+      const sent=executive.writes.filter(w=>w.path==='/api/requests').at(-1).body;
+      assert(sent.includes(`name="bypass"\r\n\r\n${choice==='confirm'}`));
+      if(choice==='confirm')assert(sent.includes('Executive direct approval'));
+    }
+  }
+  // Secondary sees progress, then explicitly takes over before decision controls appear.
+  let tookOver=false;
+  const plan={reviewers:[{email:'reviewer@example.test',name:'Dimas',label:'Dimas'},{email:'rizal@example.test',name:'Rizal',label:'Rizal'}],
+    secondaryReviewers:[{email:ownerUser.email}],secondaryCheckers:[],checker:null,bypass:false,reviewTakenOver:false};
+  await ep.route(`${origin}/api/requests/history`,route=>route.fulfill({contentType:'application/json',body:JSON.stringify({
+    request:{...row('ERF','PENDING_REVIEW','history'),reviewer_email:tookOver?ownerUser.email:'reviewer@example.test',
+      reviewer_name:tookOver?'UI APPROVER':'Dimas/Rizal',workflow_plan:{...plan,reviewTakenOver:tookOver},
+      decision_notes:[{actor_role:'CHECKER',actor_name:'Kilat',revision:1,action:'CHECK_APPROVED',created_at:'2026-10-17',reason:'<img src=x> approved note'}]},
+    items:[],actions:[],documents:{}})}));
+  let takeoverBody;
+  await ep.route(`${origin}/api/requests/history/takeover`,route=>{
+    takeoverBody=JSON.parse(route.request().postData());tookOver=true;
+    return route.fulfill({contentType:'application/json',body:JSON.stringify({ok:true,status:'PENDING_REVIEW'})});
+  });
+  await ep.evaluate(()=>openRequest('history'));
+  assert((await ep.locator('#detailSummary').innerText()).includes('Pending review by Dimas/Rizal'));
+  assert(!await ep.locator('#decisionPanel').isVisible());
+  assert((await ep.locator('#decisionNotes').innerText()).includes('<img src=x> approved note'));
+  assert.equal(await ep.locator('#decisionNotes img').count(),0);
+  await ep.locator('#takeOverBtn').click();
+  assert(!await ep.locator('#executiveChoiceModal [data-choice="normal"]').isVisible());
+  await ep.locator('#executiveChoiceReason').fill('Manual assistance');
+  await ep.locator('#executiveChoiceModal [data-choice="confirm"]').click();
+  await ep.waitForFunction(()=>!executiveActionBusy);
+  assert.deepEqual(takeoverBody,{reason:'Manual assistance',revision:1});
+  assert(await ep.locator('#decisionPanel').isVisible());
+  assert(!await ep.locator('#takeOverBtn').isVisible());
+  await executive.context.close();
 
   for(const stage of ['PENDING_CHECK','PENDING_REVIEW','PENDING_APPROVAL']){
     for(const role of ['REQUESTOR','CHECKER','REVIEWER','APPROVER']){

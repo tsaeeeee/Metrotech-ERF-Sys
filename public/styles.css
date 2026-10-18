@@ -1097,3 +1097,5 @@ h1{margin:0;color:var(--navy);font-size:26px}h2{margin:0 0 12px;color:var(--navy
 .staging-banner { padding:8px 16px; text-align:center; background:#fff1c2; color:#653c00; font-size:12px; font-weight:700; position:relative; z-index:60; }
 
 .progress-waiting{margin-top:6px;font-size:12px;line-height:1.4;color:var(--muted,#64748b);white-space:normal;overflow-wrap:anywhere}
+
+.decision-note{padding:12px 0;border-bottom:1px solid #e2e8f0}.decision-note small{display:block;margin-top:4px;color:var(--muted,#64748b)}.decision-note p,.audit-row p{white-space:pre-wrap;overflow-wrap:anywhere}.executive-choice-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:16px}#executiveChoiceModal{z-index:1100}#executiveChoiceModal textarea{width:100%;box-sizing:border-box}#adminWorkflowOptions select{width:100%;margin:6px 0 12px}#adminWorkflowOptions input[type=checkbox]{width:auto}

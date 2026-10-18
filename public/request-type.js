@@ -700,6 +700,7 @@ submitExpense=async function(){
 
   try{
     const fd=new FormData();
+    if(window.emsSubmissionOptions)for(const [key,value] of Object.entries(window.emsSubmissionOptions))fd.append(key,String(value));
     fd.append('requestType',rtRequestType);
     fd.append('items',JSON.stringify(payments.map(x=>({
       category:x.category,
@@ -718,7 +719,7 @@ submitExpense=async function(){
     const url=revisionTarget?`/api/requests/${revisionTarget.id}/revise`:'/api/requests';
     const r=await api(url,{method:'POST',body:fd});
     const assignmentNote=await workflowAssignmentNote(r.requestId);
-    msg(`${r.refNo} ${revisionTarget?'revision submitted':'submitted'} successfully. Status: PENDING_REVIEW.${assignmentNote}`,'ok');
+    msg(`${r.refNo} ${revisionTarget?'revision submitted':'submitted'} successfully. Status: ${r.status||'PENDING_REVIEW'}.${assignmentNote}`,'ok');
     cancelRevision();
     await loadMe();
   }catch(e){

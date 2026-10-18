@@ -1,3 +1,4 @@
+let currentDetailRevision=null;
 let currentDecisionRole=null;
 let approvalRecallRole=null;
 const $=s=>document.querySelector(s);
@@ -265,7 +266,7 @@ function renderRequests(requests,tableId='table',bodyId='tbody',emptyId='empty')
       ? `<button class="btn tiny warning" onclick="startRevision('${r.id}')">${r.status==='RECALLED'?'Edit & Resubmit':'Revise'}</button>`
       : '';
     const recall=ownRequest &&
-      r.status===(r.form_type==='ECF'?'PENDING_CHECK':'PENDING_REVIEW')
+      r.status===(r.workflow_plan?.bypass?'PENDING_APPROVAL':r.form_type==='ECF'?'PENDING_CHECK':'PENDING_REVIEW')
       ? `<button class="btn tiny recall" onclick="recallRequest('${r.id}','${esc(r.ref_no)}','${r.form_type==='ECF'?'ECF':'ERF'}')">Recall</button>`
       : '';
     const recallAs=recallRole(currentEmployee,r);
@@ -722,6 +723,7 @@ async function saveAdminUser(event){
     division:$('#adminDivision').value.trim(),
     role:$('#adminRole').value,
     workflowRoles:adminSelectedWorkflowRoles(),
+    workflowOptions:adminSelectedWorkflowOptions(),
     active:editingAdminEmail?$('#adminActive').checked:true
   };
 
@@ -1043,6 +1045,7 @@ async function submitExpense(){
   btn.disabled=true; btn.textContent=revisionTarget?'Submitting Revision…':'Submitting…';
   try{
     const fd=new FormData();
+    if(window.emsSubmissionOptions)for(const [key,value] of Object.entries(window.emsSubmissionOptions))fd.append(key,String(value));
     fd.append('items',JSON.stringify(payments.map(x=>({
       category:x.category,
       purpose:x.purpose,
@@ -1059,7 +1062,7 @@ async function submitExpense(){
 
     const url=revisionTarget?`/api/requests/${revisionTarget.id}/revise`:'/api/requests';
     const r=await api(url,{method:'POST',body:fd});
-    msg(`${r.refNo} ${revisionTarget?'revision submitted':'submitted'} successfully. Status: PENDING_REVIEW.`,'ok');
+    msg(`${r.refNo} ${revisionTarget?'revision submitted':'submitted'} successfully. Status: ${r.status||'PENDING_REVIEW'}.`,'ok');
     cancelRevision();
     await loadMe();
   }catch(e){
@@ -1131,14 +1134,16 @@ async function renderPdfDocument(url,targetSelector){
 
 function renderDetailSummary(r){
   const assignee=key=>String(r[`${key}_name`]||'').trim()||String(r[`${key}_email`]||'').trim()||'—';
+  const reviewer=r.workflow_plan&&!r.workflow_plan.bypass&&['PENDING_CHECK','PENDING_REVIEW'].includes(r.status)
+    ?`Pending review by ${assignee('reviewer')}`:assignee('reviewer');
   const fields=r.form_type==='ECF'?[
-    ['Checker',assignee('checker')], ['Reviewer',assignee('reviewer')],
+    ['Checker',assignee('checker')], ['Reviewer',reviewer],
     ['Approver',assignee('approver')]
   ]:[
     ['Request Date',String(r.request_date).slice(0,10)], ['Employee ID',r.employee_id],
     ['Department',r.department], ['Location',r.location],
     ['Division',r.division], ['Total',rupiah(r.total)],
-    ['Reviewer',assignee('reviewer')], ['Approver',assignee('approver')]
+    ['Reviewer',reviewer], ['Approver',assignee('approver')]
   ];
   const rows=[];
   const columns=r.form_type==='ECF'?1:2;
@@ -1154,6 +1159,7 @@ async function openRequest(id){
     const data=await api(`/api/requests/${id}`);
     currentDetailId=id;
     const r=data.request;
+    currentDetailRevision=r.revision;
     $('#detailRef').textContent=r.ref_no;
     $('#detailMeta').textContent=`${r.employee_name} · Revision ${r.revision} · ${r.status}`;
     renderDetailSummary(r);
@@ -1165,13 +1171,15 @@ async function openRequest(id){
       <td class="money">${rupiah(it.amount)}</td>
     </tr>`).join('');
 
+    $('#decisionNotes').innerHTML=(r.decision_notes||[]).map(n=>`<div class="decision-note"><strong>${esc(n.actor_role)} · ${esc(n.actor_name)}</strong><small>${esc(n.action.replaceAll('_',' '))} · Revision ${n.revision} · ${new Date(n.created_at).toLocaleString('id-ID')}</small><p>${esc(n.reason)}</p></div>`).join('');
+    $('#decisionNotesSection').classList.toggle('hidden',!(r.decision_notes||[]).length);
     $('#auditTrail').innerHTML=data.actions.length?data.actions.map(a=>{
       const actorRole=['CHECK_APPROVED','CHECK_REJECTED'].includes(a.action)?'CHECKER':a.actor_role;
       return `
       <div class="audit-row">
         <div class="audit-dot"></div>
         <div><strong>${esc(a.action.replaceAll('_',' '))}</strong><span>${esc(a.actor_name)} · ${esc(actorRole)}</span>
-        ${a.reason?`<p>${esc(a.reason)}</p>`:''}${a.action==='APPROVAL_RECALLED'?`<p><a href="/api/requests/${encodeURIComponent(id)}/approval-archive/${Number(a.revision)}">Previous approved PDF · revision ${Number(a.revision)} · superseded</a></p>`:''}<small>${new Date(a.created_at).toLocaleString('id-ID')}</small></div>
+        ${a.reason?`<p>${esc(a.reason)}</p>`:''}${a.action==='APPROVAL_RECALLED'?`<p><a href="/api/requests/${encodeURIComponent(id)}/approval-archive/${Number(a.revision)}">Previous approved PDF · revision ${Number(a.revision)} · superseded</a></p>`:''}<small>Revision ${a.revision} · ${new Date(a.created_at).toLocaleString('id-ID')}</small></div>
       </div>`;
     }).join(''):'<div class="muted">No audit entries.</div>';
 
@@ -1213,7 +1221,7 @@ async function sendDecision(decision){
   const url=isReviewer?`/api/requests/${currentDetailId}/review`:`/api/requests/${currentDetailId}/approve`;
   $('#approveBtn').disabled=true; $('#rejectBtn').disabled=true;
   try{
-    const r=await api(url,{method:'POST',body:JSON.stringify({decision,reason})});
+    const r=await api(url,{method:'POST',body:JSON.stringify({decision,reason,revision:currentDetailRevision})});
     closeDetail();
     msg(`Request updated to ${r.status}.`,'ok');
     await loadMe();

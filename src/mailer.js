@@ -139,6 +139,9 @@ function formatDate(value){
 }
 
 function eventPresentation(event,request,fallbackText=''){
+  if(request?.workflow_plan?.bypass&&['SUBMITTED','REVISED'].includes(event))return {
+    title:'A request is awaiting your approval',badge:'Pending Approval',badgeBg:'#b45309',
+    message:'Executive bypass was selected. Check and review were skipped; final approval is still required.',cta:'Open for Approval'};
   const requestor=String(request?.employee_name||'The requestor');
   const reason=String(request?.last_rejection_reason||'').trim();
   const map={
@@ -192,7 +195,7 @@ function eventPresentation(event,request,fallbackText=''){
       title:'Your request has been fully approved',
       badge:'Approved',
       badgeBg:'#15803d',
-      message:'Your request has completed all approval stages. The final approved PDF form is attached to this email for your reference.',
+      message:request?.workflow_plan?.bypass?'Your request was approved using executive bypass. The final PDF is attached.':'Your request has completed all approval stages. The final approved PDF form is attached to this email for your reference.',
       cta:'View Approved Request'
     }
   };
@@ -217,6 +220,7 @@ function eventPresentation(event,request,fallbackText=''){
 function workflowSubject(event,request,fallback=''){
   const ref=String(request?.ref_no||'').trim();
   const code=requestCode(request);
+  if(request?.workflow_plan?.bypass&&['SUBMITTED','REVISED'].includes(event))return `[${code}] Approval Required — ${ref}`;
   if(code==='ECF' && ['SUBMITTED','REVISED'].includes(event))
     return `[ECF] Check Required — ${ref}`;
   const labels={
@@ -260,6 +264,17 @@ function summaryRows(request,presentation){
     rows.splice(2,0,['Checker',request.checker_name||'-']);
   }
   return rows;
+}
+
+export function workflowNotes(request){
+  return (request?.decision_notes||[]).filter(n=>Number(n.revision)===Number(request.revision)&&n.reason);
+}
+function decisionNotesHtml(request){
+  const notes=workflowNotes(request);
+  const bypass=request?.workflow_plan?.bypass?`<p><strong>Executive bypass</strong><br>${escapeHtml(request.workflow_plan.bypassReason)}</p>`:'';
+  if(!notes.length&&!bypass)return '';
+  return `<tr><td style="padding:20px 38px;color:#d8e1ef;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:22px;overflow-wrap:anywhere;">
+    ${notes.length?'<strong>Decision Notes</strong>':''}${notes.map(n=>`<p><strong>${escapeHtml(n.actor_role)} · ${escapeHtml(n.actor_name)} · ${escapeHtml(n.action.replaceAll('_',' '))}</strong><br><span style="white-space:pre-wrap">${escapeHtml(n.reason)}</span></p>`).join('')}${bypass}</td></tr>`;
 }
 
 function buildWorkflowHtml({event,request,recipientName,settings,text}){
@@ -333,6 +348,7 @@ function buildWorkflowHtml({event,request,recipientName,settings,text}){
               </table>
             </td>
           </tr>
+          ${decisionNotesHtml(request)}
           ${attachmentNote}
           ${cta}
           <tr>
@@ -412,8 +428,9 @@ export async function sendWorkflowMail({event,request,to,cc='',subject,text,atta
   const settings=await getRuntimeAppSettings();
   const toRecipients=uniqueRecipients(recipientList(to));
   const baseCc=recipientList(cc);
-  const finalCc=event==='FINAL_APPROVED'
-    ? uniqueRecipients([...baseCc,request?.reviewer_email,request?.approver_email])
+  const decisionEvent=['CHECK_APPROVED','CHECK_REJECTED','REVIEW_APPROVED','REVIEW_REJECTED','FINAL_APPROVED','APPROVAL_REJECTED'].includes(event);
+  const finalCc=decisionEvent
+    ? uniqueRecipients([...baseCc,request?.requester_email,request?.checker_email,request?.reviewer_email,request?.approver_email,...(request?.workflow_plan?.reviewers||[]).map(e=>e.email)])
     : uniqueRecipients(baseCc);
 
   const originalTo=toRecipients.join(',');
@@ -425,7 +442,9 @@ export async function sendWorkflowMail({event,request,to,cc='',subject,text,atta
 
   const mailSubject=(process.env.EMS_STAGING==='true'?'[STAGING] ':'')+workflowSubject(event,request,subject);
   const recipientName=await resolveRecipientName(toRecipients[0]||toText);
-  const plainText=`${text}\n\nReference: ${request?.ref_no||'-'}\nRequest Type: ${requestTypeLabel(request)}\nRequestor: ${request?.employee_name||'-'}\nTotal: ${formatMoney(request?.total)}\n\nThis is an automated notification. Please do not reply to this email.`;
+  const notesText=workflowNotes(request).map(n=>`${n.actor_role} · ${n.actor_name} · ${n.action} (revision ${n.revision}):\n${n.reason}`).join('\n\n');
+  const bypassText=request?.workflow_plan?.bypass?`\nExecutive bypass: ${request.workflow_plan.bypassReason}`:'';
+  const plainText=`${text}${notesText?'\n\nDecision Notes\n'+notesText:''}${bypassText}\n\nReference: ${request?.ref_no||'-'}\nRequest Type: ${requestTypeLabel(request)}\nRequestor: ${request?.employee_name||'-'}\nTotal: ${formatMoney(request?.total)}\n\nThis is an automated notification. Please do not reply to this email.`;
   const html=buildWorkflowHtml({event,request,recipientName,settings,text});
 
   if(!mailReady(settings)){

@@ -131,9 +131,9 @@ async function embedSignature(doc, filename){
 function signatureVisibility(request){
   return {
     requestor:true,
-    checker:request.form_type==='ECF' &&
+    checker:!request.workflow_plan?.bypass && request.form_type==='ECF' &&
       ['PENDING_REVIEW','REVIEW_REJECTED','PENDING_APPROVAL','APPROVAL_REJECTED','APPROVED'].includes(request.status),
-    reviewer:['PENDING_APPROVAL','APPROVAL_REJECTED','APPROVED'].includes(request.status),
+    reviewer:!request.workflow_plan?.bypass && ['PENDING_APPROVAL','APPROVAL_REJECTED','APPROVED'].includes(request.status),
     approver:request.status==='APPROVED'
   };
 }
@@ -151,6 +151,10 @@ async function stampSignaturesOnPdf(pdfBytes,request){
   ];
   const maxW=Number(process.env.SIG_WIDTH||90);
   const maxH=Number(process.env.SIG_HEIGHT||40);
+  if(request.workflow_plan?.bypass){
+    const font=await doc.embedFont(StandardFonts.Helvetica);
+    page.drawText('Bypassed by executive',{x:sigs[1].x,y:sigs[1].y+12,size:8,font});
+  }
   for(const s of sigs){
     if(!s.show) continue;
     const img=await embedSignature(doc,s.file);

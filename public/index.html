@@ -584,6 +584,7 @@
       </div>
     </div>
 
+    <div id="decisionNotesSection" class="detail-section hidden"><h3>Decision Notes</h3><div id="decisionNotes"></div></div>
     <div class="detail-section">
       <h3>Audit Trail</h3>
       <div id="auditTrail" class="audit"></div>
@@ -592,8 +593,8 @@
     </div>
 
     <div id="decisionPanel" class="decision-panel hidden">
-      <label>Rejection Reason <span class="muted">(required only for Reject)</span></label>
-      <textarea id="decisionReason" rows="3" placeholder="Explain the rejection reason..." oninput="syncRejectButton()"></textarea>
+      <label>Decision Notes <span class="muted">(required only for Reject)</span></label>
+      <textarea id="decisionReason" rows="3" maxlength="4000" placeholder="Add a note for approval, or explain the rejection reason..." oninput="syncRejectButton()"></textarea>
       <div class="decision-actions">
         <button class="btn danger" id="rejectBtn" onclick="sendDecision('REJECT')" disabled>Reject</button>
         <button class="btn success" id="approveBtn" onclick="sendDecision('APPROVE')">Approve</button>
@@ -606,5 +607,6 @@
 <script src="/app.js"></script>
 <script src="/ecf-admin.js"></script>
 <script src="/ems.js"></script>
+<script src="/executive-workflow.js"></script>
 </body>
 </html>
