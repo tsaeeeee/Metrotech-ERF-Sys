@@ -1092,10 +1092,24 @@ h1{margin:0;color:var(--navy);font-size:26px}h2{margin:0 0 12px;color:var(--navy
 .workflow-role-options { display:flex; flex-wrap:wrap; gap:12px 20px; }
 .workflow-role-options label { display:flex; align-items:center; gap:8px; margin:0; font-weight:500; }
 .workflow-role-options input[type=checkbox] { width:18px; height:18px; margin:0; accent-color:#172c4c; }
-.workflow-role-fields small { display:block; line-height:1.5; color:#64748b; }
+#adminWorkflowRoles,#adminWorkflowOptions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+#adminWorkflowRoles fieldset,#adminWorkflowOptions fieldset { margin:0; }
+#adminWorkflowOptions fieldset { display:flex; flex-direction:column; gap:14px; }
+.workflow-display-name { grid-column:1/-1; }
+.workflow-select-field { position:relative; }
+.workflow-select-field:has(.custom-select.open) { z-index:35; }
+#adminWorkflowOptions .custom-select-trigger { min-height:36px; height:auto; }
+#adminWorkflowOptions .custom-select-menu { width:100%; min-width:0; }
+#adminWorkflowOptions .custom-select.opens-up .custom-select-menu { top:auto; bottom:calc(100% + 6px); }
+#adminWorkflowOptions .custom-select-trigger:disabled,#adminWorkflowOptions .custom-select-menu button:disabled { opacity:.5; cursor:not-allowed; }
+#adminWorkflowOptions .custom-select-menu button:disabled { background:transparent; color:var(--muted); }
+.workflow-bypass-option { display:flex; align-items:flex-start; gap:8px; font-size:12px; line-height:1.5; }
+.workflow-bypass-option input { flex:0 0 auto; width:16px; height:16px; margin:1px 0 0; accent-color:var(--navy); }
+#adminUserModal .modal-head { z-index:40; }
+@media(max-width:760px){ #adminWorkflowRoles,#adminWorkflowOptions { grid-template-columns:1fr; } }
 
 .staging-banner { padding:8px 16px; text-align:center; background:#fff1c2; color:#653c00; font-size:12px; font-weight:700; position:relative; z-index:60; }
 
 .progress-waiting{margin-top:6px;font-size:12px;line-height:1.4;color:var(--muted,#64748b);white-space:normal;overflow-wrap:anywhere}
 
-.decision-note{padding:12px 0;border-bottom:1px solid #e2e8f0}.decision-note small{display:block;margin-top:4px;color:var(--muted,#64748b)}.decision-note p,.audit-row p{white-space:pre-wrap;overflow-wrap:anywhere}.executive-choice-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:16px}#executiveChoiceModal{z-index:1100}#executiveChoiceModal textarea{width:100%;box-sizing:border-box}#adminWorkflowOptions select{width:100%;margin:6px 0 12px}#adminWorkflowOptions input[type=checkbox]{width:auto}
+.decision-note{padding:12px 0;border-bottom:1px solid #e2e8f0}.decision-note small{display:block;margin-top:4px;color:var(--muted,#64748b)}.decision-note p,.audit-row p{white-space:pre-wrap;overflow-wrap:anywhere}.executive-choice-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:16px}#executiveChoiceModal{z-index:1100}#executiveChoiceModal textarea{width:100%;box-sizing:border-box}

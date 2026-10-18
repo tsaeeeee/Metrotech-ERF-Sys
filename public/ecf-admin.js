@@ -6,6 +6,75 @@ function adminSelectedWorkflowRoles(){
 function adminRoleText(user,form){
   return rolesFor({...user,active:true},form).map(role=>role[0]+role.slice(1).toLowerCase()).join(', ')||'No Access';
 }
+function adminWorkflowSelect(id,label,attributes,choices,value){
+  return `<div class="field workflow-select-field">
+    <label id="${id}Label" for="${id}Button">${label}</label>
+    <select id="${id}" ${attributes} hidden tabindex="-1" aria-hidden="true">${choices.map(([key,text])=>`<option value="${key}" ${key===value?'selected':''}>${text}</option>`).join('')}</select>
+    <div class="custom-select" data-workflow-select="${id}">
+      <button id="${id}Button" type="button" class="custom-select-trigger" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="${id}Menu" aria-labelledby="${id}Label ${id}Value">
+        <span id="${id}Value"></span><span class="custom-select-chevron" aria-hidden="true">⌄</span>
+      </button>
+      <div id="${id}Menu" class="custom-select-menu hidden" role="listbox" aria-labelledby="${id}Label">${choices.map(([key,text])=>`<button type="button" role="option" tabindex="-1" data-value="${key}" aria-selected="false">${text}</button>`).join('')}</div>
+    </div>
+  </div>`;
+}
+function closeAdminWorkflowMenus(){
+  document.querySelectorAll('[data-workflow-select]').forEach(control=>{
+    control.classList.remove('open','opens-up');
+    control.querySelector('.custom-select-menu').classList.add('hidden');
+    control.querySelector('.custom-select-trigger').setAttribute('aria-expanded','false');
+  });
+}
+function syncAdminWorkflowSelects(){
+  document.querySelectorAll('[data-workflow-select]').forEach(control=>{
+    const select=document.getElementById(control.dataset.workflowSelect),trigger=control.querySelector('.custom-select-trigger');
+    trigger.disabled=select.disabled;
+    trigger.querySelector('span').textContent=select.selectedOptions[0]?.textContent||'';
+    control.querySelectorAll('[role=option]').forEach(button=>{
+      const selected=button.dataset.value===select.value;
+      button.disabled=select.disabled||[...select.options].find(option=>option.value===button.dataset.value).disabled;
+      button.classList.toggle('selected',selected);button.setAttribute('aria-selected',String(selected));
+    });
+  });
+}
+function openAdminWorkflowMenu(control,edge){
+  const trigger=control.querySelector('.custom-select-trigger');if(trigger.disabled)return;
+  closeAdminWorkflowMenus();
+  const menu=control.querySelector('.custom-select-menu');
+  menu.style.maxHeight='';menu.classList.remove('hidden');control.classList.add('open');
+  trigger.setAttribute('aria-expanded','true');
+  const panel=control.closest('.profile-modal-panel'),rect=trigger.getBoundingClientRect(),bounds=panel.getBoundingClientRect();
+  const below=Math.min(bounds.bottom,innerHeight)-rect.bottom-12;
+  const above=rect.top-Math.max(bounds.top,panel.querySelector('.modal-head').getBoundingClientRect().bottom)-12;
+  const up=below<menu.scrollHeight&&above>below;
+  control.classList.toggle('opens-up',up);menu.style.maxHeight=`${Math.max(36,Math.min(292,up?above:below))}px`;
+  const options=[...menu.querySelectorAll('[role=option]:not(:disabled)')];
+  (edge==='last'?options.at(-1):edge==='first'?options[0]:options.find(button=>button.getAttribute('aria-selected')==='true')||options[0])?.focus({preventScroll:true});
+}
+document.addEventListener('click',event=>{
+  const control=event.target.closest('[data-workflow-select]');
+  if(!control){closeAdminWorkflowMenus();return}
+  const choice=event.target.closest('[role=option]');
+  if(choice&&!choice.disabled){
+    const select=document.getElementById(control.dataset.workflowSelect);
+    select.value=choice.dataset.value;select.dispatchEvent(new Event('change',{bubbles:true}));
+    syncAdminWorkflowSelects();closeAdminWorkflowMenus();control.querySelector('.custom-select-trigger').focus({preventScroll:true});
+  }else if(event.target.closest('.custom-select-trigger')){
+    if(control.classList.contains('open'))closeAdminWorkflowMenus();else openAdminWorkflowMenu(control);
+  }
+});
+document.addEventListener('keydown',event=>{
+  const control=event.target.closest('[data-workflow-select]');if(!control)return;
+  const open=control.classList.contains('open'),trigger=control.querySelector('.custom-select-trigger');
+  if(event.key==='Escape'){event.preventDefault();closeAdminWorkflowMenus();trigger.focus({preventScroll:true});return}
+  if(event.key==='Tab'){closeAdminWorkflowMenus();trigger.focus({preventScroll:true});return}
+  if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;
+  event.preventDefault();
+  if(!open){openAdminWorkflowMenu(control,event.key==='ArrowUp'||event.key==='End'?'last':'first');return}
+  const options=[...control.querySelectorAll('[role=option]:not(:disabled)')],index=options.indexOf(document.activeElement);
+  const next=event.key==='Home'?0:event.key==='End'?options.length-1:(index+(event.key==='ArrowDown'?1:-1)+options.length)%options.length;
+  options[next]?.focus({preventScroll:true});
+});
 const workflowOriginalRenderAdminUsers=renderAdminUsers;
 renderAdminUsers=function(){
   workflowOriginalRenderAdminUsers();
@@ -40,18 +109,18 @@ openAdminUserModal=function(encodedEmail=''){
       const locked=role==='APPROVER'&&assignedApprover&&!sameEmail(assignedApprover.email,user?.email);
       return `<label><input type="checkbox" data-form="${form}" value="${role}" ${selected.includes(role)?'checked':''} ${locked?'disabled':''}>${role[0]+role.slice(1).toLowerCase()}</label>`;
     }).join('')}</div></fieldset>`;
-  }).join('')+`<small>Choose all required roles. Primary reviewers share one queue. Secondary executive roles require manual takeover. Only one active Approver is allowed across ERF and ECF.${assignedApprover?' Current Approver: '+esc(assignedApprover.name)+'.':''}</small>`;
+  }).join('');
   let optionsField=$('#adminWorkflowOptions');
   if(!optionsField){optionsField=document.createElement('div');optionsField.id='adminWorkflowOptions';optionsField.className='span-2 workflow-role-fields';field.insertAdjacentElement('afterend',optionsField)}
   const options=user?.workflow_options||{};
-  optionsField.innerHTML=`<label>Workflow display name <span class="muted">(optional short name)</span><input id="adminWorkflowDisplayName" maxlength="40" value="${esc(options.displayName||'')}" placeholder="e.g. Dimas or Rizal"></label>`+['ERF','ECF'].map(form=>{
+  optionsField.innerHTML=`<div class="field workflow-display-name"><label for="adminWorkflowDisplayName">Workflow display name</label><input id="adminWorkflowDisplayName" maxlength="40" value="${esc(options.displayName||'')}" placeholder="Short name (optional)"></div>`+['ERF','ECF'].map(form=>{
     const option=options[form]||{};
     return `<fieldset><legend>${form} Workflow</legend>
-      <label>Reviewer assignment<select data-workflow-review="${form}">${[['ASSIGNED','Individual assignment'],['PRIMARY','Primary — shared queue'],['SECONDARY','Secondary — manual takeover']].map(([value,label])=>`<option value="${value}" ${value===(option.review||'ASSIGNED')?'selected':''}>${label}</option>`).join('')}</select></label>
-      ${form==='ECF'?`<label>Checker assignment<select id="adminWorkflowCheck"><option value="PRIMARY">Primary</option><option value="SECONDARY" ${option.check==='SECONDARY'?'selected':''}>Secondary — manual takeover</option></select></label>`:''}
-      <label><input type="checkbox" data-workflow-bypass="${form}" ${option.bypass?'checked':''}> Allow executive bypass on own requests</label>
+      ${adminWorkflowSelect('adminWorkflowReview'+form,'Reviewer assignment',`data-workflow-review="${form}"`,[['ASSIGNED','Individual assignment'],['PRIMARY','Primary — shared queue'],['SECONDARY','Secondary — manual takeover']],option.review||'ASSIGNED')}
+      ${form==='ECF'?adminWorkflowSelect('adminWorkflowCheck','Checker assignment','',[['PRIMARY','Primary'],['SECONDARY','Secondary — manual takeover']],option.check||'PRIMARY'):''}
+      <label class="workflow-bypass-option"><input type="checkbox" data-workflow-bypass="${form}" ${option.bypass?'checked':''}> Allow bypass on own requests</label>
       </fieldset>`;
-  }).join('')+'<small>Secondary and bypass permissions require Approver access. Routing changes apply on submission or resubmission. Existing requests keep their assigned participants.</small>';
+  }).join('');
   const sync=()=>{
     const selected=adminSelectedWorkflowRoles();
     for(const form of ['ERF','ECF']){
@@ -64,9 +133,9 @@ openAdminUserModal=function(encodedEmail=''){
     const check=$('#adminWorkflowCheck');check.disabled=!selected.ECF.includes('CHECKER');
     check.querySelector('[value="SECONDARY"]').disabled=!selected.ECF.includes('APPROVER');
     if(check.disabled||!selected.ECF.includes('APPROVER'))check.value='PRIMARY';
+    closeAdminWorkflowMenus();syncAdminWorkflowSelects();
   };
   field.onchange=sync;sync();
-  $('#adminUserModalHint').textContent='Manage user details and independent ERF / ECF access.';
 };
 
 function adminSelectedWorkflowOptions(){

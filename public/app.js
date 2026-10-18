@@ -669,7 +669,6 @@ function openAdminUserModal(encodedEmail=''){
   const user=editingAdminEmail?adminUsers.find(u=>u.email===editingAdminEmail):null;
 
   $('#adminUserModalTitle').textContent=user?'Edit User':'Create User';
-  $('#adminUserModalHint').textContent=user?'Update user master data. Email is locked after creation.':'Create a new Expense Request System account.';
   $('#saveAdminUserBtn').textContent=user?'Save Changes':'Create User';
 
   $('#adminName').value=user?.name||'';
@@ -678,8 +677,7 @@ function openAdminUserModal(encodedEmail=''){
   $('#adminUsername').value=user?.username||'';
   $('#adminPassword').value='';
   $('#adminPassword').required=!user;
-  $('#adminPasswordLabel').textContent=user?'Reset Password':'Temporary Password';
-  $('#adminPasswordHint').textContent=user?'Leave empty to keep the current password.':'Required when creating a user.';
+  $('#adminPasswordLabel').textContent=user?'Reset Password (optional)':'Temporary Password';
   $('#adminEmployeeId').value=user?.employee_id||'';
   $('#adminDepartment').value=user?.department||'';
   $('#adminLocation').value=user?.location||'';
