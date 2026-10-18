@@ -91,5 +91,9 @@ async function takeOverCurrentRequest(){
     await loadMe();await openRequest(id);
     msg('Stage taken over. You can now approve or reject it.','ok');
   }catch(e){msg(e.message,'err')}
-  finally{button.disabled=false;executiveActionBusy=false}
+  finally{
+    button.disabled=false;
+    button.textContent=takeoverRole(currentEmployee,emsDetail)==='CHECKER'?'Take Over Check':'Take Over Review';
+    executiveActionBusy=false;
+  }
 }
