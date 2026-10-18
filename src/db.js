@@ -1,4 +1,5 @@
-import {hasRole,normalizeWorkflowRoles,sameEmail} from './access.js';
+import {normalizeWorkflowOptions,buildWorkflowPlan,annotateProgress} from './workflow-policy.js';
+import {hasRole,normalizeWorkflowRoles,sameEmail,takeoverRole} from './access.js';
 import pg from 'pg';
 import {archiveApprovedPacket} from './approval-archive.js';
 const { Pool } = pg;
@@ -40,7 +41,7 @@ export async function ensureBootstrapAdminCredentials() {
 
 export async function listActiveEmployees() {
   const { rows } = await pool.query(
-    `select email,name,employee_id,department,location,division,role,workflow_roles,signature_file,username,must_change_password,must_upload_signature
+    `select email,name,employee_id,department,location,division,role,workflow_roles,workflow_options,signature_file,username,must_change_password,must_upload_signature
      from employees where active=true order by
      case role when 'REQUESTOR' then 1 when 'REVIEWER' then 2 else 3 end, name`
   );
@@ -49,7 +50,7 @@ export async function listActiveEmployees() {
 
 export async function getEmployee(email) {
   const { rows } = await pool.query(
-    `select email,name,employee_id,department,location,division,role,workflow_roles,signature_file,username,must_change_password,must_upload_signature
+    `select email,name,employee_id,department,location,division,role,workflow_roles,workflow_options,signature_file,username,must_change_password,must_upload_signature
      from employees where lower(email)=lower($1) and active=true limit 1`,
     [email]
   );
@@ -58,7 +59,7 @@ export async function getEmployee(email) {
 
 export async function authenticateLocalUser(username,password) {
   const {rows}=await pool.query(
-    `select email,name,employee_id,department,location,division,role,workflow_roles,signature_file,username,must_change_password,must_upload_signature
+    `select email,name,employee_id,department,location,division,role,workflow_roles,workflow_options,signature_file,username,must_change_password,must_upload_signature
      from employees
      where active=true
        and username is not null
@@ -81,7 +82,7 @@ export async function changeEmployeePassword(email,currentPassword,newPassword) 
        and role<>'ADMIN'
        and password_hash is not null
        and password_hash=crypt($2,password_hash)
-     returning email,name,employee_id,department,location,division,role,workflow_roles,signature_file,username,must_change_password,must_upload_signature`,
+     returning email,name,employee_id,department,location,division,role,workflow_roles,workflow_options,signature_file,username,must_change_password,must_upload_signature`,
     [email,String(currentPassword||''),String(newPassword||'')]
   );
   if(!rows[0]) throw Object.assign(new Error('Current password is incorrect.'),{status:400});
@@ -95,7 +96,7 @@ export async function updateEmployeeSignature(email,signatureFile) {
      set signature_file=$2,
          must_upload_signature=false
      where lower(email)=lower($1) and active=true
-     returning email,name,employee_id,department,location,division,role,workflow_roles,signature_file,username,must_change_password,must_upload_signature`,
+     returning email,name,employee_id,department,location,division,role,workflow_roles,workflow_options,signature_file,username,must_change_password,must_upload_signature`,
     [email,signatureFile]
   );
   if(!rows[0]) throw Object.assign(new Error('Employee not found.'),{status:404});
@@ -104,7 +105,7 @@ export async function updateEmployeeSignature(email,signatureFile) {
 
 export async function listManagedEmployees() {
   const {rows}=await pool.query(
-    `select email,name,employee_id,department,location,division,role,workflow_roles,active,username,must_change_password,must_upload_signature,
+    `select email,name,employee_id,department,location,division,role,workflow_roles,workflow_options,active,username,must_change_password,must_upload_signature,
        (coalesce(signature_file,'')<>'') as has_signature,
        (select ecf_role from admin_ecf_roles a where a.email=employees.email) as "ecfRole"
      from employees
@@ -167,17 +168,37 @@ async function assertWorkflowAccessChangeTx(client,email,roles,active){
   if(active && Object.values(roles).some(list=>list.includes('APPROVER')))
     await assertSingleActiveApproverTx(client,{excludeEmail:email});
   const {rows}=await client.query(
-    `select r.form_type,r.status,r.requester_email,r.reviewer_email,r.approver_email,d.checker_email
+    `select r.form_type,r.status,r.requester_email,r.reviewer_email,r.approver_email,r.workflow_plan,d.checker_email
      from requests r left join ecf_details d on d.request_id=r.id
      where r.status in ('PENDING_CHECK','PENDING_REVIEW','PENDING_APPROVAL')
        and (lower(r.requester_email)=lower($1) or lower(r.reviewer_email)=lower($1)
-        or lower(r.approver_email)=lower($1) or lower(d.checker_email)=lower($1))`,[email]);
+        or lower(r.approver_email)=lower($1) or lower(d.checker_email)=lower($1) or workflow_member(r.workflow_plan->'reviewers',$1))`,[email]);
   for(const r of rows){
     const pending=[['REQUESTOR',r.requester_email],['APPROVER',r.approver_email]];
-    if(r.status!=='PENDING_APPROVAL') pending.push(['REVIEWER',r.reviewer_email]);
+    if(r.status!=='PENDING_APPROVAL'&&!r.workflow_plan?.bypass){
+      if(r.workflow_plan&&!r.workflow_plan.reviewTakenOver)pending.push(...r.workflow_plan.reviewers.map(e=>['REVIEWER',e.email]));
+      else pending.push(['REVIEWER',r.reviewer_email]);
+      if(r.workflow_plan&&!r.workflow_plan.reviewTakenOver&&!r.workflow_plan.reviewers.length)
+        pending.push(...r.workflow_plan.secondaryReviewers.map(e=>['REVIEWER',e.email]));
+    }
     if(r.status==='PENDING_CHECK') pending.push(['CHECKER',r.checker_email]);
+    if(r.status==='PENDING_CHECK'&&r.workflow_plan&&!r.checker_email)
+      pending.push(...r.workflow_plan.secondaryCheckers.map(e=>['CHECKER',e.email]));
     if(pending.some(([role,assigned])=>sameEmail(email,assigned)&&(!active||!roles[r.form_type]?.includes(role))))
       throw Object.assign(new Error('Finish the assigned pending requests before removing this access or deactivating the user.'),{status:409});
+  }
+}
+
+async function assertManualFallbackOptionsTx(client,email,options){
+  const {rows}=await client.query(`select form_type,status,workflow_plan from requests
+    where status in ('PENDING_CHECK','PENDING_REVIEW') and lower(approver_email)=lower($1)
+      and workflow_plan is not null`,[email]);
+  for(const r of rows){
+    const plan=r.workflow_plan;if(plan.bypass)continue;
+    const reviewNeeded=!plan.reviewTakenOver&&!plan.reviewers.length&&plan.secondaryReviewers.some(e=>sameEmail(e.email,email));
+    const checkNeeded=r.status==='PENDING_CHECK'&&!plan.checkTakenOver&&!plan.checker&&plan.secondaryCheckers.some(e=>sameEmail(e.email,email));
+    if((reviewNeeded&&options?.[r.form_type]?.review!=='SECONDARY')||(checkNeeded&&options?.ECF?.check!=='SECONDARY'))
+      throw Object.assign(new Error('Complete the requests awaiting your manual takeover before removing this permission.'),{status:409});
   }
 }
 
@@ -193,7 +214,9 @@ async function reassignPendingReviewerTx(client,email) {
   for(const request of pending){
     replacement=await chooseAssigneeTx(client,request.form_type,'REVIEWER',[email,request.requester_email]);
     if(!replacement) throw Object.assign(new Error('Cannot remove this Reviewer while assigned reviews lack another eligible Reviewer.'),{status:409});
-    await client.query('update requests set reviewer_email=$2,updated_at=now() where id=$1',[request.id,replacement.email]);
+    await client.query(`update requests set reviewer_email=$2,updated_at=now(),
+      workflow_plan=case when workflow_plan is null then null else jsonb_set(workflow_plan,'{reviewers}',$3::jsonb) end
+      where id=$1`,[request.id,replacement.email,JSON.stringify([{email:replacement.email,name:replacement.name,label:replacement.name}])]);
   }
   return {count:pending.length,replacement};
 }
@@ -219,7 +242,7 @@ export async function createManagedEmployee(data) {
        ) values(
         lower($1),$2,$3,$4,$5,$6,$7,'',true,$8,crypt($9,gen_salt('bf',10)),true,true
        )
-       returning email,name,employee_id,department,location,division,role,workflow_roles,active,username,must_change_password,must_upload_signature,
+       returning email,name,employee_id,department,location,division,role,workflow_roles,workflow_options,active,username,must_change_password,must_upload_signature,
          false as has_signature`,
       [
         String(data.email).trim(),String(data.name).trim(),String(data.employeeId).trim(),
@@ -228,6 +251,11 @@ export async function createManagedEmployee(data) {
       ]
     );
     if(workflowRoles){await persistWorkflowRolesTx(client,rows[0].email,workflowRoles);rows[0].workflow_roles=workflowRoles;}
+    if(data.workflowOptions!==undefined){
+      const options=normalizeWorkflowOptions(data.workflowOptions,workflowRoles||{ERF:[role],ECF:[]});
+      await client.query('update employees set workflow_options=$2 where email=$1',[rows[0].email,options]);
+      rows[0].workflow_options=options;
+    }
     await client.query('commit');
     return rows[0];
   }catch(e){
@@ -253,7 +281,7 @@ export async function updateManagedEmployee(email,data) {
     await client.query('begin');
     await client.query("select pg_advisory_xact_lock(77123001)");
     const {rows:currentRows}=await client.query(
-      `select email,role,active,workflow_roles from employees
+      `select email,role,active,workflow_roles,workflow_options from employees
        where lower(email)=lower($1) and role<>'ADMIN'
        for update`,
       [email]
@@ -300,7 +328,7 @@ export async function updateManagedEmployee(email,data) {
            password_hash=case when $10<>'' then crypt($10,gen_salt('bf',10)) else password_hash end,
            must_change_password=case when $10<>'' then true else must_change_password end
        where lower(email)=lower($1) and role<>'ADMIN'
-       returning email,name,employee_id,department,location,division,role,workflow_roles,active,username,must_change_password,must_upload_signature,
+       returning email,name,employee_id,department,location,division,role,workflow_roles,workflow_options,active,username,must_change_password,must_upload_signature,
          (coalesce(signature_file,'')<>'') as has_signature`,
       [
         email,String(data.name).trim(),String(data.employeeId).trim(),String(data.department).trim(),
@@ -309,6 +337,11 @@ export async function updateManagedEmployee(email,data) {
       ]
     );
     if(workflowRoles){await persistWorkflowRolesTx(client,email,workflowRoles);rows[0].workflow_roles=workflowRoles;}
+    const options=normalizeWorkflowOptions(data.workflowOptions===undefined?current.workflow_options:data.workflowOptions,
+      workflowRoles||current.workflow_roles||{ERF:[role],ECF:[]});
+    await assertManualFallbackOptionsTx(client,email,options);
+    await client.query('update employees set workflow_options=$2 where lower(email)=lower($1)',[email,options]);
+    rows[0].workflow_options=options;
     await client.query('commit');
     return rows[0];
   }catch(e){
@@ -326,7 +359,7 @@ export async function setManagedEmployeeActive(email,active) {
     await client.query('begin');
     await client.query("select pg_advisory_xact_lock(77123001)");
     const {rows:currentRows}=await client.query(
-      `select email,role,active,workflow_roles from employees
+      `select email,role,active,workflow_roles,workflow_options from employees
        where lower(email)=lower($1) and role<>'ADMIN'
        for update`,
       [email]
@@ -361,7 +394,7 @@ export async function setManagedEmployeeActive(email,active) {
       `update employees
        set active=$2
        where lower(email)=lower($1) and role<>'ADMIN'
-       returning email,name,employee_id,department,location,division,role,workflow_roles,active,username,must_change_password,must_upload_signature,
+       returning email,name,employee_id,department,location,division,role,workflow_roles,workflow_options,active,username,must_change_password,must_upload_signature,
          (coalesce(signature_file,'')<>'') as has_signature`,
       [email,nextActive]
     );
@@ -393,7 +426,7 @@ export async function listTasksForEmployee(employee){
      from requests r left join ecf_details d on d.request_id=r.id
      where (r.status='PENDING_APPROVAL' or lower(r.requester_email)<>lower($1)) and (
        (r.status='PENDING_CHECK' and lower(d.checker_email)=lower($1) and employee_has_workflow_role($1,r.form_type,'CHECKER'))
-       or (r.status='PENDING_REVIEW' and lower(r.reviewer_email)=lower($1) and employee_has_workflow_role($1,r.form_type,'REVIEWER'))
+       or (r.status='PENDING_REVIEW' and request_review_available(r.workflow_plan,r.reviewer_email,$1) and employee_has_workflow_role($1,r.form_type,'REVIEWER'))
        or (r.status='PENDING_APPROVAL' and lower(r.approver_email)=lower($1) and employee_has_workflow_role($1,r.form_type,'APPROVER')))
      order by r.updated_at asc limit 100`,[employee.email]);
   return rows;
@@ -418,6 +451,10 @@ function historyScope(){
       or (lower(r.approver_email)=lower($1) and employee_has_workflow_role($1,r.form_type,'APPROVER'))
       or (employee_has_workflow_role($1,r.form_type,'CHECKER') and exists(select 1 from ecf_details hd
         where hd.request_id=r.id and lower(hd.checker_email)=lower($1)))
+      or (employee_has_workflow_role($1,r.form_type,'REVIEWER') and
+        (workflow_member(r.workflow_plan->'reviewers',$1) or workflow_member(r.workflow_plan->'secondaryReviewers',$1)))
+      or (employee_has_workflow_role($1,r.form_type,'CHECKER') and
+        (lower(r.workflow_plan->'checker'->>'email')=lower($1) or workflow_member(r.workflow_plan->'secondaryCheckers',$1)))
       or exists(select 1 from workflow_actions a
       where a.request_id=r.id and lower(a.actor_email)=lower($1)))`;
 }
@@ -436,7 +473,7 @@ export async function listDecisionHistory(employee){
     left join employees c on lower(c.email)=lower(d.checker_email)
     left join employees v on lower(v.email)=lower(r.reviewer_email)
     left join employees p on lower(p.email)=lower(r.approver_email)
-    where ${historyScope()} order by r.updated_at desc limit 100`,[employee.email])).rows;
+    where ${historyScope()} order by r.updated_at desc limit 100`,[employee.email])).rows.map(annotateProgress);
 }
 
 export async function getEmsDashboard(employee){
@@ -471,7 +508,7 @@ async function requireWorkflowRoleTx(client,employee,form,role){
   if(!ok) throw Object.assign(new Error(`${form} ${role} access required.`),{status:403});
 }
 
-export async function createExpenseRequest(employee, items, timezone='Asia/Jakarta', requestType='EXPENSE') {
+export async function createExpenseRequest(employee, items, timezone='Asia/Jakarta', requestType='EXPENSE',options={}) {
   const normalizedType=String(requestType||'EXPENSE').trim().toUpperCase();
   if(normalizedType!=='EXPENSE')
     throw Object.assign(new Error('Use Expense Claim (ECF) for claims.'),{status:400});
@@ -481,9 +518,8 @@ export async function createExpenseRequest(employee, items, timezone='Asia/Jakar
     await client.query('begin');
     await client.query("select pg_advisory_xact_lock(77123001)");
     await requireWorkflowRoleTx(client,employee,'ERF','REQUESTOR');
-    const reviewer = await chooseReviewerTx(client,{excludeEmail:employee.email});
-    if(!reviewer)
-      throw Object.assign(new Error('At least one active Reviewer is required before requests can be submitted.'),{status:409});
+    const plan=await buildWorkflowPlan(client,employee,'ERF',options);
+    const reviewer=plan.reviewers[0];
     const approver = await getSingleApproverTx(client,'ERF');
 
     const { rows:dateRows } = await client.query(
@@ -505,15 +541,16 @@ export async function createExpenseRequest(employee, items, timezone='Asia/Jakar
     const { rows } = await client.query(
       `insert into requests(
         ref_no,request_date,requester_email,employee_name,employee_id,department,location,division,
-        request_type,total,status,revision,reviewer_email,approver_email
-      ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'PENDING_REVIEW',1,$11,$12)
+        request_type,total,status,revision,reviewer_email,approver_email,workflow_plan
+      ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$13,1,$11,$12,$14)
       returning *`,
       [refNo,requestDate,employee.email,employee.name,employee.employee_id,employee.department,
-       employee.location,employee.division,normalizedType,total,reviewer.email,approver.email]
+       employee.location,employee.division,normalizedType,total,plan.bypass?null:reviewer?.email||null,approver.email,plan.bypass?'PENDING_APPROVAL':'PENDING_REVIEW',plan]
     );
     const request=rows[0];
     await insertItems(client, request.id, 1, items);
-    await insertAction(client,request,employee,'SUBMITTED',null,'PENDING_REVIEW','','REQUESTOR');
+    await insertAction(client,request,employee,'SUBMITTED',null,request.status,'','REQUESTOR');
+    if(plan.bypass)await insertAction(client,request,employee,'EXECUTIVE_BYPASS',null,request.status,plan.bypassReason,'APPROVER');
     await client.query('commit');
     return request;
   } catch(e) {
@@ -521,7 +558,7 @@ export async function createExpenseRequest(employee, items, timezone='Asia/Jakar
   } finally { client.release(); }
 }
 
-export async function createEcfClaim(employee,items,timezone='Asia/Jakarta',serviceOrderNumber=''){
+export async function createEcfClaim(employee,items,timezone='Asia/Jakarta',serviceOrderNumber='',options={}){
   const client=await pool.connect();
   try{
     await client.query('begin');
@@ -530,15 +567,14 @@ export async function createEcfClaim(employee,items,timezone='Asia/Jakarta',serv
     const total=items.reduce((sum,x)=>sum+Number(x.amount),0);
     if(!Number.isSafeInteger(total)||total<=0)
       throw Object.assign(new Error('Claim total must be a positive whole number.'),{status:400});
-    const checker=await chooseAssigneeTx(client,'ECF','CHECKER',[employee.email]);
-    if(!checker) throw Object.assign(new Error('Assign another active ECF Checker before submitting claims.'),{status:409});
+    const plan=await buildWorkflowPlan(client,employee,'ECF',options);
+    const checker=plan.bypass?null:plan.checker;
     const profile=(await client.query(
       `select * from employee_payment_profiles where lower(employee_email)=lower($1)`,[employee.email]
     )).rows[0];
     if(!profile?.payment_to||!profile?.bank_name||!profile?.bank_code||!profile?.account_number)
       throw Object.assign(new Error('Complete payment information in My Profile first.'),{status:409});
-    const reviewer=await chooseReviewerTx(client,{excludeEmail:employee.email,form:'ECF'});
-    if(!reviewer) throw Object.assign(new Error('An active Reviewer is required.'),{status:409});
+    const reviewer=plan.reviewers[0];
     const approver=await getSingleApproverTx(client,'ECF');
     const date=(await client.query(
       `select timezone($1,now())::date as day,to_char(timezone($1,now()),'YYYYMMDD') as compact`,
@@ -552,20 +588,21 @@ export async function createEcfClaim(employee,items,timezone='Asia/Jakarta',serv
     const refNo=`ECF-${date.compact.slice(0,4)}-${date.compact.slice(4)}-${String(seq).padStart(4,'0')}`;
     const request=(await client.query(
       `insert into requests(ref_no,request_date,requester_email,employee_name,employee_id,department,
-       location,division,request_type,form_type,total,status,revision,reviewer_email,approver_email)
-       values($1,$2,$3,$4,$5,$6,$7,$8,'EXPENSE','ECF',$9,'PENDING_CHECK',1,$10,$11) returning *`,
+       location,division,request_type,form_type,total,status,revision,reviewer_email,approver_email,workflow_plan)
+       values($1,$2,$3,$4,$5,$6,$7,$8,'EXPENSE','ECF',$9,$12,1,$10,$11,$13) returning *`,
       [refNo,date.day,employee.email,employee.name,employee.employee_id,employee.department,
-       employee.location,employee.division,total,reviewer.email,approver.email]
+       employee.location,employee.division,total,plan.bypass?null:reviewer?.email||null,approver.email,plan.bypass?'PENDING_APPROVAL':'PENDING_CHECK',plan]
     )).rows[0];
     await client.query(
       `insert into ecf_details(request_id,service_order_number,payment_to,bank_name,
        bank_code,account_number,checker_email,checker_name)
        values($1,$2,$3,$4,$5,$6,$7,$8)`,
       [request.id,serviceOrderNumber||'-',profile.payment_to,profile.bank_name,
-       profile.bank_code,profile.account_number,checker.email,checker.name]
+       profile.bank_code,profile.account_number,checker?.email||null,checker?.name||null]
     );
     await insertItems(client,request.id,1,items);
-    await insertAction(client,request,employee,'SUBMITTED',null,'PENDING_CHECK','','REQUESTOR');
+    await insertAction(client,request,employee,'SUBMITTED',null,request.status,'','REQUESTOR');
+    if(plan.bypass)await insertAction(client,request,employee,'EXECUTIVE_BYPASS',null,request.status,plan.bypassReason,'APPROVER');
     await client.query('commit');
     return request;
   }catch(e){await client.query('rollback');throw e}finally{client.release()}
@@ -602,7 +639,7 @@ export async function getRequestDetail(id) {
       checker.signature_file as checker_signature
      from requests r
      join employees req on req.email=r.requester_email
-     join employees rev on rev.email=r.reviewer_email
+     left join employees rev on rev.email=r.reviewer_email
      join employees app on app.email=r.approver_email
      left join ecf_details d on d.request_id=r.id
      left join employees checker on checker.email=d.checker_email
@@ -616,9 +653,11 @@ export async function getRequestDetail(id) {
     [id,request.revision]
   )).rows;
   const actions=(await pool.query(
-    `select revision,actor_name,actor_role,action,from_status,to_status,reason,created_at
+    `select revision,actor_email,actor_name,actor_role,action,from_status,to_status,reason,created_at
      from workflow_actions where request_id=$1 order by created_at,id`, [id]
   )).rows;
+  annotateProgress(request);
+  request.decision_notes=actions.filter(a=>Number(a.revision)===Number(request.revision)&&a.reason&&['CHECK_APPROVED','CHECK_REJECTED','REVIEW_APPROVED','REVIEW_REJECTED','FINAL_APPROVED','APPROVAL_REJECTED'].includes(a.action));
   return {request,items,actions};
 }
 
@@ -631,7 +670,7 @@ export async function setDocumentPaths(id, formPath, evidencePath) {
   return rows[0] || null;
 }
 
-export async function transitionRequest(id, actor, stage, decision, reason='') {
+export async function transitionRequest(id, actor, stage, decision, reason='',expectedRevision) {
   const client=await pool.connect();
   try{
     await client.query('begin');
@@ -639,6 +678,9 @@ export async function transitionRequest(id, actor, stage, decision, reason='') {
     const {rows}=await client.query('select * from requests where id=$1 for update',[id]);
     const request=rows[0];
     if(!request) throw Object.assign(new Error('Request not found.'),{status:404});
+    if(expectedRevision!==undefined&&Number(expectedRevision)!==Number(request.revision))throw Object.assign(new Error('Request revision changed. Refresh before deciding.'),{status:409});
+    const note=String(reason||'').trim();
+    if(note.length>4000)throw Object.assign(new Error('Decision notes must be at most 4000 characters.'),{status:400});
     const approve=String(decision).toUpperCase()==='APPROVE';
     const reject=String(decision).toUpperCase()==='REJECT';
     if(!approve&&!reject) throw Object.assign(new Error('Decision must be APPROVE or REJECT.'),{status:400});
@@ -659,6 +701,8 @@ export async function transitionRequest(id, actor, stage, decision, reason='') {
       toStatus=approve?'PENDING_APPROVAL':'REVIEW_REJECTED';
       action=approve?'REVIEW_APPROVED':'REVIEW_REJECTED';
       await requireWorkflowRoleTx(client,actor,request.form_type,'REVIEWER');
+      const available=(await client.query('select request_review_available($1,$2,$3) as ok',[request.workflow_plan,request.reviewer_email,actor.email])).rows[0].ok;
+      ownerEmail=available?actor.email:null;
     } else if(stage==='APPROVAL'){
       expected='PENDING_APPROVAL'; ownerEmail=request.approver_email;
       toStatus=approve?'APPROVED':'APPROVAL_REJECTED';
@@ -676,7 +720,8 @@ export async function transitionRequest(id, actor, stage, decision, reason='') {
           where a.request_id=$1 and a.revision=$2 and a.action='CHECK_APPROVED'
           and lower(a.actor_email)=lower(d.checker_email) and lower(a.actor_email)<>lower($4)) as checked`,
         [request.id,request.revision,request.reviewer_email,actor.email]);
-      if(!proof.reviewed || (request.form_type==='ECF'&&!proof.checked))
+      const bypassProof=request.workflow_plan?.bypass&&(await client.query(`select exists(select 1 from workflow_actions where request_id=$1 and revision=$2 and action='EXECUTIVE_BYPASS' and lower(actor_email)=lower($3)) as ok`,[id,request.revision,actor.email])).rows[0].ok;
+      if(!bypassProof&&(!proof.reviewed || (request.form_type==='ECF'&&!proof.checked)))
         throw Object.assign(new Error('Your request must first be checked and reviewed by the assigned other users.'),{status:409});
       const sole=await getSingleApproverTx(client,request.form_type);
       if(!sameEmail(sole.email,actor.email)) throw Object.assign(new Error('Only the sole assigned Approver may finalize this request.'),{status:403});
@@ -685,15 +730,41 @@ export async function transitionRequest(id, actor, stage, decision, reason='') {
     if(String(ownerEmail).toLowerCase()!==String(actor.email).toLowerCase()) throw Object.assign(new Error('This request is assigned to another user.'),{status:403});
 
     const {rows:updated}=await client.query(
-      `update requests set status=$2,last_rejection_reason=$3,updated_at=now()
+      `update requests set status=$2,last_rejection_reason=$3,reviewer_email=case when $4 then $5 else reviewer_email end,updated_at=now()
        where id=$1 returning *`,
-      [id,toStatus,reject?String(reason).trim():'']
+      [id,toStatus,reject?note:'',stage==='REVIEW',actor.email]
     );
     const next=updated[0];
     await insertAction(
-      client,next,actor,action,expected,toStatus,reject?String(reason).trim():'',
+      client,next,actor,action,expected,toStatus,note,
       {CHECK:'CHECKER',REVIEW:'REVIEWER',APPROVAL:'APPROVER'}[stage]
     );
+    await client.query('commit');
+    return next;
+  }catch(e){await client.query('rollback');throw e}finally{client.release()}
+}
+
+export async function takeOverRequest(id,actor,reason,expectedRevision){
+  const note=String(reason||'').trim();
+  if(!note||note.length>4000)throw Object.assign(new Error('A takeover reason of 1–4000 characters is required.'),{status:400});
+  const client=await pool.connect();
+  try{
+    await client.query('begin');
+    await client.query('select pg_advisory_xact_lock(77123001)');
+    const request=(await client.query('select * from requests where id=$1 for update',[id])).rows[0];
+    if(!request)throw Object.assign(new Error('Request not found.'),{status:404});
+    if(Number(expectedRevision)!==Number(request.revision))throw Object.assign(new Error('Request revision changed. Refresh before taking over.'),{status:409});
+    const fresh=(await client.query('select workflow_options from employees where lower(email)=lower($1)',[actor.email])).rows[0];
+    const role=takeoverRole({...actor,workflow_options:fresh?.workflow_options},request);
+    if(!role)throw Object.assign(new Error('This stage is unavailable for manual takeover.'),{status:409});
+    await requireWorkflowRoleTx(client,actor,request.form_type,role);
+    await requireWorkflowRoleTx(client,actor,request.form_type,'APPROVER');
+    const plan={...request.workflow_plan,[role==='REVIEWER'?'reviewTakenOver':'checkTakenOver']:true};
+    const next=(await client.query(`update requests set workflow_plan=$2,
+      reviewer_email=case when $3='REVIEWER' then $4 else reviewer_email end,updated_at=now()
+      where id=$1 returning *`,[id,plan,role,actor.email])).rows[0];
+    if(role==='CHECKER')await client.query('update ecf_details set checker_email=$2,checker_name=$3,updated_at=now() where request_id=$1',[id,actor.email,actor.name]);
+    await insertAction(client,next,actor,role==='REVIEWER'?'REVIEW_TAKEN_OVER':'CHECK_TAKEN_OVER',request.status,request.status,note,role);
     await client.query('commit');
     return next;
   }catch(e){await client.query('rollback');throw e}finally{client.release()}
@@ -710,7 +781,7 @@ export async function recallExpenseRequest(id, employee) {
     await requireWorkflowRoleTx(client,employee,request.form_type,'REQUESTOR');
     if(String(request.requester_email).toLowerCase()!==String(employee.email).toLowerCase())
       throw Object.assign(new Error('This is not your request.'),{status:403});
-    const expected=request.form_type==='ECF'?'PENDING_CHECK':'PENDING_REVIEW';
+    const expected=request.workflow_plan?.bypass?'PENDING_APPROVAL':request.form_type==='ECF'?'PENDING_CHECK':'PENDING_REVIEW';
     if(request.status!==expected)
       throw Object.assign(new Error(`Only requests that are still ${expected} can be recalled.`),{status:409});
 
@@ -788,7 +859,7 @@ export async function recallApprovedExpenseRequest(id,employee,reason){
   }catch(e){await client.query('rollback');throw e}finally{client.release()}
 }
 
-export async function reviseExpenseRequest(id, employee, items, {serviceOrderNumber}={}) {
+export async function reviseExpenseRequest(id, employee, items, {serviceOrderNumber,...options}={}) {
   const client=await pool.connect();
   try{
     await client.query('begin');
@@ -808,28 +879,17 @@ export async function reviseExpenseRequest(id, employee, items, {serviceOrderNum
       throw Object.assign(new Error('Claim total must be a positive whole number.'),{status:400});
 
     await requireWorkflowRoleTx(client,employee,request.form_type,'REQUESTOR');
-    const valid=async(email,role)=>!sameEmail(email,employee.email) && (await client.query(
-      'select employee_has_workflow_role($1,$2,$3) as ok',[email,request.form_type,role])).rows[0]?.ok;
-    let reviewerEmail=request.reviewer_email;
-    if(!await valid(reviewerEmail,'REVIEWER')){
-      const replacement=await chooseReviewerTx(client,{excludeEmail:employee.email,form:request.form_type});
-      if(!replacement) throw Object.assign(new Error('No other active Reviewer is available for this revision.'),{status:409});
-      reviewerEmail=replacement.email;
-    }
-    let approverEmail=request.approver_email;
-    approverEmail=(await getSingleApproverTx(client,request.form_type)).email;
+    const plan=await buildWorkflowPlan(client,employee,request.form_type,options);
+    const reviewerEmail=plan.bypass?null:plan.reviewers[0]?.email||null;
+    const approverEmail=(await getSingleApproverTx(client,request.form_type)).email;
     if(request.form_type==='ECF'){
-      const old=(await client.query('select checker_email from ecf_details where request_id=$1',[id])).rows[0];
-      if(!await valid(old?.checker_email,'CHECKER')){
-        const replacement=await chooseAssigneeTx(client,'ECF','CHECKER',[employee.email]);
-        if(!replacement) throw Object.assign(new Error('No other active Checker is available for this revision.'),{status:409});
-        await client.query('update ecf_details set checker_email=$2,checker_name=$3,updated_at=now() where request_id=$1',[id,replacement.email,replacement.name]);
-      }
+      const checker=plan.bypass?null:plan.checker;
+      await client.query('update ecf_details set checker_email=$2,checker_name=$3,updated_at=now() where request_id=$1',[id,checker?.email||null,checker?.name||null]);
     }
     const {rows:updated}=await client.query(
       `update requests set revision=$2,total=$3,status=$5,
-       reviewer_email=$4,approver_email=$6,last_rejection_reason='',form_pdf_path=null,evidence_pdf_path=null,updated_at=now()
-       where id=$1 returning *`, [id,newRevision,total,reviewerEmail,request.form_type==='ECF'?'PENDING_CHECK':'PENDING_REVIEW',approverEmail]
+       reviewer_email=$4,approver_email=$6,workflow_plan=$7,last_rejection_reason='',form_pdf_path=null,evidence_pdf_path=null,updated_at=now()
+       where id=$1 returning *`, [id,newRevision,total,reviewerEmail,plan.bypass?'PENDING_APPROVAL':request.form_type==='ECF'?'PENDING_CHECK':'PENDING_REVIEW',approverEmail,plan]
     );
     const next=updated[0];
     if(request.form_type==='ECF' && serviceOrderNumber!==undefined){
@@ -840,6 +900,7 @@ export async function reviseExpenseRequest(id, employee, items, {serviceOrderNum
     }
     await insertItems(client,id,newRevision,items);
     await insertAction(client,next,employee,'REVISED',oldStatus,next.status,'','REQUESTOR');
+    if(plan.bypass)await insertAction(client,next,employee,'EXECUTIVE_BYPASS',oldStatus,next.status,plan.bypassReason,'APPROVER');
     await client.query('commit');
     return next;
   }catch(e){await client.query('rollback');throw e}finally{client.release()}

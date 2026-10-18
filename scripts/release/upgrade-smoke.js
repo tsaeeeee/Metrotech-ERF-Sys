@@ -61,6 +61,7 @@ try{
   assert.equal((await client.query("SELECT count(*)::int n FROM employees WHERE password_hash=crypt('Legacy-Test-Password1',password_hash)")).rows[0].n,4);
   assert.equal((await client.query("SELECT pgp_sym_decrypt(decode(value,'base64'),'upgrade-ci-key') secret FROM app_settings WHERE key='smtp_pass'")).rows[0].secret,'legacy-smtp-secret');
 
+  await client.query(await fs.readFile(new URL('../../sql/migrations/019-executive-workflow.sql',import.meta.url),'utf8'));
   server=spawn(process.execPath,['--import','./src/ecf-profile-preload.js','src/server.js'],{
     env:{...process.env,POSTGRES_DB:'ems_upgrade_ci',APP_CONFIG_MASTER_KEY:'upgrade-ci-key',
       PORT:'18990',PDF_DIR:'/tmp/ems-upgrade-ci',PDF_MODE:'mock',MAIL_GATEWAY_URL:'',MAIL_GATEWAY_SECRET:''},

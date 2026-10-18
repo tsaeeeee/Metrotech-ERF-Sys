@@ -1,4 +1,5 @@
-import {hasRole,sameEmail,recallRole} from './access.js';
+import {submissionOptions,reviewRecipients,pendingRecipients} from './workflow-policy.js';
+import {hasRole,sameEmail,recallRole,isWorkflowParticipant} from './access.js';
 import 'dotenv/config';
 import express from 'express';
 import helmet from 'helmet';
@@ -13,7 +14,7 @@ import {
   createManagedEmployee,updateManagedEmployee,setManagedEmployeeActive,ensureBootstrapAdminCredentials,
   listRequestsForEmployee,listDecisionHistory,hasDecisionHistory,listTasksForEmployee,listMyRequests,getEcfRole,getEmsDashboard,
   createExpenseRequest,createEcfClaim,
-  getRequestDetail,setDocumentPaths,transitionRequest,recallExpenseRequest,recallReviewedExpenseRequest,recallApprovedExpenseRequest,reviseExpenseRequest
+  getRequestDetail,setDocumentPaths,transitionRequest,takeOverRequest,recallExpenseRequest,recallReviewedExpenseRequest,recallApprovedExpenseRequest,reviseExpenseRequest
 } from './db.js';
 import { buildEvidencePdf,buildFormPdf } from './documents.js';
 import { buildRequestPacket } from './request-packet.js';
@@ -203,7 +204,7 @@ function requireAdmin(req,res,next){
 
 function canAccess(employee,request){
   const form=request.form_type||'ERF';
-  return [['REQUESTOR','requester_email'],['CHECKER','checker_email'],['REVIEWER','reviewer_email'],['APPROVER','approver_email']]
+  return isWorkflowParticipant(employee,request)||[['REQUESTOR','requester_email'],['CHECKER','checker_email'],['REVIEWER','reviewer_email'],['APPROVER','approver_email']]
     .some(([role,field])=>hasRole(employee,form,role)&&sameEmail(employee.email,request[field]));
 }
 
@@ -607,17 +608,17 @@ app.post('/api/requests',requireUser,upload.any(),async(req,res,next)=>{
     if(requestType!=='EXPENSE') return res.status(400).json({error:'Use Expense Claim (ECF) for claims.'});
     const {items,files}=parseItemsAndFiles(req,requestType);
     const runtimeSettings=await getRuntimeAppSettings();
-    const request=await createExpenseRequest(req.employee,items,runtimeSettings.timezone,requestType);
+    const request=await createExpenseRequest(req.employee,items,runtimeSettings.timezone,requestType,submissionOptions(req.body));
 
     await persistOriginals(request.id,1,files);
     const {detail}=await generateSubmissionDocs(request.id,files);
     await sendWorkflowMail({
-      event:'SUBMITTED',request:detail.request,to:detail.request.reviewer_email,
+      event:'SUBMITTED',request:detail.request,to:pendingRecipients(detail.request),
       subject:`[${requestCode(detail.request)}] ${detail.request.ref_no} pending review`,
-      text:`${detail.request.employee_name} submitted ${detail.request.ref_no} for review.`
+      text:`${detail.request.employee_name} submitted ${detail.request.ref_no} for ${detail.request.workflow_plan?.bypass?'final approval':'review'}.`
     });
     res.status(201).json({
-      ok:true,requestId:request.id,refNo:request.ref_no,status:'PENDING_REVIEW',revision:1,
+      ok:true,requestId:request.id,refNo:request.ref_no,status:request.status,revision:1,
       requestType:detail.request.request_type
     });
   }catch(e){next(e)}
@@ -629,12 +630,12 @@ app.post('/api/ecf/claims',requireUser,upload.any(),async(req,res,next)=>{
     const {items,files}=parseItemsAndFiles(req,'REIMBURSEMENT');
     const settings=await getRuntimeAppSettings();
     const request=await createEcfClaim(req.employee,items,settings.timezone,
-      String(req.body.serviceOrderNumber||'').trim().slice(0,100));
+      String(req.body.serviceOrderNumber||'').trim().slice(0,100),submissionOptions(req.body));
     await persistOriginals(request.id,1,files);
     const {detail}=await generateSubmissionDocs(request.id,files);
-    await sendWorkflowMail({event:'SUBMITTED',request:detail.request,to:detail.request.checker_email,
+    await sendWorkflowMail({event:'SUBMITTED',request:detail.request,to:pendingRecipients(detail.request),
       subject:`[ECF] ${request.ref_no} pending check`,
-      text:`${request.employee_name} submitted ${request.ref_no} for checking.`});
+      text:`${request.employee_name} submitted ${request.ref_no} for ${detail.request.workflow_plan?.bypass?'final approval':'checking'}.`});
     res.status(201).json({ok:true,requestId:request.id,refNo:request.ref_no,status:request.status});
   }catch(e){next(e)}
 });
@@ -678,12 +679,12 @@ app.post('/api/requests/:id/revise',requireUser,upload.any(),withRequestWorkflow
 
     const {items,files}=await parseRevisionItemsAndFiles(req,currentDetail);
     const request=await reviseExpenseRequest(req.params.id,req.employee,items,{
-      serviceOrderNumber:req.body.serviceOrderNumber
+      ...submissionOptions(req.body),serviceOrderNumber:req.body.serviceOrderNumber
     });
     await persistOriginals(request.id,request.revision,files);
     const {detail}=await generateSubmissionDocs(request.id,files);
     await sendWorkflowMail({
-      event:'REVISED',request:detail.request,to:detail.request.form_type==='ECF'?detail.request.checker_email:detail.request.reviewer_email,
+      event:'REVISED',request:detail.request,to:pendingRecipients(detail.request),
       subject:`[${requestCode(detail.request)}] ${detail.request.ref_no} revised and pending review`,
       text:`${detail.request.employee_name} submitted revision ${detail.request.revision} of ${detail.request.ref_no}.`
     });
@@ -756,9 +757,17 @@ app.get('/api/requests/:id/evidence',requireUser,async(req,res,next)=>{
   }catch(e){next(e)}
 });
 
+app.post('/api/requests/:id/takeover',requireUser,withRequestWorkflowLock(async(req,res,next)=>{
+  try{
+    const request=await takeOverRequest(req.params.id,req.employee,req.body.reason,req.body.revision);
+    await regenerateForm(request.id);
+    res.json({ok:true,status:request.status});
+  }catch(e){next(e)}
+}));
+
 app.post('/api/requests/:id/review',requireUser,withRequestWorkflowLock(async(req,res,next)=>{
   try{
-    const request=await transitionRequest(req.params.id,req.employee,'REVIEW',req.body.decision,req.body.reason||'');
+    const request=await transitionRequest(req.params.id,req.employee,'REVIEW',req.body.decision,req.body.reason||'',req.body.revision);
     const detail=await regenerateForm(request.id);
     const approved=detail.request.status==='PENDING_APPROVAL';
     const code=requestCode(detail.request);
@@ -773,23 +782,23 @@ app.post('/api/requests/:id/review',requireUser,withRequestWorkflowLock(async(re
   }catch(e){next(e)}
 }));
 
-app.post('/api/requests/:id/check',requireUser,async(req,res,next)=>{
+app.post('/api/requests/:id/check',requireUser,withRequestWorkflowLock(async(req,res,next)=>{
   try{
-    const request=await transitionRequest(req.params.id,req.employee,'CHECK',req.body.decision,req.body.reason||'');
+    const request=await transitionRequest(req.params.id,req.employee,'CHECK',req.body.decision,req.body.reason||'',req.body.revision);
     const detail=await regenerateForm(request.id);
     const passed=request.status==='PENDING_REVIEW';
     await sendWorkflowMail({event:passed?'CHECK_APPROVED':'CHECK_REJECTED',request:detail.request,
-      to:passed?request.reviewer_email:request.requester_email,
+      to:passed?reviewRecipients(detail.request):request.requester_email,
       subject:`[ECF] ${request.ref_no} ${passed?'pending review':'rejected by Checker'}`,
       text:passed?`${request.ref_no} has passed the Checker stage.`:
         `${request.ref_no} was rejected by Checker. Reason: ${req.body.reason}`});
     res.json({ok:true,status:request.status});
   }catch(e){next(e)}
-});
+}));
 
 app.post('/api/requests/:id/approve',requireUser,withRequestWorkflowLock(async(req,res,next)=>{
   try{
-    const request=await transitionRequest(req.params.id,req.employee,'APPROVAL',req.body.decision,req.body.reason||'');
+    const request=await transitionRequest(req.params.id,req.employee,'APPROVAL',req.body.decision,req.body.reason||'',req.body.revision);
     const detail=await regenerateForm(request.id);
     const approved=detail.request.status==='APPROVED';
     const code=requestCode(detail.request);

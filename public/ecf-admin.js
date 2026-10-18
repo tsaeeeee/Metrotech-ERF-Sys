@@ -40,6 +40,39 @@ openAdminUserModal=function(encodedEmail=''){
       const locked=role==='APPROVER'&&assignedApprover&&!sameEmail(assignedApprover.email,user?.email);
       return `<label><input type="checkbox" data-form="${form}" value="${role}" ${selected.includes(role)?'checked':''} ${locked?'disabled':''}>${role[0]+role.slice(1).toLowerCase()}</label>`;
     }).join('')}</div></fieldset>`;
-  }).join('')+`<small>Choose all required roles. Tasks remain assigned to a specific user. Only one active Approver is allowed across ERF and ECF.${assignedApprover?' Current Approver: '+esc(assignedApprover.name)+'.':''}</small>`;
+  }).join('')+`<small>Choose all required roles. Primary reviewers share one queue. Secondary executive roles require manual takeover. Only one active Approver is allowed across ERF and ECF.${assignedApprover?' Current Approver: '+esc(assignedApprover.name)+'.':''}</small>`;
+  let optionsField=$('#adminWorkflowOptions');
+  if(!optionsField){optionsField=document.createElement('div');optionsField.id='adminWorkflowOptions';optionsField.className='span-2 workflow-role-fields';field.insertAdjacentElement('afterend',optionsField)}
+  const options=user?.workflow_options||{};
+  optionsField.innerHTML=`<label>Workflow display name <span class="muted">(optional short name)</span><input id="adminWorkflowDisplayName" maxlength="40" value="${esc(options.displayName||'')}" placeholder="e.g. Dimas or Rizal"></label>`+['ERF','ECF'].map(form=>{
+    const option=options[form]||{};
+    return `<fieldset><legend>${form} Workflow</legend>
+      <label>Reviewer assignment<select data-workflow-review="${form}">${[['ASSIGNED','Individual assignment'],['PRIMARY','Primary — shared queue'],['SECONDARY','Secondary — manual takeover']].map(([value,label])=>`<option value="${value}" ${value===(option.review||'ASSIGNED')?'selected':''}>${label}</option>`).join('')}</select></label>
+      ${form==='ECF'?`<label>Checker assignment<select id="adminWorkflowCheck"><option value="PRIMARY">Primary</option><option value="SECONDARY" ${option.check==='SECONDARY'?'selected':''}>Secondary — manual takeover</option></select></label>`:''}
+      <label><input type="checkbox" data-workflow-bypass="${form}" ${option.bypass?'checked':''}> Allow executive bypass on own requests</label>
+      </fieldset>`;
+  }).join('')+'<small>Secondary and bypass permissions require Approver access. Routing changes apply on submission or resubmission. Existing requests keep their assigned participants.</small>';
+  const sync=()=>{
+    const selected=adminSelectedWorkflowRoles();
+    for(const form of ['ERF','ECF']){
+      const roles=selected[form],review=optionsField.querySelector(`[data-workflow-review="${form}"]`),bypass=optionsField.querySelector(`[data-workflow-bypass="${form}"]`);
+      review.disabled=!roles.includes('REVIEWER');if(review.disabled)review.value='ASSIGNED';
+      review.querySelector('[value="SECONDARY"]').disabled=!roles.includes('APPROVER');
+      if(review.value==='SECONDARY'&&!roles.includes('APPROVER'))review.value='ASSIGNED';
+      bypass.disabled=!(roles.includes('APPROVER')&&roles.includes('REQUESTOR'));if(bypass.disabled)bypass.checked=false;
+    }
+    const check=$('#adminWorkflowCheck');check.disabled=!selected.ECF.includes('CHECKER');
+    check.querySelector('[value="SECONDARY"]').disabled=!selected.ECF.includes('APPROVER');
+    if(check.disabled||!selected.ECF.includes('APPROVER'))check.value='PRIMARY';
+  };
+  field.onchange=sync;sync();
   $('#adminUserModalHint').textContent='Manage user details and independent ERF / ECF access.';
 };
+
+function adminSelectedWorkflowOptions(){
+  return {displayName:$('#adminWorkflowDisplayName').value.trim(),...Object.fromEntries(['ERF','ECF'].map(form=>[form,{
+    review:document.querySelector(`[data-workflow-review="${form}"]`).value,
+    check:form==='ECF'?$('#adminWorkflowCheck').value:'PRIMARY',
+    bypass:document.querySelector(`[data-workflow-bypass="${form}"]`).checked
+  }]))};
+}
