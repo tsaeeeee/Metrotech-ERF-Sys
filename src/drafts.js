@@ -106,6 +106,7 @@ export function installDraftRoutes(app,deps){
   const editable=async draft=>{if(draft.submitted||(await getRequestDetail(draft.id)))fail('This draft has already created a request. Submit again to finish, or open it in My Requests.',409)};
   const publicDraft=draft=>({...draft,files:draft.files.map(f=>({...f,url:`/api/drafts/${draft.id}/files/${f.id}`}))});
 
+  app.use('/api/drafts',(_req,res,next)=>{res.set('Cache-Control','private, no-store');next()});
   app.get('/api/drafts',requireUser,locked(async(req,res)=>{
     const rows=(await store.list(req.employee.email)).filter(d=>hasRole(req.employee,d.formType,'REQUESTOR'));
     res.json({drafts:rows.map(d=>({id:d.id,version:d.version,formType:d.formType,updatedAt:d.updatedAt,

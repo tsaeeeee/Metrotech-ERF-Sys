@@ -208,6 +208,8 @@ body.ems-theme {
 .ems-theme [data-ems-view="erf"]::before,
 .ems-theme #requestFormTitle::before,
 .ems-theme [data-ems-view="ecf"]::before,
+.ems-theme [data-ems-view="drafts"]::before,
+.ems-theme #saveDraftBtn::before,
 .ems-theme [data-ems-view="requests"]::before,
 .ems-theme #queueTitle::before,
 .ems-theme [data-ems-view="tasks"]::before,
@@ -292,7 +294,7 @@ body.ems-theme {
 .ems-theme .ems-metric-cell small::before{display:none}
 .ems-theme .ems-metric-cell strong{font-size:clamp(15px,1.35vw,22px);margin:6px 0;letter-spacing:-.4px}
 .ems-theme .ems-metric-cell>span{font-size:12px}
-.ems-theme .ems-nav [data-ems-view="drafts"]{--icon:var(--icon-file)}
+.ems-theme .ems-nav [data-ems-view="drafts"],.ems-theme #saveDraftBtn{--icon:var(--icon-edit)}
 .draft-list-actions,.ems-history-filter{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .ems-history-filter{margin:12px 0;font-size:13px}
 #emsHistoryPage{color:var(--muted);margin-right:auto}
