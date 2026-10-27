@@ -37,7 +37,7 @@ async function counts(){return (await pool.query(`select (select count(*) from r
 const payload=(formType='ERF',payments=[],editor=empty)=>({formType,payments,editor,editingIndex:-1,serviceOrderNumber:'SO-DRAFT'});
 try{
   await start();
-  const cookie=await login('workflow-requestor'),other=await login('workflow-ecf-only'),reviewer=await login('workflow-reviewer'),approver=await login('workflow-approver');
+  const cookie=await login('workflow-requestor'),other=await login('workflow-ecf-only'),reviewer=await login((await pool.query("select username from employees where active and role='REVIEWER' order by email limit 1")).rows[0].username),approver=await login('workflow-approver');
   const initial=await counts();
   assert.equal((await http('/api/drafts')).status,401);
   assert.equal((await http('/api/drafts',reviewer,'POST',form(payload()))).status,403);

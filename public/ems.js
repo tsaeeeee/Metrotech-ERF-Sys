@@ -190,7 +190,7 @@ function emsNavigate(view,filter=null){
     $('#decisionHistoryTitle').textContent='History & Progress';
     $('#emsHistoryFilter').classList.toggle('hidden',!filter);
     if(filter) emsLoadDashboardRequests();
-    else renderRequests(data.history||[],'decisionHistoryTable','decisionHistoryBody','decisionHistoryEmpty');
+    else {$('#decisionHistoryEmpty').textContent='No requests to track yet.';renderRequests(data.history||[],'decisionHistoryTable','decisionHistoryBody','decisionHistoryEmpty');}
   }
   if(view==='home') emsLoadDashboard();
 }
@@ -470,9 +470,7 @@ logout=async function(...args){
     $(selector).classList.add('hidden'));
 };
 
-// One entry point, after app.js, request-type.js and the ECF extensions.
-loadAuthMode();
-loadMe();
+// Initial loading runs after dashboard-drafts.js installs all extensions.
 
 // Close the mobile drawer when switching viewport; disclosure choices persist.
 const emsCompactNavigation=window.matchMedia('(max-width: 1100px)');

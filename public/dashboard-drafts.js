@@ -145,3 +145,7 @@ async function emsDeleteDraft(id,version,button){
   }catch(e){msg(e.message,'err');button.disabled=false;emsClearActionLoading(button,'Delete')}
   finally{emsDraftBusy=false}
 }
+
+// Start only after every navigation/submission extension is available.
+loadAuthMode();
+loadMe();
