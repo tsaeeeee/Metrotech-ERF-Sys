@@ -4,7 +4,7 @@ on:
   push:
     branches: [web, production-erf]
   pull_request:
-    branches: [web, production-erf, feature/assigned-multi-role, feature/request-progress-visibility, feature/executive-review-workflow]
+    branches: [web, production-erf, feature/assigned-multi-role, feature/request-progress-visibility, feature/executive-review-workflow, fix/user-management-workflow-ui]
 
 jobs:
   syntax:
@@ -41,6 +41,9 @@ jobs:
         run: |
           node --check src/server.js
           node --check src/db.js
+          node --check src/drafts.js
+          node --check public/dashboard-drafts.js
+          node --check scripts/drafts-http-smoke.js
           node --check src/auth.js
           node --check src/documents.js
           node --check src/request-packet.js
@@ -72,6 +75,8 @@ jobs:
         run: node scripts/executive-workflow-smoke.js
       - name: Test EMS HTTP workflow
         run: npm run test:ems-http
+      - name: Test persistent drafts, ownership, retry safety and dashboard drilldowns
+        run: node scripts/drafts-http-smoke.js
       - name: Install browser for UI regression checks
         run: npx playwright install --with-deps chromium
       - name: Test role navigation, mobile approval and session startup

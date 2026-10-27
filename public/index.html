@@ -88,6 +88,7 @@
   <details id="emsActivityNav" class="ems-nav-group hidden" open>
     <summary>Activity</summary>
     <div class="ems-nav-items">
+      <button type="button" data-ems-view="drafts" onclick="emsNavigate('drafts')">Draft</button>
       <button type="button" data-ems-view="requests" onclick="emsNavigate('requests')">My Requests</button>
       <button type="button" data-ems-view="tasks" onclick="emsNavigate('tasks')">My Tasks <span id="emsTaskCount"></span></button>
       <button type="button" data-ems-view="history" onclick="emsNavigate('history')">History &amp; Progress</button>
@@ -115,6 +116,13 @@
   <section class="card ems-category-panel"><div class="ems-panel-heading"><h2>Top categories this month</h2></div><div id="emsCategories"></div></section>
 </section>
 <section id="emsTasks" class="card hidden"><h2>My Tasks</h2><div id="emsTaskRows"></div></section>
+<section id="emsDrafts" class="card hidden">
+  <div class="row"><h2>Draft</h2><div class="draft-list-actions">
+    <button class="btn ghost" data-new-draft="ERF" onclick="emsNewDraft('erf')">New ERF</button>
+    <button class="btn ghost" data-new-draft="ECF" onclick="emsNewDraft('ecf')">New ECF</button>
+    <button class="btn ghost" onclick="emsLoadSavedDrafts()">Refresh</button>
+  </div></div><div id="emsDraftRows" aria-live="polite"></div>
+</section>
 <div id="workflowDashboard">
 <section id="requestForm" class="card hidden">
 <div id="emsClaimFields" class="ems-claim-fields hidden">
@@ -175,6 +183,8 @@
 
 <div class="form-footer">
   <div class="total-box"><span>Total</span><strong id="grandTotal">Rp0</strong></div>
+  <span id="draftSaveState" class="draft-save-state" role="status"></span>
+  <button id="saveDraftBtn" class="btn ghost" onclick="emsSaveDraft()">Save Draft</button>
   <button id="submitExpenseBtn" class="btn primary submit" onclick="submitExpense()" disabled>Submit Expense</button>
 </div>
 </section>
@@ -194,6 +204,12 @@
 
 <section id="decisionHistoryCard" class="card hidden">
   <div class="row"><div><h2 id="decisionHistoryTitle">History &amp; Progress</h2></div><button class="btn ghost" onclick="loadMe()">Refresh</button></div>
+  <div id="emsHistoryFilter" class="ems-history-filter hidden">
+    <span id="emsHistoryFilterLabel"></span><span id="emsHistoryPage"></span>
+    <button id="emsHistoryPrevious" class="btn tiny ghost" onclick="emsHistoryPage(-1)">Previous</button>
+    <button id="emsHistoryNext" class="btn tiny ghost" onclick="emsHistoryPage(1)">Next</button>
+    <button class="btn tiny ghost" onclick="emsNavigate('home')">Dashboard</button>
+  </div>
   <div id="decisionHistoryEmpty" class="empty">No requests to track yet.</div>
   <div class="table-wrap">
     <table id="decisionHistoryTable" class="request-list-table hidden">
@@ -606,5 +622,6 @@
 <script src="/ecf-admin.js"></script>
 <script src="/ems.js"></script>
 <script src="/executive-workflow.js"></script>
+<script src="/dashboard-drafts.js"></script>
 </body>
 </html>

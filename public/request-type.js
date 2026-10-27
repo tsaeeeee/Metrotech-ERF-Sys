@@ -717,7 +717,7 @@ submitExpense=async function(){
     });
 
     const url=revisionTarget?`/api/requests/${revisionTarget.id}/revise`:'/api/requests';
-    const r=await api(url,{method:'POST',body:fd});
+    const r=await emsSubmitForm(url,fd);
     const assignmentNote=await workflowAssignmentNote(r.requestId);
     msg(`${r.refNo} ${revisionTarget?'revision submitted':'submitted'} successfully. Status: ${r.status||'PENDING_REVIEW'}.${assignmentNote}`,'ok');
     cancelRevision();

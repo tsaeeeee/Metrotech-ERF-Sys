@@ -476,12 +476,16 @@ export async function listDecisionHistory(employee){
     where ${historyScope()} order by r.updated_at desc limit 100`,[employee.email])).rows.map(annotateProgress);
 }
 
-export async function getEmsDashboard(employee){
-  const scope=employee.role==='ADMIN'?'true':`(${historyScope()} or
+function dashboardScope(employee){
+  return employee.role==='ADMIN'?'true':`(${historyScope()} or
     (lower(r.reviewer_email)=lower($1) and employee_has_workflow_role($1,r.form_type,'REVIEWER')) or
     (lower(r.approver_email)=lower($1) and employee_has_workflow_role($1,r.form_type,'APPROVER')) or
     (exists(select 1 from ecf_details d where d.request_id=r.id and lower(d.checker_email)=lower($1))
       and employee_has_workflow_role($1,r.form_type,'CHECKER')))`;
+}
+
+export async function getEmsDashboard(employee){
+  const scope=dashboardScope(employee);
   const formScope="(r.form_type='ECF' or r.request_type='EXPENSE')";
   const args=employee.role==='ADMIN'?[]:[employee.email];
   const [totals,trend,categories]=await Promise.all([
@@ -501,6 +505,31 @@ export async function getEmsDashboard(employee){
        group by i.category,r.form_type order by amount desc limit 8`,args)
   ]);
   return {totals:totals.rows,trend:trend.rows,categories:categories.rows};
+}
+
+export async function getDashboardRequests(employee,{formType,state,offset=0}){
+  if(!['ERF','ECF'].includes(formType)||!['progress','approved'].includes(state)||!Number.isSafeInteger(offset)||offset<0)
+    throw Object.assign(new Error('Invalid dashboard filter.'),{status:400});
+  const args=employee.role==='ADMIN'?[]:[employee.email];
+  const formParam=`$${args.push(formType)}`;
+  const states=state==='approved'?['APPROVED']:['PENDING_CHECK','PENDING_REVIEW','PENDING_APPROVAL'];
+  const stateParam=`$${args.push(states)}`;
+  const where=`${dashboardScope(employee)} and (r.form_type='ECF' or r.request_type='EXPENSE') and r.form_type=${formParam} and r.status=any(${stateParam}::text[])`;
+  const count=await pool.query(`select count(*)::integer as total from requests r where ${where}`,args);
+  const offsetParam=`$${args.push(offset)}`;
+  const rows=await pool.query(`select r.id,r.ref_no,r.form_type,r.requester_email,r.employee_name,r.request_date,
+      r.total,r.status,r.revision,r.workflow_plan,r.reviewer_email,r.approver_email,d.checker_email,
+      case r.status when 'PENDING_CHECK' then 'Checker' when 'PENDING_REVIEW' then 'Reviewer'
+        when 'PENDING_APPROVAL' then 'Approver' end as waiting_for_role,
+      case r.status when 'PENDING_CHECK' then coalesce(c.name,d.checker_email)
+        when 'PENDING_REVIEW' then coalesce(v.name,r.reviewer_email)
+        when 'PENDING_APPROVAL' then coalesce(p.name,r.approver_email) end as waiting_for_name
+    from requests r left join ecf_details d on d.request_id=r.id
+    left join employees c on lower(c.email)=lower(d.checker_email)
+    left join employees v on lower(v.email)=lower(r.reviewer_email)
+    left join employees p on lower(p.email)=lower(r.approver_email)
+    where ${where} order by r.updated_at desc,r.id limit 50 offset ${offsetParam}`,args);
+  return {requests:rows.rows.map(annotateProgress),total:count.rows[0].total,offset,limit:50};
 }
 
 async function requireWorkflowRoleTx(client,employee,form,role){
@@ -541,11 +570,11 @@ export async function createExpenseRequest(employee, items, timezone='Asia/Jakar
     const { rows } = await client.query(
       `insert into requests(
         ref_no,request_date,requester_email,employee_name,employee_id,department,location,division,
-        request_type,total,status,revision,reviewer_email,approver_email,workflow_plan
-      ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$13,1,$11,$12,$14)
+        request_type,total,status,revision,reviewer_email,approver_email,workflow_plan,id
+      ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$13,1,$11,$12,$14,coalesce($15::uuid,gen_random_uuid()))
       returning *`,
       [refNo,requestDate,employee.email,employee.name,employee.employee_id,employee.department,
-       employee.location,employee.division,normalizedType,total,plan.bypass?null:reviewer?.email||null,approver.email,plan.bypass?'PENDING_APPROVAL':'PENDING_REVIEW',plan]
+       employee.location,employee.division,normalizedType,total,plan.bypass?null:reviewer?.email||null,approver.email,plan.bypass?'PENDING_APPROVAL':'PENDING_REVIEW',plan,options.requestId||null]
     );
     const request=rows[0];
     await insertItems(client, request.id, 1, items);
@@ -588,10 +617,10 @@ export async function createEcfClaim(employee,items,timezone='Asia/Jakarta',serv
     const refNo=`ECF-${date.compact.slice(0,4)}-${date.compact.slice(4)}-${String(seq).padStart(4,'0')}`;
     const request=(await client.query(
       `insert into requests(ref_no,request_date,requester_email,employee_name,employee_id,department,
-       location,division,request_type,form_type,total,status,revision,reviewer_email,approver_email,workflow_plan)
-       values($1,$2,$3,$4,$5,$6,$7,$8,'EXPENSE','ECF',$9,$12,1,$10,$11,$13) returning *`,
+       location,division,request_type,form_type,total,status,revision,reviewer_email,approver_email,workflow_plan,id)
+       values($1,$2,$3,$4,$5,$6,$7,$8,'EXPENSE','ECF',$9,$12,1,$10,$11,$13,coalesce($14::uuid,gen_random_uuid())) returning *`,
       [refNo,date.day,employee.email,employee.name,employee.employee_id,employee.department,
-       employee.location,employee.division,total,plan.bypass?null:reviewer?.email||null,approver.email,plan.bypass?'PENDING_APPROVAL':'PENDING_CHECK',plan]
+       employee.location,employee.division,total,plan.bypass?null:reviewer?.email||null,approver.email,plan.bypass?'PENDING_APPROVAL':'PENDING_CHECK',plan,options.requestId||null]
     )).rows[0];
     await client.query(
       `insert into ecf_details(request_id,service_order_number,payment_to,bank_name,
