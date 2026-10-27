@@ -1,3 +1,4 @@
+import {installDraftRoutes} from './drafts.js';
 import {submissionOptions,reviewRecipients,pendingRecipients} from './workflow-policy.js';
 import {hasRole,sameEmail,recallRole,isWorkflowParticipant} from './access.js';
 import 'dotenv/config';
@@ -12,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import {
   pool,workflowLockPool,pingDb,getEmployee,authenticateLocalUser,changeEmployeePassword,updateEmployeeSignature,listManagedEmployees,
   createManagedEmployee,updateManagedEmployee,setManagedEmployeeActive,ensureBootstrapAdminCredentials,
-  listRequestsForEmployee,listDecisionHistory,hasDecisionHistory,listTasksForEmployee,listMyRequests,getEcfRole,getEmsDashboard,
+  listRequestsForEmployee,listDecisionHistory,hasDecisionHistory,listTasksForEmployee,listMyRequests,getEcfRole,getEmsDashboard,getDashboardRequests,
   createExpenseRequest,createEcfClaim,
   getRequestDetail,setDocumentPaths,transitionRequest,takeOverRequest,recallExpenseRequest,recallReviewedExpenseRequest,recallApprovedExpenseRequest,reviseExpenseRequest
 } from './db.js';
@@ -454,6 +455,14 @@ app.get('/api/me',requireUser,async(req,res)=>{
 app.get('/api/ems/dashboard',requireUser,async(req,res,next)=>{
   try{res.json(await getEmsDashboard(req.employee))}catch(e){next(e)}
 });
+
+app.get('/api/ems/dashboard/requests',requireUser,async(req,res,next)=>{
+  try{res.json(await getDashboardRequests(req.employee,{formType:req.query.formType,state:req.query.state,offset:Number(req.query.offset||0)}))}catch(e){next(e)}
+});
+
+installDraftRoutes(app,{root:DATA_DIR,requireUser,upload,pool,workflowLockPool,getRequestDetail,
+  createExpenseRequest,createEcfClaim,getRuntimeAppSettings,parseItemsAndFiles,persistOriginals,
+  generateSubmissionDocs,sendWorkflowMail,maxBytes:MAX_EVIDENCE_MB*1024*1024});
 
 app.put('/api/profile/password',requireUser,async(req,res,next)=>{
   try{

@@ -6,6 +6,10 @@ let emsDraftOwner=null;
 let emsDrafts={};
 let emsSubmitting=false;
 let emsChecking=false;
+let emsDraftBusy=false;
+let emsSavedDraft=null;
+let emsDashboardFilter=null;
+let emsHistoryLoad=0;
 
 // Keep the original ERF options; ECF uses the claim category catalogue.
 const emsErfCategories=[...document.querySelectorAll('#categoryMenu button')].map(button=>button.dataset.value);
@@ -34,6 +38,7 @@ function emsStoreDraft(){
   emsDrafts[emsFormView]={
     payments:payments.map(item=>({...item,evidence:[...(item.evidence||[])]})),
     editingIndex,
+    savedDraft:emsSavedDraft?{...emsSavedDraft}:null,
     revisionTarget:revisionTarget?{...revisionTarget}:null,
     requestType:rtRequestType,
     category:$('#category').value,
@@ -48,6 +53,7 @@ function emsStoreDraft(){
 function emsRestoreDraft(view){
   const draft=emsDrafts[view];
   emsFormView=view;
+  emsSavedDraft=draft?.savedDraft?{...draft.savedDraft}:null;
   emsSetCategories(view);
   payments=(draft?.payments||[]).map(item=>({...item,evidence:[...item.evidence]}));
   editingIndex=draft?.editingIndex??-1;
@@ -73,6 +79,10 @@ function emsResetSessionState(){
   emsFormView=null;
   emsDraftOwner=null;
   emsDrafts={};
+  emsSavedDraft=null;
+  emsDashboardFilter=null;
+  emsHistoryLoad++;
+  $('#emsDraftRows').replaceChildren();
   payments=[];
   editingIndex=-1;
   revisionTarget=null;
@@ -114,17 +124,17 @@ function emsClearActionLoading(button,label){
   button.textContent=label;
 }
 
-function emsNavigate(view){
+function emsNavigate(view,filter=null){
   if(!currentEmployee) return;
-  if(emsSubmitting && view!==emsView) return;
+  if(emsDraftBusy || (emsSubmitting && view!==emsView)) return;
   emsCloseSidebar();
   const admin=currentEmployee.role==='ADMIN';
-  if(admin && !['home','admin-users','admin-app'].includes(view)) view='admin-users';
+  if(admin && !['home','admin-users','admin-app'].includes(view) && !(view==='history'&&filter)) view='admin-users';
   if(!admin && view.startsWith('admin-')) view='home';
   const canRequest=hasRole(currentEmployee,'ERF','REQUESTOR')||hasRole(currentEmployee,'ECF','REQUESTOR');
   const canWork=['ERF','ECF'].some(form=>rolesFor(currentEmployee,form).some(role=>role!=='REQUESTOR'));
   if(!admin && ['erf','ecf'].includes(view) && !hasRole(currentEmployee,view.toUpperCase(),'REQUESTOR')) view='home';
-  if(!admin && view==='requests' && !canRequest) view='home';
+  if(!admin && ['requests','drafts'].includes(view) && !canRequest) view='home';
   if(!admin && view==='tasks' && !canWork) view='home';
   if(!admin && view==='history' && !canRequest && !canWork) view='home';
   if(!admin && ['erf','ecf'].includes(view) && view!==emsFormView){
@@ -132,6 +142,8 @@ function emsNavigate(view){
     emsRestoreDraft(view);
   }
   emsView=view;
+  emsDashboardFilter=view==='history'?filter:null;
+  emsHistoryLoad++;
   document.querySelectorAll('#emsNav [data-ems-view]').forEach(button=>{
     const active=button.dataset.emsView===view;
     button.classList.toggle('active',active);
@@ -141,6 +153,7 @@ function emsNavigate(view){
   if(view.startsWith('admin-')) showAdminSection(view==='admin-app'?'app':'users');
   $('#emsHome').classList.toggle('hidden',view!=='home');
   $('#emsTasks').classList.toggle('hidden',view!=='tasks');
+  $('#emsDrafts').classList.toggle('hidden',view!=='drafts');
   $('#decisionHistoryCard').classList.toggle('hidden',view!=='history');
   $('#workflowDashboard').classList.toggle('hidden',!['erf','ecf','requests'].includes(view));
   $('#adminDashboard').classList.toggle('hidden',!view.startsWith('admin-'));
@@ -168,11 +181,16 @@ function emsNavigate(view){
     rtApplyUi();
   }
   $('#evidenceModeNote')?.classList.toggle('hidden',view==='ecf');
+  $('#saveDraftBtn').classList.toggle('hidden',Boolean(revisionTarget));
+  emsDraftStatus();
+  if(view==='drafts') emsLoadSavedDrafts();
   if(view==='tasks') emsRenderTasks();
   if(view==='history'){
     const data=window.emsBootstrap||{};
     $('#decisionHistoryTitle').textContent='History & Progress';
-    renderRequests(data.history||[],'decisionHistoryTable','decisionHistoryBody','decisionHistoryEmpty');
+    $('#emsHistoryFilter').classList.toggle('hidden',!filter);
+    if(filter) emsLoadDashboardRequests();
+    else {$('#decisionHistoryEmpty').textContent='No requests to track yet.';renderRequests(data.history||[],'decisionHistoryTable','decisionHistoryBody','decisionHistoryEmpty');}
   }
   if(view==='home') emsLoadDashboard();
 }
@@ -255,17 +273,15 @@ async function emsLoadDashboard(){
     const requested=total('ERF',['APPROVED'],'amount');
     const claimed=total('ECF',['APPROVED'],'amount');
     const pending=['PENDING_CHECK','PENDING_REVIEW','PENDING_APPROVAL'];
-    const metrics=[
-      ...(erfAccess?[{label:'Approved ERF',value:requested,icon:'file',tone:'navy',subtitle:`${total('ERF',['APPROVED'],'count')} approved request${total('ERF',['APPROVED'],'count')===1?'':'s'}`}]:[]),
-      ...(ecfAccess?[
-        {label:'Approved ECF',value:claimed,icon:'claim',tone:'teal',subtitle:`${total('ECF',['APPROVED'],'count')} approved claim${total('ECF',['APPROVED'],'count')===1?'':'s'}`},
-        {label:'ECF in progress',value:total('ECF',pending,'amount'),icon:'history',tone:'amber',subtitle:`${total('ECF',pending,'count')} claim${total('ECF',pending,'count')===1?'':'s'} awaiting action`}
-      ]:[])
-    ];
-    $('#emsMetrics').style.gridTemplateColumns=`repeat(${Math.max(1,metrics.length)},minmax(0,1fr))`;
-    $('#emsMetrics').innerHTML=metrics.map(metric=>
-      `<div class="ems-metric">${emsDashboardIcon(metric.icon,metric.tone)}<div class="ems-metric-copy"><small>${metric.label}</small><strong>${rupiah(metric.value)}</strong><span>${metric.subtitle}</span></div></div>`).join('') ||
-      '<div class="empty">No modules assigned yet.</div>';
+    $('#emsMetrics').style.gridTemplateColumns=`repeat(${Math.max(1,types.length)},minmax(0,1fr))`;
+    $('#emsMetrics').innerHTML=types.map(type=>`<section class="ems-metric-group" data-metric-form="${type}">
+      <h3>${emsDashboardIcon(type==='ERF'?'file':'claim',type==='ERF'?'navy':'teal')}${type}</h3>
+      <div class="ems-metric-split">${[['progress','In Progress',pending],['approved','Approved',['APPROVED']]].map(([state,label,states])=>{
+        const count=total(type,states,'count');
+        return `<button type="button" class="ems-metric-cell" aria-label="${type} ${label}" onclick="emsNavigate('history',{formType:'${type}',state:'${state}',offset:0})">
+          <small>${label}<span aria-hidden="true">↗</span></small><strong>${rupiah(total(type,states,'amount'))}</strong>
+          <span>${count} ${state==='approved'?'approved ':''}${type==='ERF'?'request':'claim'}${count===1?'':'s'}</span></button>`;
+      }).join('')}</div></section>`).join('')||'<div class="empty">No modules assigned yet.</div>';
     $('#emsTrend').innerHTML=emsRenderTrend(data.trend.filter(row=>types.includes(row.form_type)),types);
     $('#emsDistribution').innerHTML=emsRenderDistribution([
       ...(erfAccess?[{label:'ERF',value:requested,color:'#0b3768'}]:[]),
@@ -295,6 +311,7 @@ loadMe=async function(...args){
     (!hasRole(currentEmployee,'ERF','REQUESTOR') && !hasRole(currentEmployee,'ECF','REQUESTOR')));
   $('#emsActivityNav').classList.toggle('hidden',admin || (!canRequest && !canWork));
   $('#emsNav [data-ems-view="requests"]').classList.toggle('hidden',!canRequest);
+  $('#emsNav [data-ems-view="drafts"]').classList.toggle('hidden',!canRequest);
   $('#emsNav [data-ems-view="tasks"]').classList.toggle('hidden',!canWork);
   $('#emsNav [data-ems-view="history"]').classList.toggle('hidden',!canRequest&&!canWork);
   $('#emsAdminNav').classList.toggle('hidden',!admin);
@@ -318,16 +335,19 @@ loadMe=async function(...args){
     emsResetSessionState();
     emsDraftOwner=currentEmployee.email;
   }
-  emsNavigate(emsView);
+  emsNavigate(emsView,emsDashboardFilter);
 };
 
 const emsOriginalStartRevision=startRevision;
 startRevision=async function(id){
-  if(emsSubmitting) return;
+  if(emsSubmitting||emsDraftBusy) return;
   const data=await api(`/api/requests/${id}`).catch(e=>{msg(e.message,'err');return null});
   if(!data) return;
   emsNavigate(data.request.form_type==='ECF'?'ecf':'erf');
+  emsSavedDraft=null;
   await emsOriginalStartRevision(id);
+  $('#saveDraftBtn').classList.add('hidden');
+  emsDraftStatus();
   if(data.request.form_type==='ECF' && revisionTarget){
     rtRequestType='REIMBURSEMENT';rtApplyUi();
     $('#requestFormTitle').textContent=`Revise ${data.request.ref_no}`;
@@ -337,6 +357,8 @@ startRevision=async function(id){
 
 const emsOriginalCancelRevision=cancelRevision;
 cancelRevision=function(){
+  emsSavedDraft=null;
+  delete emsDrafts[emsFormView];
   emsOriginalCancelRevision();
   $('#emsServiceOrder').value='';
   emsNavigate(emsView);
@@ -371,8 +393,7 @@ submitExpense=async function(){
   emsSetActionLoading(button,submittingRevision?'Submitting Revision…':'Submitting…');
   emsSubmitting=true;
   try{
-    const result=await api(revisionTarget?`/api/requests/${revisionTarget.id}/revise`:'/api/ecf/claims',
-      {method:'POST',body:fd});
+    const result=await emsSubmitForm(revisionTarget?`/api/requests/${revisionTarget.id}/revise`:'/api/ecf/claims',fd);
     cancelRevision();
     await loadMe();
     msg(`${result.refNo} submitted. ${result.status==='PENDING_APPROVAL'?'Pending approval.':'Waiting for Checker.'}`);
@@ -449,9 +470,7 @@ logout=async function(...args){
     $(selector).classList.add('hidden'));
 };
 
-// One entry point, after app.js, request-type.js and the ECF extensions.
-loadAuthMode();
-loadMe();
+// Initial loading runs after dashboard-drafts.js installs all extensions.
 
 // Close the mobile drawer when switching viewport; disclosure choices persist.
 const emsCompactNavigation=window.matchMedia('(max-width: 1100px)');

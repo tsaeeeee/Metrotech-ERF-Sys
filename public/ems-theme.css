@@ -208,6 +208,8 @@ body.ems-theme {
 .ems-theme [data-ems-view="erf"]::before,
 .ems-theme #requestFormTitle::before,
 .ems-theme [data-ems-view="ecf"]::before,
+.ems-theme [data-ems-view="drafts"]::before,
+.ems-theme #saveDraftBtn::before,
 .ems-theme [data-ems-view="requests"]::before,
 .ems-theme #queueTitle::before,
 .ems-theme [data-ems-view="tasks"]::before,
@@ -277,4 +279,30 @@ body.ems-theme {
   .ems-theme #detailModal .detail-section th:nth-child(6) {width:160px}
   .ems-theme #table,.ems-theme #decisionHistoryTable,.ems-theme #requestForm .table-wrap table {min-width:780px}
   .ems-theme .ems-task strong {white-space:normal;overflow-wrap:anywhere}
+}
+
+/* ERF and ECF summaries share one compact, split card per module. */
+.ems-theme .ems-metric-group{min-width:0;margin:0;padding:0;border:1px solid var(--line);border-radius:10px;background:#fff;overflow:hidden}
+.ems-theme .ems-metric-group h3{display:flex;align-items:center;gap:10px;margin:0;padding:14px 18px;border-bottom:1px solid var(--line);font-size:15px;color:var(--navy)}
+.ems-theme .ems-metric-group .ems-metric-icon{width:30px;height:30px;flex-basis:30px}
+.ems-theme .ems-metric-split{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+.ems-theme .ems-metric-cell{display:block;min-width:0;width:100%;border:0;background:transparent;padding:18px;text-align:left;font:inherit;cursor:pointer;color:var(--muted)}
+.ems-theme .ems-metric-cell+.ems-metric-cell{border-left:1px solid var(--line)}
+.ems-theme .ems-metric-cell:hover,.ems-theme .ems-metric-cell:focus-visible{background:#f4f6f9}
+.ems-theme .ems-metric-cell:focus-visible{outline:2px solid var(--navy);outline-offset:-3px}
+.ems-theme .ems-metric-cell small{display:flex;align-items:center;justify-content:space-between;gap:4px;white-space:nowrap}
+.ems-theme .ems-metric-cell small::before{display:none}
+.ems-theme .ems-metric-cell strong{font-size:clamp(15px,1.35vw,22px);margin:6px 0;letter-spacing:-.4px}
+.ems-theme .ems-metric-cell>span{font-size:12px}
+.ems-theme .ems-nav [data-ems-view="drafts"],.ems-theme #saveDraftBtn{--icon:var(--icon-edit)}
+.draft-list-actions,.ems-history-filter{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ems-history-filter{margin:12px 0;font-size:13px}
+#emsHistoryPage{color:var(--muted);margin-right:auto}
+.draft-save-state{color:var(--muted);font-size:12px}
+.draft-purpose{max-width:360px;overflow-wrap:anywhere;white-space:normal}
+.form-footer{flex-wrap:wrap}
+@media(max-width:600px){
+  .ems-theme .ems-metric-cell{padding:14px 12px}
+  .ems-theme .ems-metric-cell strong{font-size:clamp(14px,4vw,21px)}
+  #emsDrafts>.row{align-items:flex-start;gap:12px;flex-wrap:wrap}
 }

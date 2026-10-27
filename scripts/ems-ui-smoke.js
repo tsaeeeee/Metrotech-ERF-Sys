@@ -14,6 +14,7 @@ const assets={
   '/app.js':['app.js','request-type.js'],
   '/ecf-admin.js':['ecf-admin.js','ecf-profile.js'],
   '/ems.js':['ems.js'],
+  '/dashboard-drafts.js':['dashboard-drafts.js'],
   '/executive-workflow.js':['executive-workflow.js']
 };
 const server=http.createServer(async(req,res)=>{
@@ -81,6 +82,8 @@ async function session(user,{signedIn=true,dashboard={totals:[],trend:[],categor
         myRequests:user.role==='REQUESTOR'||
           (user.role==='NONE'&&user.ecfRole==='REQUESTOR')?[revisionRow]:[]};
     }else if(path==='/api/ems/dashboard')data=dashboard;
+    else if(path==='/api/ems/dashboard/requests'){const query=new URL(request.url()).searchParams;data={requests:[row(query.get('formType'),query.get('state')==='approved'?'APPROVED':'PENDING_REVIEW','filtered')],total:1,offset:0,limit:50}}
+    else if(path==='/api/drafts')data={drafts:[]};
     else if(path==='/api/requests/task' || path==='/api/requests/history'){
       const state=path.endsWith('history')?historyStatus:user.ecfRole==='CHECKER'?'PENDING_CHECK':
         user.role==='REVIEWER'?'PENDING_REVIEW':'PENDING_APPROVAL';
@@ -323,6 +326,12 @@ try{
   await chartUser.page.locator('#emsTrend svg').waitFor();
   assert.equal(await chartUser.page.locator('#emsDistribution svg circle').count(),2);
   assert((await chartUser.page.locator('#emsMetrics').innerText()).includes('2 approved requests'));
+  assert.equal(await chartUser.page.locator('.ems-metric-group').count(),2);
+  assert.equal(await chartUser.page.locator('.ems-metric-cell').count(),4);
+  await chartUser.page.getByRole('button',{name:'ERF In Progress',exact:true}).click();
+  await chartUser.page.getByText('ERF-filtered',{exact:true}).waitFor();
+  assert((await chartUser.page.locator('#emsHistoryFilterLabel').innerText()).includes('ERF · In Progress'));
+  await chartUser.page.locator('#emsHistoryFilter').getByRole('button',{name:'Dashboard',exact:true}).click();
   await chartUser.page.locator('.ems-chart-data summary').click();
   assert.equal(await chartUser.page.locator('.ems-chart-data tbody tr').count(),6);
   const firstMonth=await chartUser.page.locator('.ems-chart-data tbody tr').first().innerText();
@@ -393,13 +402,14 @@ try{
       assert.equal(await actor.page.locator('[data-ems-view="erf"]').isVisible(),erf);
       assert.equal(await actor.page.locator('[data-ems-view="ecf"]').isVisible(),ecf);
       assert.equal(await actor.page.locator('[data-ems-view="requests"]').isVisible(),requests);
+      assert.equal(await actor.page.locator('[data-ems-view="drafts"]').isVisible(),requests);
       assert.equal(await actor.page.locator('[data-ems-view="tasks"]').isVisible(),tasks);
       assert.equal(await actor.page.locator('[data-ems-view="history"]').isVisible(),requests||tasks);
       await actor.page.waitForFunction(()=>document.querySelector('#emsMetrics').textContent.trim()!=='');
       const metricLabels=await actor.page.locator('#emsMetrics').innerText();
-      assert.equal(metricLabels.includes('Approved ERF'),role!=='NONE',
+      assert.equal(Boolean(await actor.page.locator('[data-metric-form="ERF"]').count()),role!=='NONE',
         'Dashboard must follow ERF access.');
-      assert.equal(metricLabels.includes('Approved ECF'),ecfRole!=='NONE',
+      assert.equal(Boolean(await actor.page.locator('[data-metric-form="ECF"]').count()),ecfRole!=='NONE',
         'Dashboard must follow ECF access.');
       if(ecf){
         await actor.page.locator('[data-ems-view="ecf"]').click();
@@ -656,6 +666,80 @@ try{
   assert(!(await page.locator('#paymentBody').innerText()).includes('Discard on logout'));
   assert.equal(await page.locator('#emsServiceOrder').inputValue(),'');
   await requestor.context.close();
+  // Real form controls with a persistent mock API: incomplete editor, evidence,
+  // reload, update, submission, and the styled delete confirmation.
+  const drafting=await session(employee('REQUESTOR','REQUESTOR'));
+  const drafts=new Map();let draftSequence=0,draftSubmissions=0;
+  await drafting.page.route(`${origin}/api/drafts**`,async route=>{
+    const req=route.request(),url=new URL(req.url()),parts=url.pathname.split('/');
+    const id=parts[3],method=req.method();let data={},status=200;
+    if(parts[4]==='files'){
+      const file=drafts.get(id)?.files.find(f=>f.id===parts[5]);
+      return route.fulfill({status:file?200:404,contentType:file?.type||'text/plain',body:file?.bytes||'Missing'});
+    }
+    if(method==='GET'&&!id)data={drafts:[...drafts.values()].map(d=>({...d,purpose:d.payload.payments[0]?.purpose||d.payload.editor.purpose,total:25000}))};
+    else if(method==='GET')data=drafts.get(id);
+    else if(method==='DELETE'){drafts.delete(id);data={ok:true}}
+    else if(parts[4]==='submit'){
+      assert.equal(req.postDataJSON().version,drafts.get(id).version);draftSubmissions++;
+      drafts.delete(id);data={requestId:'new',refNo:'ECF-new',status:'PENDING_CHECK'};
+    }else{
+      const form=await new Response(req.postDataBuffer(),{headers:{'Content-Type':req.headers()['content-type']}}).formData();
+      const key=id||`00000000-0000-4000-8000-${String(++draftSequence).padStart(12,'0')}`;
+      const files=[];
+      for(const [field,file] of form.entries())if(file instanceof File){
+        const fileId=`file-${files.length}`;files.push({id:fileId,field,name:file.name,type:file.type,size:file.size,
+          url:`/api/drafts/${key}/files/${fileId}`,bytes:Buffer.from(await file.arrayBuffer())});
+      }
+      const payload=JSON.parse(form.get('draft'));
+      data={id:key,formType:payload.formType,version:(drafts.get(key)?.version||0)+1,updatedAt:new Date().toISOString(),payload,files};
+      drafts.set(key,data);
+    }
+    await route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)});
+  });
+  const dp=drafting.page;
+  await dp.locator('[data-ems-view="ecf"]').click();
+  await dp.locator('#purpose').fill('Unfinished hotel claim');
+  await dp.locator('#evidence').setInputFiles({name:'receipt.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-1.4 draft')});
+  await dp.locator('#saveDraftBtn').click();
+  await dp.waitForFunction(()=>emsSavedDraft?.version===1&&!emsDraftBusy);
+  assert.equal(drafting.writes.filter(w=>['/api/requests','/api/ecf/claims'].includes(w.path)).length,0);
+  await dp.reload();await dp.locator('#emsHome').waitFor({state:'visible'});
+  await dp.locator('[data-ems-view="drafts"]').click();
+  await dp.locator('#emsDraftRows').getByRole('button',{name:'Continue'}).click();
+  await dp.locator('#requestForm').waitFor({state:'visible'});
+  assert.equal(await dp.locator('#purpose').inputValue(),'Unfinished hotel claim');
+  assert.equal(await dp.locator('#evidence').evaluate(el=>el.files[0].name),'receipt.pdf');
+  await dp.evaluate(()=>selectCategory('Accommodation'));
+  await dp.locator('#amount').fill('25000');await dp.locator('#addPaymentBtn').click();
+  await dp.locator('#saveDraftBtn').click();await dp.waitForFunction(()=>emsSavedDraft?.version===2&&!emsDraftBusy);
+  await dp.locator('[data-ems-view="erf"]').click();
+  assert.equal(await dp.locator('#paymentBody .evidence-file-link').count(),0,'ECF evidence must not leak into the ERF form.');
+  await dp.locator('[data-ems-view="ecf"]').click();
+  assert((await dp.locator('#paymentBody').innerText()).includes('Unfinished hotel claim'));
+  assert.equal(await dp.locator('#paymentBody .evidence-file-link').count(),1);
+  for(const width of [390,320]){
+    await dp.setViewportSize({width,height:844});
+    await dp.locator('#saveDraftBtn').scrollIntoViewIfNeeded();
+    assert(await dp.locator('#saveDraftBtn').evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth}));
+    await dp.locator('#submitExpenseBtn').click({trial:true});
+  }
+  await dp.setViewportSize({width:1440,height:1000});
+  await dp.locator('#submitExpenseBtn').click();
+  await dp.waitForFunction(()=>!emsSubmitting&&payments.length===0);
+  assert.equal(draftSubmissions,1);assert.equal(drafts.size,0);
+  assert.equal(await dp.evaluate(()=>emsSavedDraft),null);
+  await dp.locator('#purpose').fill('Delete this draft');await dp.locator('#saveDraftBtn').click();
+  await dp.waitForFunction(()=>emsSavedDraft&&!emsDraftBusy);
+  await dp.locator('[data-ems-view="drafts"]').click();
+  await dp.locator('#emsDraftRows').getByRole('button',{name:'Delete',exact:true}).click();
+  await dp.locator('#draftDeleteModal').getByRole('button',{name:'Cancel'}).click();
+  assert.equal(drafts.size,1);
+  await dp.locator('#emsDraftRows').getByRole('button',{name:'Delete',exact:true}).click();
+  await dp.locator('#draftDeleteModal').getByRole('button',{name:'Delete',exact:true}).click();
+  await dp.getByText('No saved drafts.',{exact:true}).waitFor();
+  assert.equal(drafts.size,0);
+  await drafting.context.close();
   assert.deepEqual(errors,[],'Browser must not produce runtime errors or unexpected API calls.');
   console.log('EMS_UI_SMOKE_OK');
 }finally{
