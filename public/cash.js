@@ -9,10 +9,10 @@ $('.ems-main').insertAdjacentHTML('beforeend',`<section id="cashView" class="hid
   <div class="cash-toolbar"><h2>Cash Tracker</h2><div id="cashBookPicker"></div><button class="btn primary" id="cashNew" onclick="cashEntryModal()">New Entry</button><button class="btn ghost" onclick="cashLoad()">Refresh</button></div>
   <div id="cashMetrics" class="cash-metrics"></div><div id="cashCharts" class="ems-panels"></div>
   <section class="card"><div class="cash-toolbar"><input id="cashSearch" aria-label="Search cash entries" placeholder="Search entries…" maxlength="200"><div id="cashCategoryPicker"></div></div>
-    <div id="cashRows" aria-live="polite"></div><div class="cash-toolbar"><span id="cashPage"></span><button class="btn ghost" id="cashPrevious" onclick="cashPage(-1)">Previous</button><button class="btn ghost" id="cashNext" onclick="cashPage(1)">Next</button></div>
+    <div id="cashRows" aria-live="polite"></div><div class="cash-toolbar cash-pagination"><span id="cashPage"></span><button class="btn ghost" id="cashPrevious" onclick="cashPage(-1)">Previous</button><button class="btn ghost" id="cashNext" onclick="cashPage(1)">Next</button></div>
   </section></section>
 <section id="cashAdmin" class="hidden"><h2>Cash Settings</h2>
-  <section class="card"><h3>Access</h3><div id="cashAccessRows"></div></section>
+  <section class="card"><h3>Access</h3><div class="cash-access-heading" aria-hidden="true"><span>Employee</span><span>Cash Access</span><span></span></div><div id="cashAccessRows"></div></section>
   <section class="card"><h3>Import Legacy Data</h3><form id="cashImportForm" class="cash-toolbar"><input id="cashImportFile" type="file" accept=".json,application/json" required aria-label="Legacy snapshot JSON"><button class="btn ghost">Preview Import</button></form><div id="cashImportPreview"></div></section>
   <section class="card"><h3>Daily Backup</h3><div id="cashBackup"></div></section>
   <section class="card"><h3>New Cash Book</h3><form id="cashBookForm" class="cash-form"><label>Name<input name="label" maxlength="100" required></label><label>Year<input name="year" type="number" min="2000" max="2099" value="${new Date().getFullYear()}" required></label><label>Opening Balance<input name="opening_balance" type="text" inputmode="decimal" value="0.00" required></label><button class="btn primary">Create Book</button></form></section>

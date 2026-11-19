@@ -777,6 +777,13 @@ try{
     for(const viewport of [{width:1440,height:1000},{width:390,height:844},{width:320,height:568}]){
       await cp.setViewportSize(viewport);
       assert(await cp.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Cash dashboard must not overflow the viewport.');
+      const spacing=await cp.evaluate(()=>{
+        const box=id=>document.getElementById(id).getBoundingClientRect();
+        return {gap:box('cashPrevious').top-box('cashRows').bottom,
+          aligned:Math.abs(box('cashBookButton').bottom-document.querySelector('#cashBookPicker~button:last-child').getBoundingClientRect().bottom)<2};
+      });
+      assert(spacing.gap>=16,'Cash pagination needs separation from the table.');
+      if(viewport.width>=700)assert(spacing.aligned,'Book picker and actions must align.');
       await cp.locator('#cashCategoryButton').click();
       await cp.locator('#cashCategoryMenu [data-value="Software & Subscription"]').click();
       assert.equal(await cp.locator('#cashCategory').inputValue(),'Software & Subscription');
@@ -804,6 +811,16 @@ try{
   }
   const cashAdmin=await session(employee('ADMIN'));await cashAdmin.page.locator('[data-ems-view="admin-cash"]').click();
   await cashAdmin.page.getByText('Cash Manager',{exact:true}).waitFor();
+  for(const width of [1440,390,320]){
+    await cashAdmin.page.setViewportSize({width,height:1000});
+    assert(await cashAdmin.page.evaluate(()=>{
+      const row=document.querySelector('.cash-access-row');
+      const select=row.querySelector('.custom-select-trigger').getBoundingClientRect();
+      const save=row.querySelector('[data-cash-grant]').getBoundingClientRect();
+      return Math.abs(select.top-save.top)<2&&Math.abs(select.bottom-save.bottom)<2&&document.documentElement.scrollWidth<=innerWidth;
+    }),'Cash access selectors and Save buttons must align without overflow.');
+    if(process.env.EMS_UI_SCREENSHOTS)await cashAdmin.page.screenshot({path:`${process.env.EMS_UI_SCREENSHOTS}/cash-settings-${width}.png`,fullPage:true});
+  }
   assert(await cashAdmin.page.locator('#cashBackupNow').isDisabled());
   await cashAdmin.page.locator('#cashAccess0Button').click();await cashAdmin.page.locator('#cashAccess0Menu [data-value="VIEW"]').click();
   assert.equal(await cashAdmin.page.locator('#cashAccess0').inputValue(),'VIEW');await cashAdmin.context.close();

@@ -6,3 +6,28 @@
 .ems-theme [data-ems-view=cash]::before,.ems-theme [data-ems-view=admin-cash]::before{content:"";display:inline-block;width:16px;height:16px;flex:0 0 16px;vertical-align:-3px;background:currentColor;mask:var(--icon-wallet) center/contain no-repeat;-webkit-mask:var(--icon-wallet) center/contain no-repeat}
 .ems-theme [data-ems-view=admin-cash]::before{mask-image:var(--icon-settings);-webkit-mask-image:var(--icon-settings)}
 @media(max-width:700px){.cash-metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.cash-toolbar{gap:8px}.cash-toolbar h2{width:100%;margin:0}.cash-access-row{grid-template-columns:minmax(0,1fr) auto}.cash-access-row>span{grid-column:1/-1}.cash-form{grid-template-columns:1fr}.cash-form .span-2{grid-column:1}.cash-modal-body{padding:14px}.cash-category-list>div{align-items:flex-start}.cash-detail{grid-template-columns:80px minmax(0,1fr)}}
+
+/* Align the controls themselves, not the combined label/control height. */
+.cash-toolbar{align-items:flex-end}
+.cash-toolbar h2{align-self:center}
+.cash-toolbar .workflow-select-field{margin:0}
+.ems-theme .cash-toolbar>.btn,.ems-theme .cash-access-row>.btn{height:36px;display:inline-flex;align-items:center;justify-content:center;white-space:nowrap}
+.cash-pagination{align-items:center;gap:12px;margin:20px 0 0}
+.cash-pagination #cashPage{margin-right:auto;color:#64748b;font-size:13px}
+.cash-access-heading,.cash-access-row{grid-template-columns:minmax(0,1fr) minmax(180px,320px) 72px;gap:16px}
+.cash-access-heading{display:grid;padding:12px 0 8px;font-size:12px;font-weight:600;color:#64748b;border-bottom:1px solid #e5eaf1}
+.cash-access-row{margin:0;padding:12px 0;border-bottom:1px solid #eef2f6}
+.cash-access-row:last-child{border-bottom:0}
+.cash-access-row>span{overflow-wrap:anywhere}
+.cash-access-row .workflow-select-field>label{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+@media(max-width:700px){
+  .cash-access-heading{display:none}
+  .cash-access-row{grid-template-columns:minmax(0,1fr) 72px;gap:8px 12px;padding:14px 0}
+  .cash-pagination{gap:8px;margin-top:20px}
+  .cash-pagination #cashPage{flex-basis:100%;margin:0 0 4px}
+  #cashSearch{flex-basis:100%}
+  #cashCategoryPicker{width:100%}
+}
+.cash-form>label.cash-checkbox{flex-direction:row;align-items:center;justify-content:flex-start;align-self:end;min-height:36px;margin:0}
+.cash-form>label.cash-checkbox input{flex:none;margin:0}
+#cashImportForm{align-items:center}
