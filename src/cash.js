@@ -80,9 +80,25 @@ export function installCashRoutes(app,{pool,requireUser,requireAdmin,upload}){
       select * from ledger where ${where} order by entry_date desc,created_at desc,source_row desc nulls first,id desc limit 50 offset $4`,[...args,offset])).rows;
     res.json({entries:rows,total,offset,limit:50});
   }));
+  app.get('/api/cash/log',requireUser,permit(false),route(async(req,res)=>{
+    const offset=Number(req.query.offset||0);
+    if(!Number.isSafeInteger(offset)||offset<0)fail('Invalid page.');
+    const where="a.action in ('CREATED','VOIDED','LEGACY_IMPORTED','BOOK_CREATED')";
+    const total=(await pool.query(`select count(*)::int total from cash_audit a where ${where}`)).rows[0].total;
+    const logs=(await pool.query(`select a.id::text,a.action,a.entry_id,a.reason,a.created_at,a.actor_email,
+      coalesce(nullif(u.name,''),a.actor_email) actor_name,
+      coalesce(e.activity,'') activity,coalesce(b.label,a.after_data->>'label','') book,
+      case when a.action='LEGACY_IMPORTED' then a.after_data->>'count' end imported_count,
+      case when a.action='LEGACY_IMPORTED' then a.after_data->>'batch' end import_id,
+      coalesce(a.entry_id::text,a.after_data->>'batch',a.after_data->>'id') record_id
+      from cash_audit a left join employees u on lower(u.email)=lower(a.actor_email)
+      left join cash_entries e on e.id=a.entry_id left join cash_books b on b.id=e.book_id
+      where ${where} order by a.created_at desc,a.id desc limit 50 offset $1`,[offset])).rows;
+    res.json({logs,total,offset,limit:50});
+  }));
   app.get('/api/cash/entries/:id/audit',requireUser,permit(false),route(async(req,res)=>{
-    const entry=(await pool.query('select * from cash_entries where id=$1',[uuid(req.params.id)])).rows[0];if(!entry)fail('Entry not found.',404);
-    res.json({entry,audit:(await pool.query('select * from cash_audit where entry_id=$1 order by id',[entry.id])).rows});
+    const entry=(await pool.query(`select e.*,coalesce(nullif(u.name,''),e.created_by) creator_name from cash_entries e left join employees u on lower(u.email)=lower(e.created_by) where e.id=$1`,[uuid(req.params.id)])).rows[0];if(!entry)fail('Entry not found.',404);
+    res.json({entry,audit:(await pool.query(`select a.*,coalesce(nullif(u.name,''),a.actor_email) actor_name from cash_audit a left join employees u on lower(u.email)=lower(a.actor_email) where a.entry_id=$1 order by a.created_at desc,a.id desc`,[entry.id])).rows});
   }));
   app.post('/api/cash/entries',requireUser,permit(true),route(async(req,res)=>{
     const value=entryInput(req.body),bookId=uuid(req.body.book_id),id=uuid(req.body.id);

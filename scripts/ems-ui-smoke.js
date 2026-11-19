@@ -105,6 +105,7 @@ async function session(user,{signedIn=true,dashboard={totals:[],trend:[],categor
     else if(path==='/api/requests/history/recall' && method==='POST'){
       historyStatus='RECALLED';data={ok:true,status:historyStatus,refNo:'ECF-history'};
     }
+    else if(path==='/api/cash/log')data={logs:[{id:'12',action:'CREATED',actor_email:'cash@example.test',actor_name:'Cash Manager',created_at:'2026-11-19T07:00:00.000Z',entry_id:'22222222-2222-4222-8222-222222222222',activity:'Domain renewal',book:'2026'}],total:1,offset:0,limit:50};
     else if(path==='/api/cash/books')data={books:[{id:'11111111-1111-4111-8111-111111111111',label:'2026',year:2026}],categories:['Cash Deposit','Software & Subscription','Tools']};
     else if(path==='/api/cash/overview')data={totals:{opening:'0.00',income:'2000000.10',outcome:'165726.00',balance:'1834274.10'},trend:[{month:'2026-10',income:'2000000.10',outcome:'165726.00'}],categories:[{category:'Software & Subscription',amount:'165726.00'}]};
     else if(path==='/api/cash/entries'&&method==='GET')data={entries:[{id:'22222222-2222-4222-8222-222222222222',date:'2026-11-18',category:'Software & Subscription',activity:'Domain renewal & subscriptions '+('long detail '.repeat(12)),income:'0.00',outcome:'165726.00',balance:'1834274.10',origin:'LEGACY',source_row:104}],total:1,offset:0,limit:50};
@@ -788,6 +789,12 @@ try{
       await cp.locator('#cashCategoryMenu [data-value="Software & Subscription"]').click();
       assert.equal(await cp.locator('#cashCategory').inputValue(),'Software & Subscription');
       if(process.env.EMS_UI_SCREENSHOTS&&grant==='MANAGE')await cp.screenshot({path:`${process.env.EMS_UI_SCREENSHOTS}/cash-${viewport.width}.png`,fullPage:true});
+      await cp.getByRole('button',{name:'Log',exact:true}).click();
+      await cp.locator('#cashLogRows').getByText('Cash Manager',{exact:true}).waitFor();
+      assert.match(await cp.locator('#cashLogRows').innerText(),/19 Nov 2026, 14:00:00 WIB/);
+      assert(await cp.locator('#cashLogRows').getByRole('button',{name:'Open Entry'}).isVisible());
+      if(process.env.EMS_UI_SCREENSHOTS)await cp.screenshot({path:`${process.env.EMS_UI_SCREENSHOTS}/cash-log-${viewport.width}.png`});
+      await cp.locator('#cashModal [data-close]').click();
       if(grant==='MANAGE'){
         await cp.locator('#cashNew').click();await cp.locator('#cashEntryForm').waitFor();
         await cp.locator('#cashEntryCategoryButton').click();
@@ -811,6 +818,12 @@ try{
   }
   const cashAdmin=await session(employee('ADMIN'));await cashAdmin.page.locator('[data-ems-view="admin-cash"]').click();
   await cashAdmin.page.getByText('Cash Manager',{exact:true}).waitFor();
+  const choose=cashAdmin.page.getByRole('button',{name:'Choose File',exact:true});
+  assert(await choose.evaluate(e=>e.classList.contains('file-pick-btn')));
+  const chooserPromise=cashAdmin.page.waitForEvent('filechooser');await choose.click();
+  await (await chooserPromise).setFiles({name:'cash-source.json',mimeType:'application/json',buffer:Buffer.from('{}')});
+  assert.equal(await cashAdmin.page.locator('#cashImportFileInfo').innerText(),'cash-source.json');
+
   for(const width of [1440,390,320]){
     await cashAdmin.page.setViewportSize({width,height:1000});
     assert(await cashAdmin.page.evaluate(()=>{

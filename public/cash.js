@@ -1,19 +1,21 @@
 let cashState={book:null,categories:[],offset:0,sequence:0,entries:[],preview:null};
 const cashMoney=value=>'Rp'+Number(value||0).toLocaleString('id-ID',{minimumFractionDigits:2,maximumFractionDigits:2});
 const cashSelect=(id,label,choices,value)=>adminWorkflowSelect(id,label,'',choices.map(([k,v])=>[esc(k),esc(v)]),esc(value??''));
+const cashTime=value=>value&&Number.isFinite(Date.parse(value))?new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Jakarta',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).format(new Date(value))+' WIB':'—';
+const cashAction=value=>({CREATED:'Entry created',VOIDED:'Entry voided',LEGACY_IMPORTED:'Legacy imported',BOOK_CREATED:'Book created'}[value]||value);
 const cashBusy=async(button,label,fn)=>{if(button.disabled)return;const original=button.textContent;button.disabled=true;button.textContent=label;try{await fn()}catch(e){msg(e.message,'err')}finally{button.disabled=false;button.textContent=original}};
 
 $('#emsNav [data-ems-view="home"]').insertAdjacentHTML('afterend','<button type="button" data-ems-view="cash" class="hidden" onclick="emsNavigate(\'cash\')">Cash Tracker</button>');
 $('#emsAdminNav .ems-nav-items').insertAdjacentHTML('beforeend','<button type="button" data-ems-view="admin-cash" onclick="emsNavigate(\'admin-cash\')">Cash Settings</button>');
 $('.ems-main').insertAdjacentHTML('beforeend',`<section id="cashView" class="hidden">
-  <div class="cash-toolbar"><h2>Cash Tracker</h2><div id="cashBookPicker"></div><button class="btn primary" id="cashNew" onclick="cashEntryModal()">New Entry</button><button class="btn ghost" onclick="cashLoad()">Refresh</button></div>
+  <div class="cash-toolbar"><h2>Cash Tracker</h2><div id="cashBookPicker"></div><button class="btn primary" id="cashNew" onclick="cashEntryModal()">New Entry</button><button class="btn ghost" onclick="cashLog()">Log</button><button class="btn ghost" onclick="cashLoad()">Refresh</button></div>
   <div id="cashMetrics" class="cash-metrics"></div><div id="cashCharts" class="ems-panels"></div>
   <section class="card"><div class="cash-toolbar"><input id="cashSearch" aria-label="Search cash entries" placeholder="Search entries…" maxlength="200"><div id="cashCategoryPicker"></div></div>
     <div id="cashRows" aria-live="polite"></div><div class="cash-toolbar cash-pagination"><span id="cashPage"></span><button class="btn ghost" id="cashPrevious" onclick="cashPage(-1)">Previous</button><button class="btn ghost" id="cashNext" onclick="cashPage(1)">Next</button></div>
   </section></section>
 <section id="cashAdmin" class="hidden"><h2>Cash Settings</h2>
   <section class="card"><h3>Access</h3><div class="cash-access-heading" aria-hidden="true"><span>Employee</span><span>Cash Access</span><span></span></div><div id="cashAccessRows"></div></section>
-  <section class="card"><h3>Import Legacy Data</h3><form id="cashImportForm" class="cash-toolbar"><input id="cashImportFile" type="file" accept=".json,application/json" required aria-label="Legacy snapshot JSON"><button class="btn ghost">Preview Import</button></form><div id="cashImportPreview"></div></section>
+  <section class="card"><h3>Import Legacy Data</h3><form id="cashImportForm" class="cash-toolbar"><div class="cash-file-picker"><input id="cashImportFile" class="file-input-hidden" type="file" accept=".json,application/json" required aria-label="Legacy snapshot JSON"><button type="button" class="btn ghost file-pick-btn" onclick="$('#cashImportFile').click()">Choose File</button><span id="cashImportFileInfo" class="file-pick-info" aria-live="polite">No file selected</span></div><button type="submit" class="btn ghost">Preview Import</button></form><div id="cashImportPreview"></div></section>
   <section class="card"><h3>Daily Backup</h3><div id="cashBackup"></div></section>
   <section class="card"><h3>New Cash Book</h3><form id="cashBookForm" class="cash-form"><label>Name<input name="label" maxlength="100" required></label><label>Year<input name="year" type="number" min="2000" max="2099" value="${new Date().getFullYear()}" required></label><label>Opening Balance<input name="opening_balance" type="text" inputmode="decimal" value="0.00" required></label><button class="btn primary">Create Book</button></form></section>
 </section>`);
@@ -74,12 +76,30 @@ function cashEntryModal(){
     await api('/api/cash/entries',{method:'POST',body:JSON.stringify(value)});close();await cashLoad();msg('Cash entry saved.');
   })};
 }
+function cashLog(){
+  const owner=currentEmployee?.email;
+  const {modal}=cashDialog('Cash Tracker Log','<div id="cashLogRows" aria-live="polite"></div><div class="cash-toolbar cash-pagination"><span id="cashLogPage"></span><button class="btn ghost" id="cashLogPrevious">Previous</button><button class="btn ghost" id="cashLogNext">Next</button></div>');
+  let offset=0;
+  const previous=modal.querySelector('#cashLogPrevious'),next=modal.querySelector('#cashLogNext');
+  async function load(){
+    previous.disabled=true;next.disabled=true;modal.querySelector('#cashLogRows').textContent='Loading…';
+    try{
+      const data=await api('/api/cash/log?offset='+offset);
+      if(!modal.isConnected||currentEmployee?.email!==owner||emsView!=='cash')return;
+      modal.querySelector('#cashLogRows').innerHTML=data.logs.map(a=>`<article class="cash-log-item"><div class="cash-log-heading"><strong>${esc(cashAction(a.action))}</strong><time>${esc(cashTime(a.created_at))}</time></div><div>${esc(a.actor_name||a.actor_email)}</div><p>${esc(a.action==='LEGACY_IMPORTED'?`${a.imported_count} legacy rows imported`:a.activity||a.book||'—')}</p>${a.book?`<small>Book: ${esc(a.book)}</small>`:''}${a.record_id||a.entry_id||a.import_id?`<small>Record: ${esc(a.record_id||a.entry_id||a.import_id)}</small>`:''}${a.reason?`<p>${esc(a.reason)}</p>`:''}${a.entry_id?`<button class="btn ghost tiny" data-cash-log-entry="${esc(a.entry_id)}">Open Entry</button>`:''}</article>`).join('')||'<div class="empty">No activity yet.</div>';
+      modal.querySelectorAll('[data-cash-log-entry]').forEach(b=>b.onclick=()=>cashDetail(b.dataset.cashLogEntry));
+      modal.querySelector('#cashLogPage').textContent=data.total?`${data.offset+1}–${Math.min(data.offset+data.limit,data.total)} of ${data.total}`:'0 activities';
+      previous.disabled=offset===0;next.disabled=offset+data.limit>=data.total;
+    }catch(e){if(modal.isConnected&&currentEmployee?.email===owner){modal.querySelector('#cashLogRows').textContent='Unable to load log.';msg(e.message,'err')}}
+  }
+  previous.onclick=()=>{offset=Math.max(0,offset-50);load()};next.onclick=()=>{offset+=50;load()};load();
+}
 async function cashDetail(id){
   const owner=currentEmployee?.email;
   try{
     const data=await api(`/api/cash/entries/${id}/audit`),e=data.entry;
     if(currentEmployee?.email!==owner||emsView!=='cash')return;
-    const {modal,close}=cashDialog('Cash Entry',`<dl class="cash-detail"><dt>Activity</dt><dd>${esc(e.activity||'—')}</dd><dt>Category</dt><dd>${esc(e.category)}</dd><dt>Income</dt><dd>${cashMoney(e.income)}</dd><dt>Outcome</dt><dd>${cashMoney(e.outcome)}</dd><dt>Notes</dt><dd>${esc(e.notes||'—')}</dd><dt>Source</dt><dd>${e.origin==='LEGACY'?'Legacy · row '+e.source_row:'EMS'}</dd></dl><h3>Audit Trail</h3>${data.audit.map(a=>`<div class="cash-audit"><strong>${esc(a.action)}</strong><span>${esc(a.actor_email)} · ${esc(new Date(a.created_at).toLocaleString())}</span><p>${esc(a.reason)}</p></div>`).join('')||'<p>Imported from the legacy spreadsheet.</p>'}${!e.voided&&currentEmployee.cash_access==='MANAGE'?'<form id="cashVoidForm"><label>Correction Reason<textarea name="reason" rows="2" maxlength="4000" required></textarea></label><button class="btn danger" type="submit">Void Entry</button></form>':''}`);
+    const {modal,close}=cashDialog('Cash Entry',`<dl class="cash-detail"><dt>${e.origin==='LEGACY'?'Imported by':'Created by'}</dt><dd>${esc(e.creator_name||e.created_by||'—')}</dd><dt>Recorded at</dt><dd>${esc(cashTime(e.created_at))}</dd><dt>Activity</dt><dd>${esc(e.activity||'—')}</dd><dt>Category</dt><dd>${esc(e.category)}</dd><dt>Income</dt><dd>${cashMoney(e.income)}</dd><dt>Outcome</dt><dd>${cashMoney(e.outcome)}</dd><dt>Notes</dt><dd>${esc(e.notes||'—')}</dd><dt>Source</dt><dd>${e.origin==='LEGACY'?'Legacy · row '+e.source_row:'EMS'}</dd></dl><h3>Audit Trail</h3>${data.audit.map(a=>`<div class="cash-audit"><strong>${esc(cashAction(a.action))}</strong><span>${esc(a.actor_name||a.actor_email)} · ${esc(cashTime(a.created_at))}</span><p>${esc(a.reason)}</p></div>`).join('')||'<p>Imported from the legacy spreadsheet.</p>'}${!e.voided&&currentEmployee.cash_access==='MANAGE'?'<form id="cashVoidForm"><label>Correction Reason<textarea name="reason" rows="2" maxlength="4000" required></textarea></label><button class="btn danger" type="submit">Void Entry</button></form>':''}`);
     modal.querySelector('#cashVoidForm')?.addEventListener('submit',event=>{event.preventDefault();cashBusy(event.target.querySelector('button'),'Saving…',async()=>{await api(`/api/cash/entries/${id}/void`,{method:'POST',body:JSON.stringify({reason:event.target.elements.reason.value,version:e.version})});close();await cashLoad();msg('Entry voided. Add a new entry for the corrected amount.');})});
   }catch(e){msg(e.message,'err')}
 }
@@ -96,7 +116,8 @@ async function cashAdminLoad(){
   }catch(e){msg(e.message,'err')}
 }
 $('#cashBookForm').onsubmit=e=>{e.preventDefault();cashBusy(e.target.querySelector('button'),'Creating…',async()=>{await api('/api/admin/cash/books',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});msg('Cash book created.');})};
-$('#cashImportForm').onsubmit=e=>{e.preventDefault();cashBusy(e.target.querySelector('button'),'Reading…',async()=>{
+$('#cashImportFile').onchange=()=>{$('#cashImportFileInfo').textContent=$('#cashImportFile').files[0]?.name||'No file selected';$('#cashImportPreview').replaceChildren();cashState.preview=null;};
+$('#cashImportForm').onsubmit=e=>{e.preventDefault();cashBusy(e.target.querySelector('[type=submit]'),'Reading…',async()=>{
   const form=new FormData();form.append('snapshot',$('#cashImportFile').files[0]);const result=await api('/api/admin/cash/import/preview',{method:'POST',body:form});cashState.preview=result;
   $('#cashImportPreview').innerHTML=`<p>${result.report.count} source rows · ${result.state==='IMPORTED'?'Already imported':'Ready for review'}</p><div class="table-wrap"><table><thead><tr><th>Sheet</th><th>Rows</th><th>Income</th><th>Outcome</th><th>Balance</th></tr></thead><tbody>${result.report.sheets.map(s=>`<tr><td>${esc(s.title)}</td><td>${s.count}</td><td>${cashMoney(s.income)}</td><td>${cashMoney(s.outcome)}</td><td>${cashMoney(s.balance)}</td></tr>`).join('')}</tbody></table></div><ul>${result.report.warnings.map(w=>`<li>${esc(w)}</li>`).join('')}</ul>${result.state!=='IMPORTED'?'<label class="cash-checkbox"><input id="cashImportConfirm" type="checkbox"> I reviewed the source rows, separate balances and warnings.</label><button class="btn primary" id="cashImportCommit" disabled>Import All Sheets</button>':''}`;
   $('#cashImportConfirm')?.addEventListener('change',e=>{$('#cashImportCommit').disabled=!e.target.checked});
@@ -104,4 +125,4 @@ $('#cashImportForm').onsubmit=e=>{e.preventDefault();cashBusy(e.target.querySele
 })};
 
 const cashOriginalResetSession=emsResetSessionState;
-emsResetSessionState=function(){cashOriginalResetSession();cashState={book:null,categories:[],offset:0,sequence:cashState.sequence+1,entries:[],preview:null};cashRowsSequence++;$('#cashModal')?.remove();document.body.classList.remove('modal-open');for(const id of ['cashRows','cashMetrics','cashCharts','cashAccessRows','cashBackup','cashImportPreview'])$('#'+id)?.replaceChildren();$('#cashImportFile').value='';$('#cashSearch').value='';};
+emsResetSessionState=function(){cashOriginalResetSession();cashState={book:null,categories:[],offset:0,sequence:cashState.sequence+1,entries:[],preview:null};cashRowsSequence++;$('#cashModal')?.remove();document.body.classList.remove('modal-open');for(const id of ['cashRows','cashMetrics','cashCharts','cashAccessRows','cashBackup','cashImportPreview'])$('#'+id)?.replaceChildren();$('#cashImportFile').value='';$('#cashImportFileInfo').textContent='No file selected';$('#cashSearch').value='';};

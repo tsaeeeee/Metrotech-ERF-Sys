@@ -115,6 +115,26 @@ try{
   assert.equal((await http(`/api/cash/entries/${entry.id}/void`,mc,'POST',{version:0,reason:'Correction'})).status,409);
   const voids=await Promise.all([1,2].map(()=>http(`/api/cash/entries/${entry.id}/void`,mc,'POST',{version:1,reason:'Correction'})));assert.deepEqual(voids.map(r=>r.status).sort(),[200,409]);
   assert.equal((await http(`/api/cash/entries/${entry.id}/audit`,vc)).data.audit.length,2);
+  assert.equal((await http('/api/cash/log')).status,401);
+  assert.equal((await http('/api/cash/log',nc)).status,403);
+  assert.equal((await http('/api/cash/log',ac)).status,403);
+  assert.equal((await http('/api/cash/log?offset=-1',vc)).status,400);
+  const cashLog=await http('/api/cash/log',vc);
+  assert.equal(cashLog.status,200);assert.match(cashLog.cache,/no-store/);
+  assert.equal(cashLog.data.logs[0].action,'VOIDED');
+  assert.equal(cashLog.data.logs[0].actor_name,'Manager');
+  assert.equal(cashLog.data.logs[0].entry_id,entry.id);
+  assert.equal(cashLog.data.logs[0].reason,'Correction');
+  assert(Number.isFinite(Date.parse(cashLog.data.logs[0].created_at)));
+  assert(cashLog.data.logs.some(r=>r.action==='LEGACY_IMPORTED'&&r.imported_count==='5'));
+  assert(!cashLog.data.logs.some(r=>r.action==='ACCESS_CHANGED'));
+  assert(!('after_data' in cashLog.data.logs[0]));
+  const nextLog=await http('/api/cash/log?offset=1',mc);
+  assert.equal(nextLog.data.logs[0].id,cashLog.data.logs[1].id);
+  const detailLog=await http(`/api/cash/entries/${entry.id}/audit`,vc);
+  assert.equal(detailLog.data.entry.creator_name,'Manager');
+  assert.equal(detailLog.data.audit[0].actor_name,'Manager');
+
   assert.equal((await http('/api/cash/overview?book='+book.id,vc)).data.totals.balance,'-165726.00');
   await http('/api/admin/cash/access',ac,'PUT',{email:'Manager@example.test',access:'VIEW'});
   assert.equal((await http('/api/cash/entries',mc,'POST',{...entry,id:randomUUID()})).status,403,'Revocation applies to an already signed-in account.');

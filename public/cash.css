@@ -13,7 +13,7 @@
 .cash-toolbar .workflow-select-field{margin:0}
 .ems-theme .cash-toolbar>.btn,.ems-theme .cash-access-row>.btn{height:36px;display:inline-flex;align-items:center;justify-content:center;white-space:nowrap}
 .cash-pagination{align-items:center;gap:12px;margin:20px 0 0}
-.cash-pagination #cashPage{margin-right:auto;color:#64748b;font-size:13px}
+.cash-pagination #cashPage,.cash-pagination #cashLogPage{margin-right:auto;color:#64748b;font-size:13px}
 .cash-access-heading,.cash-access-row{grid-template-columns:minmax(0,1fr) minmax(180px,320px) 72px;gap:16px}
 .cash-access-heading{display:grid;padding:12px 0 8px;font-size:12px;font-weight:600;color:#64748b;border-bottom:1px solid #e5eaf1}
 .cash-access-row{margin:0;padding:12px 0;border-bottom:1px solid #eef2f6}
@@ -24,10 +24,20 @@
   .cash-access-heading{display:none}
   .cash-access-row{grid-template-columns:minmax(0,1fr) 72px;gap:8px 12px;padding:14px 0}
   .cash-pagination{gap:8px;margin-top:20px}
-  .cash-pagination #cashPage{flex-basis:100%;margin:0 0 4px}
+  .cash-pagination #cashPage,.cash-pagination #cashLogPage{flex-basis:100%;margin:0 0 4px}
   #cashSearch{flex-basis:100%}
   #cashCategoryPicker{width:100%}
 }
 .cash-form>label.cash-checkbox{flex-direction:row;align-items:center;justify-content:flex-start;align-self:end;min-height:36px;margin:0}
 .cash-form>label.cash-checkbox input{flex:none;margin:0}
 #cashImportForm{align-items:center}
+
+.cash-file-picker{display:flex;align-items:center;gap:10px;min-width:0;flex:1;flex-wrap:wrap}
+.cash-file-picker .file-pick-info{max-width:100%;overflow-wrap:anywhere;white-space:normal}
+.cash-log-item{padding:16px 0;border-bottom:1px solid #e5eaf1;overflow-wrap:anywhere}
+.cash-log-item:first-child{padding-top:0}.cash-log-item:last-child{border-bottom:0}
+.cash-log-heading{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.cash-log-heading time,.cash-log-item small{font-size:12px;color:#64748b}
+.cash-log-item small{display:block;margin:6px 0}.cash-log-item p{white-space:pre-wrap;margin:8px 0}
+
+@media(max-width:700px){#cashImportForm .cash-file-picker{flex-basis:100%}}
