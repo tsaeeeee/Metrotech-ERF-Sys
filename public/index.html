@@ -7,6 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/metrotech-favicon.svg">
 <link rel="stylesheet" href="/styles.css">
 <link rel="stylesheet" href="/ems-theme.css">
+<link rel="stylesheet" href="/cash.css">
 </head>
 <body class="ems-theme">
 <header class="topbar">
@@ -89,9 +90,8 @@
     <summary>Activity</summary>
     <div class="ems-nav-items">
       <button type="button" data-ems-view="drafts" onclick="emsNavigate('drafts')">Draft</button>
-      <button type="button" data-ems-view="requests" onclick="emsNavigate('requests')">My Requests</button>
-      <button type="button" data-ems-view="tasks" onclick="emsNavigate('tasks')">My Tasks <span id="emsTaskCount"></span></button>
-      <button type="button" data-ems-view="history" onclick="emsNavigate('history')">History &amp; Progress</button>
+      <button type="button" data-ems-view="requests" onclick="emsNavigate('requests')">My Requests <span id="emsTaskCount"></span></button>
+      <button type="button" data-ems-view="history" onclick="emsNavigate('history')">History</button>
     </div>
   </details>
   <details id="emsAdminNav" class="ems-nav-group hidden" open>
@@ -203,7 +203,11 @@
 </div>
 
 <section id="decisionHistoryCard" class="card hidden">
-  <div class="row"><div><h2 id="decisionHistoryTitle">History &amp; Progress</h2></div><button class="btn ghost" onclick="loadMe()">Refresh</button></div>
+  <div class="row"><div><h2 id="decisionHistoryTitle">History</h2></div><button class="btn ghost" onclick="loadMe()">Refresh</button></div>
+  <div id="emsActiveFilters" class="cash-toolbar hidden">
+    <button class="btn ghost" data-active-filter="active" onclick="emsNavigate('requests',{formType:'ALL',state:'active',offset:0})">All In Progress</button>
+    <button class="btn ghost" data-active-filter="action" onclick="emsNavigate('requests',{formType:'ALL',state:'action',offset:0})">Needs My Action</button>
+  </div>
   <div id="emsHistoryFilter" class="ems-history-filter hidden">
     <span id="emsHistoryFilterLabel"></span><span id="emsHistoryPage"></span>
     <button id="emsHistoryPrevious" class="btn tiny ghost" onclick="emsHistoryPage(-1)">Previous</button>
@@ -623,5 +627,7 @@
 <script src="/ems.js"></script>
 <script src="/executive-workflow.js"></script>
 <script src="/dashboard-drafts.js"></script>
+<script src="/cash.js"></script>
+<script>loadAuthMode();loadMe();</script>
 </body>
 </html>

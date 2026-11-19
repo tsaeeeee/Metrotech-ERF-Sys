@@ -43,9 +43,9 @@ function openAdminWorkflowMenu(control,edge){
   const menu=control.querySelector('.custom-select-menu');
   menu.style.maxHeight='';menu.classList.remove('hidden');control.classList.add('open');
   trigger.setAttribute('aria-expanded','true');
-  const panel=control.closest('.profile-modal-panel'),rect=trigger.getBoundingClientRect(),bounds=panel.getBoundingClientRect();
+  const panel=control.closest('.profile-modal-panel'),rect=trigger.getBoundingClientRect(),bounds=panel?panel.getBoundingClientRect():{top:0,bottom:innerHeight};
   const below=Math.min(bounds.bottom,innerHeight)-rect.bottom-12;
-  const above=rect.top-Math.max(bounds.top,panel.querySelector('.modal-head').getBoundingClientRect().bottom)-12;
+  const above=rect.top-Math.max(bounds.top,panel?.querySelector('.modal-head')?.getBoundingClientRect().bottom||0)-12;
   const up=below<menu.scrollHeight&&above>below;
   control.classList.toggle('opens-up',up);menu.style.maxHeight=`${Math.max(36,Math.min(292,up?above:below))}px`;
   const options=[...menu.querySelectorAll('[role=option]:not(:disabled)')];
@@ -112,6 +112,9 @@ openAdminUserModal=function(encodedEmail=''){
   }).join('');
   let optionsField=$('#adminWorkflowOptions');
   if(!optionsField){optionsField=document.createElement('div');optionsField.id='adminWorkflowOptions';optionsField.className='span-2 workflow-role-fields';field.insertAdjacentElement('afterend',optionsField)}
+  let cashField=$('#adminCashAccessField');
+  if(!cashField){cashField=document.createElement('div');cashField.id='adminCashAccessField';cashField.className='span-2';optionsField.insertAdjacentElement('afterend',cashField)}
+  cashField.innerHTML=adminWorkflowSelect('adminCashAccess','Cash Tracker Access','',[['NONE','No Access'],['VIEW','View'],['MANAGE','Manage']],user?.cash_access||'NONE');
   const options=user?.workflow_options||{};
   optionsField.innerHTML=`<div class="field workflow-display-name"><label for="adminWorkflowDisplayName">Workflow display name</label><input id="adminWorkflowDisplayName" maxlength="40" value="${esc(options.displayName||'')}" placeholder="Short name (optional)"></div>`+['ERF','ECF'].map(form=>{
     const option=options[form]||{};

@@ -4,7 +4,7 @@ on:
   push:
     branches: [web, production-erf]
   pull_request:
-    branches: [web, production-erf, feature/assigned-multi-role, feature/request-progress-visibility, feature/executive-review-workflow, fix/user-management-workflow-ui]
+    branches: [web, production-erf, feature/assigned-multi-role, feature/request-progress-visibility, feature/executive-review-workflow, fix/user-management-workflow-ui, feature/dashboard-drafts]
 
 jobs:
   syntax:
@@ -39,6 +39,14 @@ jobs:
       - run: npm install --ignore-scripts
       - name: Check JavaScript syntax
         run: |
+          node --check src/cash.js
+          node --check src/cash-model.js
+          node --check src/cash-sheets.js
+          node --check public/cash.js
+          node --check scripts/cash-snapshot.js
+          node --check scripts/cash-import.js
+          node --check scripts/cash-smoke.js
+          node --check scripts/release-cash/upgrade.js
           node --check src/server.js
           node --check src/db.js
           node --check src/drafts.js
@@ -77,6 +85,8 @@ jobs:
         run: npm run test:ems-http
       - name: Test persistent drafts, ownership, retry safety and dashboard drilldowns
         run: node scripts/drafts-http-smoke.js
+      - name: Test Cash Tracker permissions, imports, audit, retries and daily backup
+        run: node scripts/cash-smoke.js
       - name: Install browser for UI regression checks
         run: npx playwright install --with-deps chromium
       - name: Test role navigation, mobile approval and session startup
@@ -157,3 +167,14 @@ jobs:
           node --check scripts/release-executive/cutover-check.js
       - name: Test executive rehearsal, cutover, rollback and data protection
         run: bash scripts/release-executive/cutover-smoke.sh
+
+  cash-release:
+    if: github.event_name == 'pull_request' && github.head_ref == 'feature/cash-tracker-workflow'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Test Cash Tracker rehearsal, cutover, rollback and data protection
+        run: bash scripts/release-cash/cutover-smoke.sh

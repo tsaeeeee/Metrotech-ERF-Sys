@@ -15,6 +15,8 @@ const assets={
   '/ecf-admin.js':['ecf-admin.js','ecf-profile.js'],
   '/ems.js':['ems.js'],
   '/dashboard-drafts.js':['dashboard-drafts.js'],
+  '/cash.js':['cash.js'],
+  '/cash.css':['cash.css'],
   '/executive-workflow.js':['executive-workflow.js']
 };
 const server=http.createServer(async(req,res)=>{
@@ -78,11 +80,19 @@ async function session(user,{signedIn=true,dashboard={totals:[],trend:[],categor
       data={employee:active,requests:user.role==='REQUESTOR'||
         (user.role==='NONE'&&user.ecfRole==='REQUESTOR')?[revisionRow]:tasks,
         tasks:user.ecfRole==='REQUESTOR'||user.ecfRole==='NONE'||user.role==='ADMIN'?[]:tasks,
-        history:[{...row('ECF',historyStatus,'history'),waiting_for_role:{PENDING_CHECK:'Checker',PENDING_REVIEW:'Reviewer',PENDING_APPROVAL:'Approver'}[historyStatus],waiting_for_name:'UI Assigned Person'}],
+        history:historyStatus==='APPROVED'?[{...row('ECF',historyStatus,'history'),waiting_for_role:{PENDING_CHECK:'Checker',PENDING_REVIEW:'Reviewer',PENDING_APPROVAL:'Approver'}[historyStatus],waiting_for_name:'UI Assigned Person'}]:[],
         myRequests:user.role==='REQUESTOR'||
           (user.role==='NONE'&&user.ecfRole==='REQUESTOR')?[revisionRow]:[]};
     }else if(path==='/api/ems/dashboard')data=dashboard;
-    else if(path==='/api/ems/dashboard/requests'){const query=new URL(request.url()).searchParams;data={requests:[row(query.get('formType'),query.get('state')==='approved'?'APPROVED':'PENDING_REVIEW','filtered')],total:1,offset:0,limit:50}}
+    else if(path==='/api/ems/dashboard/requests'){
+      const query=new URL(request.url()).searchParams,state=query.get('state'),form=query.get('formType');
+      const stage=user.ecfRole==='CHECKER'?'PENDING_CHECK':user.role==='APPROVER'?'PENDING_APPROVAL':'PENDING_REVIEW';
+      const history={...row('ECF',historyStatus,'history'),waiting_for_role:{PENDING_CHECK:'Checker',PENDING_REVIEW:'Reviewer',PENDING_APPROVAL:'Approver'}[historyStatus],waiting_for_name:'UI Assigned Person'};
+      const requests=form!=='ALL'?[row(form,state==='approved'?'APPROVED':'PENDING_REVIEW','filtered')]:
+        state==='approved'?(historyStatus==='APPROVED'?[history]:[]):
+        state==='action'?[row('ECF',stage,'task')]:historyStatus!=='APPROVED'?[history]:user.ecfRole==='REQUESTOR'?[revisionRow]:[row('ECF',stage,'task')];
+      data={requests,total:requests.length,offset:0,limit:50};
+    }
     else if(path==='/api/drafts')data={drafts:[]};
     else if(path==='/api/requests/task' || path==='/api/requests/history'){
       const state=path.endsWith('history')?historyStatus:user.ecfRole==='CHECKER'?'PENDING_CHECK':
@@ -95,6 +105,13 @@ async function session(user,{signedIn=true,dashboard={totals:[],trend:[],categor
     else if(path==='/api/requests/history/recall' && method==='POST'){
       historyStatus='RECALLED';data={ok:true,status:historyStatus,refNo:'ECF-history'};
     }
+    else if(path==='/api/cash/books')data={books:[{id:'11111111-1111-4111-8111-111111111111',label:'2026',year:2026}],categories:['Cash Deposit','Software & Subscription','Tools']};
+    else if(path==='/api/cash/overview')data={totals:{opening:'0.00',income:'2000000.10',outcome:'165726.00',balance:'1834274.10'},trend:[{month:'2026-10',income:'2000000.10',outcome:'165726.00'}],categories:[{category:'Software & Subscription',amount:'165726.00'}]};
+    else if(path==='/api/cash/entries'&&method==='GET')data={entries:[{id:'22222222-2222-4222-8222-222222222222',date:'2026-11-18',category:'Software & Subscription',activity:'Domain renewal & subscriptions '+('long detail '.repeat(12)),income:'0.00',outcome:'165726.00',balance:'1834274.10',origin:'LEGACY',source_row:104}],total:1,offset:0,limit:50};
+    else if(path==='/api/cash/entries'&&method==='POST'){status=201;data={...JSON.parse(request.postData()),version:1};}
+    else if(path==='/api/cash/entries/22222222-2222-4222-8222-222222222222/audit')data={entry:{id:'22222222-2222-4222-8222-222222222222',category:'Software & Subscription',activity:'Domain renewal',notes:'Source note',income:'0.00',outcome:'165726.00',origin:'LEGACY',source_row:104,version:1},audit:[]};
+    else if(path==='/api/admin/cash/access')data={users:[{email:'cash@example.test',name:'Cash Manager',access:'MANAGE',active:true}]};
+    else if(path==='/api/admin/cash/backup')data={settings:{spreadsheet_id:'fixture_cash_workbook_123456',enabled:false,hour_wib:2},credentialConfigured:false,runs:[]};
     else if(path==='/api/admin/users')data={users:[{...employee('REQUESTOR'),active:true,username:'ui-requestor',has_signature:true}]};
     else if(path==='/api/admin/app-settings')data={settings:{appBaseUrl:'https://ems.example.test',ecfRoles:[]},readiness:{}};
     else if(path==='/api/requests/revision')data={request:revisionRow,items:[{
@@ -401,9 +418,9 @@ try{
       assert.equal(await actor.page.locator('#emsTransactionsNav').isVisible(),erf||ecf);
       assert.equal(await actor.page.locator('[data-ems-view="erf"]').isVisible(),erf);
       assert.equal(await actor.page.locator('[data-ems-view="ecf"]').isVisible(),ecf);
-      assert.equal(await actor.page.locator('[data-ems-view="requests"]').isVisible(),requests);
+      assert.equal(await actor.page.locator('[data-ems-view="requests"]').isVisible(),requests||tasks);
       assert.equal(await actor.page.locator('[data-ems-view="drafts"]').isVisible(),requests);
-      assert.equal(await actor.page.locator('[data-ems-view="tasks"]').isVisible(),tasks);
+      assert.equal(await actor.page.locator('[data-ems-view="tasks"]').count(),0);
       assert.equal(await actor.page.locator('[data-ems-view="history"]').isVisible(),requests||tasks);
       await actor.page.waitForFunction(()=>document.querySelector('#emsMetrics').textContent.trim()!=='');
       const metricLabels=await actor.page.locator('#emsMetrics').innerText();
@@ -417,17 +434,19 @@ try{
         assert(await actor.page.locator('#requestForm').isVisible(),'ECF Requestor can create claims.');
       }
       if(tasks){
-        await actor.page.locator('[data-ems-view="tasks"]').click();
-        assert((await actor.page.locator('#emsTaskRows').innerText()).includes('ECF-task'));
+        await actor.page.locator('[data-ems-view="requests"]').click();
+        await actor.page.locator('[data-active-filter="action"]').click();
+        await actor.page.locator('#decisionHistoryBody').getByText('ECF-task',{exact:true}).waitFor();
+        assert((await actor.page.locator('#decisionHistoryBody').innerText()).includes('ECF-task'));
         assert(!await actor.page.locator('#requestForm').isVisible(),'Work happens in Activity, without a transaction form.');
-        assert(!await actor.page.locator('#decisionHistoryCard').isVisible(),'History must be separate from My Tasks.');
+        assert.equal(await actor.page.locator('#decisionHistoryTitle').innerText(),'My Requests');
       }
       if(requests||tasks){
         await actor.page.locator('[data-ems-view="history"]').click();
         assert(await actor.page.locator('#decisionHistoryCard').isVisible());
         assert(!await actor.page.locator('#emsTasks').isVisible());
         assert.equal(await actor.page.locator('#emsTasks #decisionHistoryCard').count(),0);
-        assert((await actor.page.locator('#decisionHistoryBody').innerText()).includes('ECF-history'));
+        await actor.page.getByText('ECF-history',{exact:true}).waitFor();
         await actor.page.locator('#decisionHistoryBody').getByRole('button',{name:'Open',exact:true}).click();
         await actor.page.waitForFunction(()=>emsDetail?.id==='history');
         assert.deepEqual(await actor.page.locator('#detailSummary th').allTextContents(),['Checker','Reviewer','Approver']);
@@ -448,8 +467,10 @@ try{
     for(const decision of ['APPROVE','REJECT']){
       const actor=await session(employee(role,ecfRole));
       const page=actor.page;
-      await page.locator('[data-ems-view="tasks"]').click();
-      await page.locator('#emsTaskRows button').first().click();
+      await page.locator('[data-ems-view="requests"]').click();
+      await page.locator('[data-active-filter="action"]').click();
+      await page.locator('#decisionHistoryBody').getByText('ECF-task',{exact:true}).waitFor();
+      await page.locator('#decisionHistoryBody').getByRole('button',{name:'Open',exact:true}).click();
       await page.waitForFunction(()=>emsDetail?.id==='task');
       await page.locator('#decisionReason').fill('Test reason');
       const button=page.locator(decision==='APPROVE'?'#approveBtn':'#rejectBtn');
@@ -486,9 +507,11 @@ try{
 
   const ownerUser={...employee('APPROVER'),workflow_roles:{ERF:['REQUESTOR','REVIEWER','APPROVER'],ECF:['REQUESTOR','CHECKER','REVIEWER','APPROVER']}};
   const ownerSession=await session(ownerUser);
-  for(const view of ['erf','ecf','requests','tasks','history']) assert(await ownerSession.page.locator(`[data-ems-view="${view}"]`).isVisible(),`Owner must have ${view} navigation.`);
-  await ownerSession.page.locator('[data-ems-view="tasks"]').click();
-  await ownerSession.page.locator('#emsTaskRows button').first().click();
+  for(const view of ['erf','ecf','requests','history']) assert(await ownerSession.page.locator(`[data-ems-view="${view}"]`).isVisible(),`Owner must have ${view} navigation.`);
+  await ownerSession.page.locator('[data-ems-view="requests"]').click();
+  await ownerSession.page.locator('[data-active-filter="action"]').click();
+  await ownerSession.page.locator('#decisionHistoryBody').getByText('ECF-task',{exact:true}).waitFor();
+  await ownerSession.page.locator('#decisionHistoryBody').getByRole('button',{name:'Open',exact:true}).click();
   await ownerSession.page.waitForFunction(()=>emsDetail?.id==='task');
   assert.equal(await ownerSession.page.evaluate(()=>currentDecisionRole),'APPROVER','Multi-role account must use the pending stage, not a primary/first role.');
   assert(await ownerSession.page.locator('#approveBtn').isEnabled());
@@ -550,7 +573,10 @@ try{
     for(const role of ['REQUESTOR','CHECKER','REVIEWER','APPROVER']){
       const actor=await session(employee(role==='CHECKER'?'NONE':role,role),{initialHistoryStatus:stage});
       await actor.page.locator('[data-ems-view="history"]').click();
-      assert((await actor.page.locator('#decisionHistoryTitle').innerText()).includes('Progress'));
+      await actor.page.getByText('No matching requests.',{exact:true}).waitFor();
+      await actor.page.locator('[data-ems-view="requests"]').click();
+      await actor.page.getByText('ECF-history',{exact:true}).waitFor();
+      assert.equal(await actor.page.locator('#decisionHistoryTitle').innerText(),'My Requests');
       assert((await actor.page.locator('#decisionHistoryBody').innerText()).includes('Waiting for: UI Assigned Person'));
       await actor.page.locator('#decisionHistoryBody').getByRole('button',{name:'Open',exact:true}).click();
       await actor.page.waitForFunction(()=>emsDetail?.id==='history');
@@ -570,6 +596,8 @@ try{
   await recallApprover.page.locator('#approvalRecallReason').fill('Correct this ECF');
   await recallApprover.page.locator('#approvalRecallSubmit').click();
   await recallApprover.page.locator('#approvalRecallModal').waitFor({state:'hidden'});
+  await recallApprover.page.getByText('No matching requests.',{exact:true}).waitFor();
+  await recallApprover.page.locator('[data-ems-view="requests"]').click();
   await recallApprover.page.waitForFunction(()=>document.querySelector('#decisionHistoryBody').innerText.includes('RECALLED'));
   assert.equal(await recallButton.count(),0,'Recalled ECF must no longer offer approval recall.');
   assert(recallApprover.writes.some(write=>write.path==='/api/requests/history/recall' &&
@@ -638,7 +666,7 @@ try{
   assert.equal(await page.locator('#emsServiceOrder').inputValue(),'SO-DRAFT');
 
   await page.locator('[data-ems-view="requests"]').click();
-  await page.locator('#tbody').getByRole('button',{name:'Revise',exact:true}).click();
+  await page.locator('#decisionHistoryBody').getByRole('button',{name:'Revise',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('#emsServiceOrder').value==='SO-ORIGINAL');
   await page.locator('#emsServiceOrder').fill('SO-EDITED');
   await page.locator('[data-ems-view="erf"]').click();
@@ -740,6 +768,45 @@ try{
   await dp.getByText('No saved drafts.',{exact:true}).waitFor();
   assert.equal(drafts.size,0);
   await drafting.context.close();
+  for(const grant of ['VIEW','MANAGE']){
+    const cash=await session({...employee('REQUESTOR'),cash_access:grant});const cp=cash.page;
+    await cp.locator('[data-ems-view="cash"]').click();
+    await cp.getByText('Current Balance',{exact:true}).waitFor();
+    await cp.locator('#cashRows').getByText('Software & Subscription',{exact:true}).waitFor();
+    assert.equal(await cp.locator('#cashNew').isVisible(),grant==='MANAGE');
+    for(const viewport of [{width:1440,height:1000},{width:390,height:844},{width:320,height:568}]){
+      await cp.setViewportSize(viewport);
+      assert(await cp.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Cash dashboard must not overflow the viewport.');
+      await cp.locator('#cashCategoryButton').click();
+      await cp.locator('#cashCategoryMenu [data-value="Software & Subscription"]').click();
+      assert.equal(await cp.locator('#cashCategory').inputValue(),'Software & Subscription');
+      if(process.env.EMS_UI_SCREENSHOTS&&grant==='MANAGE')await cp.screenshot({path:`${process.env.EMS_UI_SCREENSHOTS}/cash-${viewport.width}.png`,fullPage:true});
+      if(grant==='MANAGE'){
+        await cp.locator('#cashNew').click();await cp.locator('#cashEntryForm').waitFor();
+        await cp.locator('#cashEntryCategoryButton').click();
+        await cp.locator('#cashEntryCategoryMenu [data-value="Software & Subscription"]').click();
+        assert.equal(await cp.locator('#cashEntryCategory').inputValue(),'Software & Subscription');
+        await cp.locator('#cashEntryForm [name="activity"]').fill('Software receipt');
+        await cp.locator('#cashEntryForm [name="outcome"]').fill('1000.25');
+        const button=cp.locator('#cashEntryForm [type="submit"]');await button.scrollIntoViewIfNeeded();
+        assert(await button.evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight&&el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))}),'Save must remain tappable on mobile.');
+        if(process.env.EMS_UI_SCREENSHOTS)await cp.screenshot({path:`${process.env.EMS_UI_SCREENSHOTS}/cash-entry-${viewport.width}.png`});
+        await button.click();await cp.locator('#cashModal').waitFor({state:'detached'});
+        const sent=JSON.parse(cash.writes.filter(w=>w.path==='/api/cash/entries').at(-1).body);
+        assert(sent.id&&sent.category==='Software & Subscription'&&sent.outcome==='1000.25');
+      }
+    }
+    await cp.setViewportSize({width:1440,height:1000});await cp.locator('#cashRows').getByRole('button',{name:'Open',exact:true}).click();
+    await cp.locator('#cashModal').waitFor();assert.equal(await cp.locator('#cashVoidForm').isVisible(),grant==='MANAGE');
+    await cp.locator('#cashModal [data-close]').click();
+    await cp.evaluate(()=>logout());assert.equal(await cp.locator('#cashRows').innerText(),'');
+    await cash.context.close();
+  }
+  const cashAdmin=await session(employee('ADMIN'));await cashAdmin.page.locator('[data-ems-view="admin-cash"]').click();
+  await cashAdmin.page.getByText('Cash Manager',{exact:true}).waitFor();
+  assert(await cashAdmin.page.locator('#cashBackupNow').isDisabled());
+  await cashAdmin.page.locator('#cashAccess0Button').click();await cashAdmin.page.locator('#cashAccess0Menu [data-value="VIEW"]').click();
+  assert.equal(await cashAdmin.page.locator('#cashAccess0').inputValue(),'VIEW');await cashAdmin.context.close();
   assert.deepEqual(errors,[],'Browser must not produce runtime errors or unexpected API calls.');
   console.log('EMS_UI_SMOKE_OK');
 }finally{

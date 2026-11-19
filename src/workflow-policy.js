@@ -38,12 +38,14 @@ export async function buildWorkflowPlan(client,employee,form,options={}){
   const other=rows.filter(e=>!sameEmail(e.email,employee.email));
   const reviewMode=e=>e.workflow_options?.[form]?.review||'ASSIGNED';
   let reviewers=other.filter(e=>e.reviewer&&reviewMode(e)==='PRIMARY');
+  let legacyReviewers=[];
   if(!reviewers.length){
     const legacy=other.filter(e=>e.reviewer&&reviewMode(e)==='ASSIGNED');
     // Preserve individual load-based assignment until primary reviewers are configured.
     const counts=(await client.query(`select lower(reviewer_email) as email,count(*)::int n
       from requests where form_type=$1 and status='PENDING_REVIEW' group by lower(reviewer_email)`,[form])).rows;
     legacy.sort((a,b)=>(counts.find(c=>c.email===a.email.toLowerCase())?.n||0)-(counts.find(c=>c.email===b.email.toLowerCase())?.n||0));
+    legacyReviewers=legacy;
     reviewers=legacy.slice(0,1);
   }
   const secondaryReviewers=other.filter(e=>e.reviewer&&e.approver&&reviewMode(e)==='SECONDARY');
@@ -54,6 +56,16 @@ export async function buildWorkflowPlan(client,employee,form,options={}){
       join ecf_details d on d.request_id=r.id where status='PENDING_CHECK' group by lower(d.checker_email)`)).rows;
     checkers.sort((a,b)=>(counts.find(c=>c.email===a.email.toLowerCase())?.n||0)-(counts.find(c=>c.email===b.email.toLowerCase())?.n||0));
   }
+  // Preserve assigned-review routing too: if its chosen Reviewer is the only
+  // Checker, choose another already-authorized assigned Reviewer at submission.
+  if(form==='ECF'&&checkers.length&&legacyReviewers.length&&!checkers.some(c=>[...reviewers,...secondaryReviewers].some(r=>!sameEmail(r.email,c.email)))){
+    const independent=legacyReviewers.find(r=>!sameEmail(r.email,checkers[0].email));
+    if(independent)reviewers=[independent];
+  }
+  // Prefer a Checker who leaves at least one independent review path.
+  const reviewPool=[...reviewers,...secondaryReviewers];
+  const viable=checkers.filter(c=>reviewPool.some(r=>!sameEmail(r.email,c.email)));
+  if(viable.length)checkers.splice(0,checkers.length,...viable);
   const bypass=options.bypass===true;
   if(bypass){
     if(!own?.approver||!own.workflow_options?.[form]?.bypass)fail('Executive bypass is not enabled for this account.',403);
@@ -63,6 +75,8 @@ export async function buildWorkflowPlan(client,employee,form,options={}){
     if(!reviewers.length&&!secondaryReviewers.length)fail('Assign another active Reviewer before submitting.',409);
     if(form==='ECF'&&!checkers.length&&!secondaryCheckers.length)fail('Assign another active ECF Checker before submitting.',409);
   }
+  if(!bypass&&form==='ECF'&&!(checkers.length?checkers:secondaryCheckers).some(c=>reviewPool.some(r=>!sameEmail(r.email,c.email))))
+    fail('Assign a different ECF Reviewer before submitting. The Checker cannot also review this claim.',409);
   return {reviewers:reviewers.map(member),secondaryReviewers:secondaryReviewers.map(member),
     checker:checkers[0]?member(checkers[0]):null,secondaryCheckers:secondaryCheckers.map(member),
     reviewTakenOver:false,checkTakenOver:false,bypass,bypassReason:bypass?String(options.bypassReason).trim():''};
@@ -70,8 +84,8 @@ export async function buildWorkflowPlan(client,employee,form,options={}){
 
 export function reviewRecipients(request){
   if(request.workflow_plan&&!request.workflow_plan.reviewTakenOver)
-    return request.workflow_plan.reviewers.map(e=>e.email);
-  return request.reviewer_email?[request.reviewer_email]:[];
+    return request.workflow_plan.reviewers.filter(e=>!sameEmail(e.email,request.checked_by_email||request.workflow_plan.checkedBy)).map(e=>e.email);
+  return request.reviewer_email&&!sameEmail(request.reviewer_email,request.checked_by_email||request.workflow_plan?.checkedBy)?[request.reviewer_email]:[];
 }
 export function pendingRecipients(request){
   if(request.status==='PENDING_APPROVAL')return [request.approver_email];
@@ -85,7 +99,7 @@ export function annotateProgress(request){
     request.reviewer_name='Bypassed by executive';request.checker_name='Bypassed by executive';
     request.reviewer_signature=null;request.checker_signature=null;
   }else if(['PENDING_CHECK','PENDING_REVIEW'].includes(request.status)&&!plan.reviewTakenOver){
-    request.reviewer_name=plan.reviewers.map(e=>e.label||e.name).join('/')||'Awaiting manual takeover';
+    request.reviewer_name=plan.reviewers.filter(e=>!sameEmail(e.email,request.checked_by_email||plan.checkedBy)).map(e=>e.label||e.name).join('/')||'Awaiting manual takeover';
     if(request.status==='PENDING_REVIEW')request.waiting_for_name=request.reviewer_name;
   }
   if(request.status==='PENDING_CHECK'&&!request.checker_email)request.waiting_for_name='Awaiting manual takeover';

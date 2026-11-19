@@ -127,22 +127,25 @@ function emsClearActionLoading(button,label){
 function emsNavigate(view,filter=null){
   if(!currentEmployee) return;
   if(emsDraftBusy || (emsSubmitting && view!==emsView)) return;
+  if(view==='tasks'){view='requests';filter={formType:'ALL',state:'action',offset:0};}
+  if(['requests','history'].includes(view)&&!filter)filter={formType:'ALL',state:view==='history'?'approved':'active',offset:0};
   emsCloseSidebar();
   const admin=currentEmployee.role==='ADMIN';
-  if(admin && !['home','admin-users','admin-app'].includes(view) && !(view==='history'&&filter)) view='admin-users';
+  if(admin && !['home','admin-users','admin-app','admin-cash','cash'].includes(view) && !(['history','requests'].includes(view)&&filter)) view='admin-users';
   if(!admin && view.startsWith('admin-')) view='home';
   const canRequest=hasRole(currentEmployee,'ERF','REQUESTOR')||hasRole(currentEmployee,'ECF','REQUESTOR');
   const canWork=['ERF','ECF'].some(form=>rolesFor(currentEmployee,form).some(role=>role!=='REQUESTOR'));
   if(!admin && ['erf','ecf'].includes(view) && !hasRole(currentEmployee,view.toUpperCase(),'REQUESTOR')) view='home';
-  if(!admin && ['requests','drafts'].includes(view) && !canRequest) view='home';
-  if(!admin && view==='tasks' && !canWork) view='home';
+  if(!admin && view==='drafts' && !canRequest) view='home';
+  if(!admin && view==='requests' && !canRequest && !canWork) view='home';
   if(!admin && view==='history' && !canRequest && !canWork) view='home';
   if(!admin && ['erf','ecf'].includes(view) && view!==emsFormView){
     emsStoreDraft();
     emsRestoreDraft(view);
   }
+  if(view==='cash'&&(!currentEmployee.cash_access||currentEmployee.cash_access==='NONE'))view='home';
   emsView=view;
-  emsDashboardFilter=view==='history'?filter:null;
+  emsDashboardFilter=['history','requests'].includes(view)?filter:null;
   emsHistoryLoad++;
   document.querySelectorAll('#emsNav [data-ems-view]').forEach(button=>{
     const active=button.dataset.emsView===view;
@@ -150,14 +153,16 @@ function emsNavigate(view,filter=null){
     if(active) button.setAttribute('aria-current','page');
     else button.removeAttribute('aria-current');
   });
-  if(view.startsWith('admin-')) showAdminSection(view==='admin-app'?'app':'users');
+  if(['admin-app','admin-users'].includes(view)) showAdminSection(view==='admin-app'?'app':'users');
   $('#emsHome').classList.toggle('hidden',view!=='home');
   $('#emsTasks').classList.toggle('hidden',view!=='tasks');
   $('#emsDrafts').classList.toggle('hidden',view!=='drafts');
-  $('#decisionHistoryCard').classList.toggle('hidden',view!=='history');
-  $('#workflowDashboard').classList.toggle('hidden',!['erf','ecf','requests'].includes(view));
-  $('#adminDashboard').classList.toggle('hidden',!view.startsWith('admin-'));
-  $('#requestQueueCard').classList.toggle('hidden',!['erf','ecf','requests'].includes(view));
+  $('#decisionHistoryCard').classList.toggle('hidden',!['history','requests'].includes(view));
+  $('#workflowDashboard').classList.toggle('hidden',!['erf','ecf'].includes(view));
+  $('#adminDashboard').classList.toggle('hidden',!['admin-users','admin-app'].includes(view));
+  $('#cashView').classList.toggle('hidden',view!=='cash');
+  $('#cashAdmin').classList.toggle('hidden',view!=='admin-cash');
+  $('#requestQueueCard').classList.toggle('hidden',!['erf','ecf'].includes(view));
   const canCreate=(view==='erf' && hasRole(currentEmployee,'ERF','REQUESTOR')) ||
     (view==='ecf' && hasRole(currentEmployee,'ECF','REQUESTOR'));
   $('#requestForm').classList.toggle('hidden',!canCreate);
@@ -185,14 +190,18 @@ function emsNavigate(view,filter=null){
   emsDraftStatus();
   if(view==='drafts') emsLoadSavedDrafts();
   if(view==='tasks') emsRenderTasks();
-  if(view==='history'){
+  if(['history','requests'].includes(view)){
     const data=window.emsBootstrap||{};
-    $('#decisionHistoryTitle').textContent='History & Progress';
+    $('#decisionHistoryTitle').textContent=view==='history'?'History':'My Requests';
+    $('#emsActiveFilters').classList.toggle('hidden',view!=='requests');
+    document.querySelectorAll('[data-active-filter]').forEach(b=>b.classList.toggle('selected',b.dataset.activeFilter===filter.state));
     $('#emsHistoryFilter').classList.toggle('hidden',!filter);
     if(filter) emsLoadDashboardRequests();
     else {$('#decisionHistoryEmpty').textContent='No requests to track yet.';renderRequests(data.history||[],'decisionHistoryTable','decisionHistoryBody','decisionHistoryEmpty');}
   }
   if(view==='home') emsLoadDashboard();
+  if(view==='cash')cashLoad();
+  if(view==='admin-cash')cashAdminLoad();
 }
 
 function emsRenderTasks(){
@@ -278,7 +287,7 @@ async function emsLoadDashboard(){
       <h3>${emsDashboardIcon(type==='ERF'?'file':'claim',type==='ERF'?'navy':'teal')}${type}</h3>
       <div class="ems-metric-split">${[['progress','In Progress',pending],['approved','Approved',['APPROVED']]].map(([state,label,states])=>{
         const count=total(type,states,'count');
-        return `<button type="button" class="ems-metric-cell" aria-label="${type} ${label}" onclick="emsNavigate('history',{formType:'${type}',state:'${state}',offset:0})">
+        return `<button type="button" class="ems-metric-cell" aria-label="${type} ${label}" onclick="emsNavigate('${state==='approved'?'history':'requests'}',{formType:'${type}',state:'${state}',offset:0})">
           <small>${label}<span aria-hidden="true">↗</span></small><strong>${rupiah(total(type,states,'amount'))}</strong>
           <span>${count} ${state==='approved'?'approved ':''}${type==='ERF'?'request':'claim'}${count===1?'':'s'}</span></button>`;
       }).join('')}</div></section>`).join('')||'<div class="empty">No modules assigned yet.</div>';
@@ -310,11 +319,11 @@ loadMe=async function(...args){
   $('#emsTransactionsNav').classList.toggle('hidden',admin ||
     (!hasRole(currentEmployee,'ERF','REQUESTOR') && !hasRole(currentEmployee,'ECF','REQUESTOR')));
   $('#emsActivityNav').classList.toggle('hidden',admin || (!canRequest && !canWork));
-  $('#emsNav [data-ems-view="requests"]').classList.toggle('hidden',!canRequest);
+  $('#emsNav [data-ems-view="requests"]').classList.toggle('hidden',!canRequest&&!canWork);
   $('#emsNav [data-ems-view="drafts"]').classList.toggle('hidden',!canRequest);
-  $('#emsNav [data-ems-view="tasks"]').classList.toggle('hidden',!canWork);
   $('#emsNav [data-ems-view="history"]').classList.toggle('hidden',!canRequest&&!canWork);
   $('#emsAdminNav').classList.toggle('hidden',!admin);
+  $('#emsNav [data-ems-view="cash"]').classList.toggle('hidden',!currentEmployee.cash_access||currentEmployee.cash_access==='NONE');
   $('#emsNav [data-ems-view="erf"]').classList.toggle('hidden',!hasRole(currentEmployee,'ERF','REQUESTOR'));
   $('#emsNav [data-ems-view="ecf"]').classList.toggle('hidden',!hasRole(currentEmployee,'ECF','REQUESTOR'));
   $('#profile').classList.toggle('hidden',admin);

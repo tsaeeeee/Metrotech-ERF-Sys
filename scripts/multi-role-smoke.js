@@ -45,6 +45,7 @@ try{
   const reviewer=await db.createManagedEmployee(userData('Reviewer','REVIEWER'));
   const requester=await db.createManagedEmployee(userData('Requester','REQUESTOR'));
   const outsider=await db.createManagedEmployee(userData('Unassigned','NONE',{ERF:['REVIEWER'],ECF:['CHECKER','REVIEWER']}));
+  const ecfReviewer=await db.createManagedEmployee(userData('Independent','NONE',{ERF:[],ECF:['REVIEWER']}));
   const ownerHash=(await pool.query('select password_hash from employees where email=$1',[owner.email])).rows[0].password_hash;
   await db.updateManagedEmployee(owner.email,{...userData('Owner','APPROVER',full),password:''});
   assert.equal((await pool.query('select password_hash from employees where email=$1',[owner.email])).rows[0].password_hash,ownerHash);
@@ -78,7 +79,7 @@ try{
   await db.transitionRequest(selfEcf.id,await db.getEmployee(ownClaim.request.checker_email),'CHECK','APPROVE');
   await db.transitionRequest(selfEcf.id,await db.getEmployee(selfEcf.reviewer_email),'REVIEW','APPROVE');
   await db.transitionRequest(selfEcf.id,owner,'APPROVAL','APPROVE');
-  assert((await db.listMyRequests(owner)).some(r=>r.id===selfEcf.id));
+  assert(!(await db.listMyRequests(owner)).some(r=>r.id===selfEcf.id));
   assert((await db.listDecisionHistory(owner)).some(r=>r.id===selfEcf.id));
   assert(!(await db.listTasksForEmployee(owner)).some(r=>r.id===selfEcf.id));
   assert.equal(assignedRole(owner,{...ownClaim.request,status:'PENDING_APPROVAL'}),'APPROVER');
@@ -89,7 +90,7 @@ try{
   const assignedChecker=await db.getEmployee(cd.request.checker_email);
   const assignedReviewer=await db.getEmployee(cd.request.reviewer_email);
   for(const actor of [requester,assignedChecker,assignedReviewer,owner])
-    assert((await db.listDecisionHistory(actor)).some(r=>r.id===claim.id&&r.status==='PENDING_CHECK'));
+    assert((await db.listMyRequests(actor)).some(r=>r.id===claim.id&&r.status==='PENDING_CHECK'));
   const bystander=await db.createManagedEmployee(userData('Bystander','NONE',{ERF:['REVIEWER'],ECF:['CHECKER','REVIEWER']}));
   assert(!(await db.listDecisionHistory(bystander)).some(r=>r.id===claim.id));
   assert.equal(await db.hasDecisionHistory(claim.id,bystander),false);
@@ -118,10 +119,19 @@ try{
   assert.equal(login.status,200);const cookie=login.headers.get('set-cookie').split(';')[0];
   const me=await (await fetch(origin+'/api/me',{headers:{cookie}})).json();
   assert.deepEqual(me.employee.workflow_roles,full);
-  assert(me.myRequests.some(r=>r.id===selfErf.id));
+  assert(!me.myRequests.some(r=>r.id===selfErf.id));
+  assert(me.history.some(r=>r.id===selfErf.id));
   const denied=await fetch(origin+`/api/requests/${claim.id}/check`,{method:'POST',headers:{cookie,'content-type':'application/json'},body:'{"decision":"APPROVE"}'});
   if(cd.request.checker_email!==owner.email)assert.equal(denied.status,403);
   assert.equal((await fetch(origin+'/api/admin/users',{headers:{cookie}})).status,403,'Multi-role must not grant Admin.');
+  // Assigned mode still finds an independent pair when the first Reviewer
+  // alphabetically is also the only available Checker.
+  await pool.query('update employees set active=false where email<>all($1::text[])',[[requester.email,owner.email,outsider.email,ecfReviewer.email]]);
+  await pool.query("update employees set name='A Backup Checker' where email=$1",[outsider.email]);
+  await pool.query("update employees set workflow_roles=jsonb_set(workflow_roles,'{ECF}','[\"APPROVER\"]') where email=$1",[owner.email]);
+  const paired=await db.createEcfClaim(requester,items);
+  assert.equal((await db.getRequestDetail(paired.id)).request.checker_email,outsider.email);
+  assert.equal(paired.reviewer_email,ecfReviewer.email);
   console.log('MULTI_ROLE_SMOKE_OK');
 }finally{
   if(app&&app.exitCode===null&&app.signalCode===null){
