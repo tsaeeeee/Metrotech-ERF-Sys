@@ -136,7 +136,43 @@ try{
   assert.equal(detailLog.data.audit[0].actor_name,'Manager');
 
   assert.equal((await http('/api/cash/overview?book='+book.id,vc)).data.totals.balance,'-165726.00');
+  const editable={...entry,id:randomUUID(),activity:'Editable cash record',income:'0.10'};
+  assert.equal((await http('/api/cash/entries',mc,'POST',editable)).status,201);
+  const change={activity:'Updated cash record',income:'42.02',outcome:'0.00',version:1};
+  for(const cookie of [vc,nc,ac]){
+    assert.equal((await http(`/api/cash/entries/${editable.id}`,cookie,'PATCH',change)).status,403);
+    assert.equal((await http(`/api/cash/entries/${editable.id}`,cookie,'DELETE',{version:1,reason:'Test'})).status,403);
+  }
+  assert.equal((await http(`/api/cash/entries/${editable.id}`,mc,'PATCH',{...change,income:'-1'})).status,400);
+  assert.equal((await http(`/api/cash/entries/${editable.id}`,mc,'PATCH',{...change,outcome:'1'})).status,400);
+  const edits=await Promise.all([1,2].map(()=>http(`/api/cash/entries/${editable.id}`,mc,'PATCH',change)));
+  assert.deepEqual(edits.map(r=>r.status).sort(),[200,409]);
+  const updatedEntry=(await http(`/api/cash/entries/${editable.id}/audit`,vc)).data;
+  assert.equal(updatedEntry.entry.income,'42.02');assert.equal(updatedEntry.entry.version,2);
+  assert.equal(updatedEntry.entry.created_by,'Manager@example.test');
+  assert.equal(updatedEntry.audit[0].action,'UPDATED');assert.equal(updatedEntry.audit[0].before_data.income,'0.10');
+  assert.equal(updatedEntry.audit[0].after_data.activity,change.activity);
+  assert.equal((await http('/api/cash/overview?book='+book.id,vc)).data.totals.balance,'-165683.98');
+  const updateLog=(await http('/api/cash/log',vc)).data.logs.find(r=>r.entry_id===editable.id&&r.action==='UPDATED');
+  assert.equal(updateLog.before_values.income,'0.10');assert.equal(updateLog.after_values.income,'42.02');
+  assert.equal((await http(`/api/cash/entries/${editable.id}`,mc,'DELETE',{version:2,reason:''})).status,400);
+  assert.equal((await http(`/api/cash/entries/${editable.id}`,mc,'DELETE',{version:1,reason:'Stale'})).status,409);
+  const deletes=await Promise.all([1,2].map(()=>http(`/api/cash/entries/${editable.id}`,mc,'DELETE',{version:2,reason:'Duplicate record'})));
+  assert.deepEqual(deletes.map(r=>r.status).sort(),[200,409]);
+  assert.equal((await http('/api/cash/entries?'+new URLSearchParams({book:book.id,q:'Updated cash record'}),vc)).data.total,0);
+  assert.equal((await http('/api/cash/overview?book='+book.id,vc)).data.totals.balance,'-165726.00');
+  assert.equal((await http(`/api/cash/entries/${editable.id}/audit`,vc)).data.audit[0].action,'DELETED');
+  assert.equal((await http(`/api/cash/entries/${editable.id}`,mc,'PATCH',{...change,version:3})).status,409);
+  assert.equal((await pool.query('select count(*)::int n from cash_entries where id=$1',[editable.id])).rows[0].n,1,'Deletion must preserve the stored record and audit.');
+  // A legacy adjustment with both sides remains editable; original snapshot is immutable.
+  const legacy=(await pool.query("select * from cash_entries where origin='LEGACY' and income>0 and outcome>0 limit 1")).rows[0];
+  const legacyChange={activity:'Legacy adjustment clarified',income:legacy.income,outcome:legacy.outcome,version:legacy.version};
+  const legacySnapshot=(await pool.query('select snapshot from cash_imports where id=$1',[legacy.import_id])).rows[0].snapshot;
+  assert.equal((await http(`/api/cash/entries/${legacy.id}`,mc,'PATCH',legacyChange)).status,200);
+  assert.deepEqual((await pool.query('select snapshot from cash_imports where id=$1',[legacy.import_id])).rows[0].snapshot,legacySnapshot);
   await http('/api/admin/cash/access',ac,'PUT',{email:'Manager@example.test',access:'VIEW'});
+  assert.equal((await http(`/api/cash/entries/${legacy.id}`,mc,'PATCH',{...legacyChange,version:2})).status,403);
+  assert.equal((await http(`/api/cash/entries/${legacy.id}`,mc,'DELETE',{version:2,reason:'No access'})).status,403);
   assert.equal((await http('/api/cash/entries',mc,'POST',{...entry,id:randomUUID()})).status,403,'Revocation applies to an already signed-in account.');
   assert.equal((await http('/api/admin/cash/backup',ac,'PUT',{spreadsheet_id:fixture.spreadsheetId,hour_wib:2,enabled:true})).status,409,'Cannot pretend backups are active without credentials.');
 
@@ -158,7 +194,7 @@ try{
     return {data:{}};
   },values:{get:async()=>({data:{values:[marker]}})}}};
   await pool.query('update cash_backup_settings set enabled=true,spreadsheet_id=$1,hour_wib=2',[fixture.spreadsheetId]);
-  const backed=await backupCash(pool,{now:new Date('2026-11-19T20:00:00Z'),sheetsClient:stub});assert(backed.ok);assert.equal(backed.rows,6);assert.equal(batchCount,1);
+  const backed=await backupCash(pool,{now:new Date('2026-11-19T20:00:00Z'),sheetsClient:stub});assert(backed.ok);assert.equal(backed.rows,7);assert.equal(batchCount,1);
   assert((await backupCash(pool,{now:new Date('2026-11-19T21:00:00Z'),sheetsClient:stub})).skipped);assert.equal(batchCount,1);
   const failed={spreadsheets:{...stub.spreadsheets,batchUpdate:async()=>{throw new Error('Provider unreachable');}}};
   await assert.rejects(backupCash(pool,{manual:true,sheetsClient:failed}),/could not be verified/);
@@ -166,7 +202,7 @@ try{
   assert((await backupCash(pool,{manual:true,sheetsClient:stub})).ok,'A failed backup must release its lock and allow retry.');
   assert.deepEqual(await existing(),stable);
   const repeated=await pool.connect();try{await upgrade(repeated)}finally{repeated.release()}
-  assert.equal((await pool.query('select count(*)::int n from cash_entries')).rows[0].n,6);
+  assert.equal((await pool.query('select count(*)::int n from cash_entries')).rows[0].n,7);
 
   if(process.env.CASH_TEST_SNAPSHOT){
     // Optional private source check. The workbook itself is never committed.

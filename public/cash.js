@@ -2,7 +2,13 @@ let cashState={book:null,categories:[],offset:0,sequence:0,entries:[],preview:nu
 const cashMoney=value=>'Rp'+Number(value||0).toLocaleString('id-ID',{minimumFractionDigits:2,maximumFractionDigits:2});
 const cashSelect=(id,label,choices,value)=>adminWorkflowSelect(id,label,'',choices.map(([k,v])=>[esc(k),esc(v)]),esc(value??''));
 const cashTime=value=>value&&Number.isFinite(Date.parse(value))?new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Jakarta',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).format(new Date(value))+' WIB':'—';
-const cashAction=value=>({CREATED:'Entry created',VOIDED:'Entry voided',LEGACY_IMPORTED:'Legacy imported',BOOK_CREATED:'Book created'}[value]||value);
+const cashAction=value=>({CREATED:'Entry created',VOIDED:'Entry voided',UPDATED:'Entry updated',DELETED:'Entry deleted',LEGACY_IMPORTED:'Legacy imported',BOOK_CREATED:'Book created'}[value]||value);
+const cashIcon=(action,id)=>{
+  const paths={open:'<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',edit:'<path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15Z"/>',delete:'<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/>'};
+  const label={open:'Open',edit:'Edit entry',delete:'Delete entry'}[action];
+  return `<button type="button" class="btn ghost cash-icon ${action==='delete'?'cash-delete-icon':''}" data-cash-${action}="${esc(id)}" title="${label}" aria-label="${label}"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[action]}</svg></button>`;
+};
+const cashChanges=a=>a.before_data&&a.after_data&&a.action==='UPDATED'?`<dl class="cash-change-list">${['activity','income','outcome'].filter(k=>a.before_data[k]!==a.after_data[k]).map(k=>`<dt>${esc(k==='activity'?'Activity':k==='income'?'Income':'Outcome')}</dt><dd>${esc(k==='activity'?a.before_data[k]:cashMoney(a.before_data[k]))} → ${esc(k==='activity'?a.after_data[k]:cashMoney(a.after_data[k]))}</dd>`).join('')}</dl>`:'';
 const cashBusy=async(button,label,fn)=>{if(button.disabled)return;const original=button.textContent;button.disabled=true;button.textContent=label;try{await fn()}catch(e){msg(e.message,'err')}finally{button.disabled=false;button.textContent=original}};
 
 $('#emsNav [data-ems-view="home"]').insertAdjacentHTML('afterend','<button type="button" data-ems-view="cash" class="hidden" onclick="emsNavigate(\'cash\')">Cash Tracker</button>');
@@ -48,9 +54,12 @@ async function cashLoadRows(){
   try{
     const data=await api('/api/cash/entries?'+new URLSearchParams({book:cashState.book,offset:cashState.offset,q:$('#cashSearch').value,category:$('#cashCategory')?.value||''}));
     if(sequence!==cashRowsSequence||owner!==currentEmployee?.email||emsView!=='cash')return;
+    if(!data.entries.length&&data.total>0&&cashState.offset>=data.total){cashState.offset=Math.floor((data.total-1)/50)*50;return cashLoadRows()}
     cashState.entries=data.entries;
-    $('#cashRows').innerHTML=data.entries.length?`<div class="table-wrap"><table class="cash-table"><thead><tr><th>Date</th><th>Category</th><th>Activity</th><th>Income</th><th>Outcome</th><th>Balance</th><th></th></tr></thead><tbody>${data.entries.map(e=>`<tr class="${e.voided?'cash-voided':''}"><td>${esc(e.date)}</td><td>${esc(e.category)}</td><td>${esc(e.activity||'—')}<small>${e.origin==='LEGACY'?'Legacy · row '+e.source_row:'EMS'}${e.voided?' · Voided':''}</small></td><td class="money">${cashMoney(e.income)}</td><td class="money">${cashMoney(e.outcome)}</td><td class="money">${cashMoney(e.balance)}</td><td><button class="btn tiny ghost" data-cash-open="${e.id}">Open</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No matching entries.</div>';
+    $('#cashRows').innerHTML=data.entries.length?`<div class="table-wrap"><table class="cash-table"><thead><tr><th>Date</th><th>Category</th><th>Activity</th><th>Income</th><th>Outcome</th><th>Balance</th><th></th></tr></thead><tbody>${data.entries.map(e=>`<tr class="${e.voided?'cash-voided':''}"><td>${esc(e.date)}</td><td>${esc(e.category)}</td><td>${esc(e.activity||'—')}<small>${e.origin==='LEGACY'?'Legacy · row '+e.source_row:'EMS'}${e.voided?' · Voided':''}</small></td><td class="money">${cashMoney(e.income)}</td><td class="money">${cashMoney(e.outcome)}</td><td class="money">${cashMoney(e.balance)}</td><td><div class="cash-row-actions">${cashIcon('open',e.id)}${currentEmployee?.cash_access==='MANAGE'&&!e.voided?cashIcon('edit',e.id)+cashIcon('delete',e.id):''}</div></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No matching entries.</div>';
     $('#cashRows').querySelectorAll('[data-cash-open]').forEach(b=>b.onclick=()=>cashDetail(b.dataset.cashOpen));
+    $('#cashRows').querySelectorAll('[data-cash-edit]').forEach(b=>b.onclick=()=>cashEdit(b.dataset.cashEdit));
+    $('#cashRows').querySelectorAll('[data-cash-delete]').forEach(b=>b.onclick=()=>cashDelete(b.dataset.cashDelete));
     $('#cashPage').textContent=data.total?`${data.offset+1}–${Math.min(data.offset+50,data.total)} of ${data.total}`:'0 entries';
     $('#cashPrevious').disabled=!cashState.offset;$('#cashNext').disabled=data.offset+50>=data.total;
   }catch(e){if(owner===currentEmployee?.email)msg(e.message,'err')}
@@ -76,6 +85,30 @@ function cashEntryModal(){
     await api('/api/cash/entries',{method:'POST',body:JSON.stringify(value)});close();await cashLoad();msg('Cash entry saved.');
   })};
 }
+async function cashEdit(id){
+  const owner=currentEmployee?.email;
+  try{
+    const {entry:e}=await api(`/api/cash/entries/${id}/audit`);
+    if(currentEmployee?.email!==owner||currentEmployee?.cash_access!=='MANAGE'||emsView!=='cash')return;
+    if(e.voided)throw new Error('This entry was deleted or voided.');
+    const {modal,close}=cashDialog('Edit Entry',`<form id="cashEditForm" class="cash-form"><label class="span-2">Activity<textarea name="activity" maxlength="4000" rows="3" required>${esc(e.activity)}</textarea></label><label>Income<input name="income" inputmode="decimal" value="${esc(e.income)}" required></label><label>Outcome<input name="outcome" inputmode="decimal" value="${esc(e.outcome)}" required></label><button class="btn primary" type="submit">Save Changes</button></form>`);
+    modal.querySelector('form').onsubmit=event=>{event.preventDefault();cashBusy(event.target.querySelector('[type=submit]'),'Saving…',async()=>{
+      await api(`/api/cash/entries/${id}`,{method:'PATCH',body:JSON.stringify({...Object.fromEntries(new FormData(event.target)),version:e.version})});close();await cashLoad();msg('Cash entry updated.');
+    })};
+  }catch(e){msg(e.message,'err')}
+}
+async function cashDelete(id){
+  const owner=currentEmployee?.email;
+  try{
+    const {entry:e}=await api(`/api/cash/entries/${id}/audit`);
+    if(currentEmployee?.email!==owner||currentEmployee?.cash_access!=='MANAGE'||emsView!=='cash')return;
+    if(e.voided)throw new Error('This entry was already deleted or voided.');
+    const {modal,close}=cashDialog('Delete Entry',`<p>${esc(e.activity||'—')}</p><p>This entry will be removed from the balance. Its history will remain in Log.</p><form id="cashDeleteForm" class="cash-form"><label class="span-2">Reason<textarea name="reason" maxlength="4000" rows="2" required></textarea></label><button class="btn danger" type="submit">Delete Entry</button></form>`);
+    modal.querySelector('form').onsubmit=event=>{event.preventDefault();cashBusy(event.target.querySelector('[type=submit]'),'Deleting…',async()=>{
+      await api(`/api/cash/entries/${id}`,{method:'DELETE',body:JSON.stringify({reason:event.target.elements.reason.value,version:e.version})});close();await cashLoad();msg('Cash entry deleted.');
+    })};
+  }catch(e){msg(e.message,'err')}
+}
 function cashLog(){
   const owner=currentEmployee?.email;
   const {modal}=cashDialog('Cash Tracker Log','<div id="cashLogRows" aria-live="polite"></div><div class="cash-toolbar cash-pagination"><span id="cashLogPage"></span><button class="btn ghost" id="cashLogPrevious">Previous</button><button class="btn ghost" id="cashLogNext">Next</button></div>');
@@ -86,7 +119,7 @@ function cashLog(){
     try{
       const data=await api('/api/cash/log?offset='+offset);
       if(!modal.isConnected||currentEmployee?.email!==owner||emsView!=='cash')return;
-      modal.querySelector('#cashLogRows').innerHTML=data.logs.map(a=>`<article class="cash-log-item"><div class="cash-log-heading"><strong>${esc(cashAction(a.action))}</strong><time>${esc(cashTime(a.created_at))}</time></div><div>${esc(a.actor_name||a.actor_email)}</div><p>${esc(a.action==='LEGACY_IMPORTED'?`${a.imported_count} legacy rows imported`:a.activity||a.book||'—')}</p>${a.book?`<small>Book: ${esc(a.book)}</small>`:''}${a.record_id||a.entry_id||a.import_id?`<small>Record: ${esc(a.record_id||a.entry_id||a.import_id)}</small>`:''}${a.reason?`<p>${esc(a.reason)}</p>`:''}${a.entry_id?`<button class="btn ghost tiny" data-cash-log-entry="${esc(a.entry_id)}">Open Entry</button>`:''}</article>`).join('')||'<div class="empty">No activity yet.</div>';
+      modal.querySelector('#cashLogRows').innerHTML=data.logs.map(a=>`<article class="cash-log-item"><div class="cash-log-heading"><strong>${esc(cashAction(a.action))}</strong><time>${esc(cashTime(a.created_at))}</time></div><div>${esc(a.actor_name||a.actor_email)}</div><p>${esc(a.action==='LEGACY_IMPORTED'?`${a.imported_count} legacy rows imported`:a.activity||a.book||'—')}</p>${a.book?`<small>Book: ${esc(a.book)}</small>`:''}${a.record_id||a.entry_id||a.import_id?`<small>Record: ${esc(a.record_id||a.entry_id||a.import_id)}</small>`:''}${cashChanges({...a,before_data:a.before_values,after_data:a.after_values})}${a.reason?`<p>${esc(a.reason)}</p>`:''}${a.entry_id?`<button class="btn ghost tiny" data-cash-log-entry="${esc(a.entry_id)}">Open Entry</button>`:''}</article>`).join('')||'<div class="empty">No activity yet.</div>';
       modal.querySelectorAll('[data-cash-log-entry]').forEach(b=>b.onclick=()=>cashDetail(b.dataset.cashLogEntry));
       modal.querySelector('#cashLogPage').textContent=data.total?`${data.offset+1}–${Math.min(data.offset+data.limit,data.total)} of ${data.total}`:'0 activities';
       previous.disabled=offset===0;next.disabled=offset+data.limit>=data.total;
@@ -99,8 +132,9 @@ async function cashDetail(id){
   try{
     const data=await api(`/api/cash/entries/${id}/audit`),e=data.entry;
     if(currentEmployee?.email!==owner||emsView!=='cash')return;
-    const {modal,close}=cashDialog('Cash Entry',`<dl class="cash-detail"><dt>${e.origin==='LEGACY'?'Imported by':'Created by'}</dt><dd>${esc(e.creator_name||e.created_by||'—')}</dd><dt>Recorded at</dt><dd>${esc(cashTime(e.created_at))}</dd><dt>Activity</dt><dd>${esc(e.activity||'—')}</dd><dt>Category</dt><dd>${esc(e.category)}</dd><dt>Income</dt><dd>${cashMoney(e.income)}</dd><dt>Outcome</dt><dd>${cashMoney(e.outcome)}</dd><dt>Notes</dt><dd>${esc(e.notes||'—')}</dd><dt>Source</dt><dd>${e.origin==='LEGACY'?'Legacy · row '+e.source_row:'EMS'}</dd></dl><h3>Audit Trail</h3>${data.audit.map(a=>`<div class="cash-audit"><strong>${esc(cashAction(a.action))}</strong><span>${esc(a.actor_name||a.actor_email)} · ${esc(cashTime(a.created_at))}</span><p>${esc(a.reason)}</p></div>`).join('')||'<p>Imported from the legacy spreadsheet.</p>'}${!e.voided&&currentEmployee.cash_access==='MANAGE'?'<form id="cashVoidForm"><label>Correction Reason<textarea name="reason" rows="2" maxlength="4000" required></textarea></label><button class="btn danger" type="submit">Void Entry</button></form>':''}`);
-    modal.querySelector('#cashVoidForm')?.addEventListener('submit',event=>{event.preventDefault();cashBusy(event.target.querySelector('button'),'Saving…',async()=>{await api(`/api/cash/entries/${id}/void`,{method:'POST',body:JSON.stringify({reason:event.target.elements.reason.value,version:e.version})});close();await cashLoad();msg('Entry voided. Add a new entry for the corrected amount.');})});
+    const {modal,close}=cashDialog('Cash Entry',`<dl class="cash-detail"><dt>${e.origin==='LEGACY'?'Imported by':'Created by'}</dt><dd>${esc(e.creator_name||e.created_by||'—')}</dd><dt>Recorded at</dt><dd>${esc(cashTime(e.created_at))}</dd><dt>Activity</dt><dd>${esc(e.activity||'—')}</dd><dt>Category</dt><dd>${esc(e.category)}</dd><dt>Income</dt><dd>${cashMoney(e.income)}</dd><dt>Outcome</dt><dd>${cashMoney(e.outcome)}</dd><dt>Notes</dt><dd>${esc(e.notes||'—')}</dd><dt>Source</dt><dd>${e.origin==='LEGACY'?'Legacy · row '+e.source_row:'EMS'}</dd></dl><h3>Audit Trail</h3>${data.audit.map(a=>`<div class="cash-audit"><strong>${esc(cashAction(a.action))}</strong><span>${esc(a.actor_name||a.actor_email)} · ${esc(cashTime(a.created_at))}</span><p>${esc(a.reason)}</p>${cashChanges(a)}</div>`).join('')||'<p>Imported from the legacy spreadsheet.</p>'}${!e.voided&&currentEmployee.cash_access==='MANAGE'?`<div class="cash-row-actions">${cashIcon('edit',id)}${cashIcon('delete',id)}</div>`:''}`);
+    modal.querySelector('[data-cash-edit]')?.addEventListener('click',()=>cashEdit(id));
+    modal.querySelector('[data-cash-delete]')?.addEventListener('click',()=>cashDelete(id));
   }catch(e){msg(e.message,'err')}
 }
 async function cashAdminLoad(){

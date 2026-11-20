@@ -14,7 +14,7 @@ This release is based on `feature/dashboard-drafts` at `c509d95`. It does not de
 
 Admin grants No Access, View, or Manage in User Management or Cash Settings. Every account starts with No Access, including Admin. Administrative setup is separate from viewing or entering cash transactions.
 
-Cash Tracker has its own dashboard and annual books, category filtering, search, pagination and running balances. New entries use either income or outcome and two decimal places. Corrections void an entry with a required reason; the original entry and audit remain. Save retries reuse the same entry ID. No ERF/ECF record is created by Cash Tracker.
+Cash Tracker has its own dashboard and annual books, category filtering, search, pagination and running balances. New entries use either income or outcome and two decimal places. Manage users can edit activity, income and outcome, or delete entries using icon actions. Edit saves before/after values with the actor and timestamp. Delete requires a reason and marks the stored entry voided, removing it from active lists and all balance/chart totals while retaining it in Log, detail audit and backup. Both operations check the record version under a row lock, so simultaneous or stale changes are rejected. Dates, categories, book, original creator and import provenance are not changed by edit. Existing dual-sided legacy adjustments can retain both monetary sides; opening entries remain income-only. Save retries reuse the same entry ID. No ERF/ECF record is created by Cash Tracker.
 
 Migration `020-cash-tracker.sql` adds only cash tables/indexes. It never deletes or updates existing employees, passwords, roles, requests, items, actions, settings, or counters. The guarded upgrader checks the complete contents of pre-existing tables and existing sequences before committing; `--dry-run` rolls back.
 
@@ -80,3 +80,20 @@ Adding a Google credential mount is a separate reviewed runtime change. The rele
 ## Verification
 
 CI covers workflow transitions and concurrent decisions, checker/reviewer separation (including old records and manual takeover), active/approved visibility, login, existing upgrades, drafts, PDF wrapping, cash migration and import preservation, permissions/revocation, retry-safe saves, corrections/audit, exact balances and Google backup behavior using a stub. Browser checks cover desktop, 390 px and 320 px layouts, custom selects and mobile actions. Docker CI exercises rehearsal, successful cutover, injected-failure rollback, and refusing rollback after new data.
+
+## Configure the existing Google Sheets backup
+
+Verified workbook: https://docs.google.com/spreadsheets/d/13XAixuR71DH3SMZuZ1EGmdnTb49WKHRahmwfB2Kxekc/edit
+
+The **Spreadsheet ID** field takes `13XAixuR71DH3SMZuZ1EGmdnTb49WKHRahmwfB2Kxekc` only. This is the segment between `/d/` and `/edit`, not a tab's numeric `gid`, Apps Script deployment ID, password or credential. At inspection the workbook still had only 2023, 2024, 2025, 2026 and Summary, not the four EMS-owned export tabs. That alone does not prove the server's credential state.
+
+1. In a company-controlled Google Cloud project, enable **Google Sheets API**. Enable Drive API too only if using `scripts/cash-snapshot.js` for a new source capture; scheduled export does not call Drive.
+2. Create a service account for EMS backups. No project Owner/Editor role or domain-wide delegation is needed for sharing this particular workbook. If company policy permits JSON keys, create one under the service account's Keys → Add key → Create new key → JSON. Do not bypass an organization policy that disables keys.
+3. Share the exact workbook with the JSON's `client_email` as **Editor**. Keep normal spreadsheet access restricted. Store the JSON privately on the VM outside the Git/build directory, for example `/srv/metrotech/secrets/ems-cash-google.json`, with permissions readable only by the app runtime and administrators. Do not paste the private key in chat or `.env`.
+4. Mount that file read-only in app at `/run/secrets/ems-cash-google.json` and set `CASH_GOOGLE_KEY_FILE=/run/secrets/ems-cash-google.json`. Persist this in the production Compose configuration/override used for subsequent deployments. Recreate **app only**, preserving the actual running environment, PDF/signature mounts, image and networks. The current guarded release helpers deliberately reject additional mounts: update/review those helpers before a subsequent rollout; do not remove the credential mount to get around the check. Do not run a generic Compose recreate against stale `.env` settings.
+5. In **Cash Settings → Daily Backup**, enter the Spreadsheet ID above and hour **2** (02:00 WIB). Initially leave the Daily Backup checkbox off and Save Settings. Click **Back Up Now** and require an `OK` run plus the four EMS tabs in this workbook. `Google credential: Configured` only means the environment path was set; it is not proof that the file, sharing or API access works.
+6. Enable Daily Backup and Save Settings. No separate cron is needed: the app checks every minute, starts at/after the selected WIB hour, skips an already successful day and retries a failed attempt after ten minutes. The app must stay running. Verify another successful scheduled run the next day.
+
+Only `EMS Cash Books`, `EMS Cash Entries`, `EMS Cash Audit` and `EMS Cash Backup` are replaced on each export. Original annual tabs remain legacy, and edits there are not synchronized back into EMS. Exports include deleted/voided entries and before/after audit values. These four tabs represent the latest successful snapshot, not a new dated archive each day; maintain normal VM/database backups as well.
+
+Google references: https://developers.google.com/workspace/guides/create-credentials and https://developers.google.com/workspace/guides/enable-apis . No real credential or external Google write is included in automated tests.

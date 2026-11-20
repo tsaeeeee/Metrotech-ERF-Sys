@@ -1,4 +1,4 @@
-import {CASH_CATEGORIES,entryInput,inspectSnapshot,fail,text,amount} from './cash-model.js';
+import {CASH_CATEGORIES,entryInput,inspectSnapshot,fail,text,amount,cents} from './cash-model.js';
 import {backupCash,backupStatus,startCashBackupScheduler} from './cash-sheets.js';
 
 const uuid=value=>{if(!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(String(value)))fail('Invalid record ID.');return value;};
@@ -72,7 +72,7 @@ export function installCashRoutes(app,{pool,requireUser,requireAdmin,upload}){
   app.get('/api/cash/entries',requireUser,permit(false),route(async(req,res)=>{
     const bookId=uuid(req.query.book),offset=Number(req.query.offset||0),query=text(req.query.q,200),category=text(req.query.category,120);
     if(!Number.isSafeInteger(offset)||offset<0)fail('Invalid page.');
-    const args=[bookId,query,category];const where="($2='' or concat_ws(' ',activity,category,notes) ilike '%'||$2||'%') and ($3='' or category=$3)";
+    const args=[bookId,query,category];const where="not voided and ($2='' or concat_ws(' ',activity,category,notes) ilike '%'||$2||'%') and ($3='' or category=$3)";
     const total=(await pool.query(`select count(*)::int total from cash_entries where book_id=$1 and ${where}`,args)).rows[0].total;
     const rows=(await pool.query(`with ledger as(select e.*,e.entry_date::text date,
       b.opening_balance+sum(case when voided then 0 else income-outcome end) over(order by e.entry_date,e.created_at,e.source_row nulls last,e.id) as balance
@@ -83,11 +83,13 @@ export function installCashRoutes(app,{pool,requireUser,requireAdmin,upload}){
   app.get('/api/cash/log',requireUser,permit(false),route(async(req,res)=>{
     const offset=Number(req.query.offset||0);
     if(!Number.isSafeInteger(offset)||offset<0)fail('Invalid page.');
-    const where="a.action in ('CREATED','VOIDED','LEGACY_IMPORTED','BOOK_CREATED')";
+    const where="a.action in ('CREATED','UPDATED','DELETED','VOIDED','LEGACY_IMPORTED','BOOK_CREATED')";
     const total=(await pool.query(`select count(*)::int total from cash_audit a where ${where}`)).rows[0].total;
     const logs=(await pool.query(`select a.id::text,a.action,a.entry_id,a.reason,a.created_at,a.actor_email,
+      case when a.action='UPDATED' then jsonb_build_object('activity',a.before_data->>'activity','income',a.before_data->>'income','outcome',a.before_data->>'outcome') end before_values,
+      case when a.action='UPDATED' then jsonb_build_object('activity',a.after_data->>'activity','income',a.after_data->>'income','outcome',a.after_data->>'outcome') end after_values,
       coalesce(nullif(u.name,''),a.actor_email) actor_name,
-      coalesce(e.activity,'') activity,coalesce(b.label,a.after_data->>'label','') book,
+      coalesce(a.after_data->>'activity',e.activity,'') activity,coalesce(b.label,a.after_data->>'label','') book,
       case when a.action='LEGACY_IMPORTED' then a.after_data->>'count' end imported_count,
       case when a.action='LEGACY_IMPORTED' then a.after_data->>'batch' end import_id,
       coalesce(a.entry_id::text,a.after_data->>'batch',a.after_data->>'id') record_id
@@ -114,6 +116,34 @@ export function installCashRoutes(app,{pool,requireUser,requireAdmin,upload}){
       }
       await audit(client,req.employee.email,'CREATED',row.id,'',null,row);return row;
     });res.status(201).json(result);
+  }));
+  app.patch('/api/cash/entries/:id',requireUser,permit(true),route(async(req,res)=>{
+    const activity=text(req.body.activity),income=amount(req.body.income),outcome=amount(req.body.outcome);
+    if(!activity||cents(income)+cents(outcome)===0n)fail('Activity and a positive amount are required.');
+    const result=await transaction(pool,async client=>{
+      await requireCashWrite(client,req.employee.email);
+      const before=(await client.query('select * from cash_entries where id=$1 for update',[uuid(req.params.id)])).rows[0];
+      if(!before)fail('Entry not found.',404);
+      if(before.voided||before.version!==req.body.version)fail('Entry changed. Refresh before editing.',409);
+      if(before.kind==='OPENING'&&cents(outcome)>0n)fail('Opening entries must use income only.');
+      if(cents(income)>0n&&cents(outcome)>0n&&!(before.origin==='LEGACY'&&cents(before.income)>0n&&cents(before.outcome)>0n))fail('Choose either income or outcome.');
+      if(before.activity===activity&&before.income===income&&before.outcome===outcome)return before;
+      const row=(await client.query('update cash_entries set activity=$2,income=$3,outcome=$4,version=version+1,updated_at=now() where id=$1 returning *',[before.id,activity,income,outcome])).rows[0];
+      await audit(client,req.employee.email,'UPDATED',row.id,'',before,row);return row;
+    });res.json(result);
+  }));
+  // Keep the previous void endpoint compatible; deletion retains the audit row
+  // and excludes the entry from the active ledger and balance calculations.
+  app.delete('/api/cash/entries/:id',requireUser,permit(true),route(async(req,res)=>{
+    const reason=text(req.body.reason);if(!reason)fail('A deletion reason is required.');
+    const result=await transaction(pool,async client=>{
+      await requireCashWrite(client,req.employee.email);
+      const before=(await client.query('select * from cash_entries where id=$1 for update',[uuid(req.params.id)])).rows[0];
+      if(!before)fail('Entry not found.',404);
+      if(before.voided||before.version!==req.body.version)fail('Entry changed. Refresh before deleting.',409);
+      const row=(await client.query('update cash_entries set voided=true,version=version+1,updated_at=now() where id=$1 returning *',[before.id])).rows[0];
+      await audit(client,req.employee.email,'DELETED',row.id,reason,before,row);return row;
+    });res.json(result);
   }));
   app.post('/api/cash/entries/:id/void',requireUser,permit(true),route(async(req,res)=>{
     const reason=text(req.body.reason);if(!reason)fail('A correction reason is required.');

@@ -109,6 +109,7 @@ async function session(user,{signedIn=true,dashboard={totals:[],trend:[],categor
     else if(path==='/api/cash/books')data={books:[{id:'11111111-1111-4111-8111-111111111111',label:'2026',year:2026}],categories:['Cash Deposit','Software & Subscription','Tools']};
     else if(path==='/api/cash/overview')data={totals:{opening:'0.00',income:'2000000.10',outcome:'165726.00',balance:'1834274.10'},trend:[{month:'2026-10',income:'2000000.10',outcome:'165726.00'}],categories:[{category:'Software & Subscription',amount:'165726.00'}]};
     else if(path==='/api/cash/entries'&&method==='GET')data={entries:[{id:'22222222-2222-4222-8222-222222222222',date:'2026-11-18',category:'Software & Subscription',activity:'Domain renewal & subscriptions '+('long detail '.repeat(12)),income:'0.00',outcome:'165726.00',balance:'1834274.10',origin:'LEGACY',source_row:104}],total:1,offset:0,limit:50};
+    else if(path==='/api/cash/entries/22222222-2222-4222-8222-222222222222'&&['PATCH','DELETE'].includes(method))data={ok:true};
     else if(path==='/api/cash/entries'&&method==='POST'){status=201;data={...JSON.parse(request.postData()),version:1};}
     else if(path==='/api/cash/entries/22222222-2222-4222-8222-222222222222/audit')data={entry:{id:'22222222-2222-4222-8222-222222222222',category:'Software & Subscription',activity:'Domain renewal',notes:'Source note',income:'0.00',outcome:'165726.00',origin:'LEGACY',source_row:104,version:1},audit:[]};
     else if(path==='/api/admin/cash/access')data={users:[{email:'cash@example.test',name:'Cash Manager',access:'MANAGE',active:true}]};
@@ -795,7 +796,25 @@ try{
       assert(await cp.locator('#cashLogRows').getByRole('button',{name:'Open Entry'}).isVisible());
       if(process.env.EMS_UI_SCREENSHOTS)await cp.screenshot({path:`${process.env.EMS_UI_SCREENSHOTS}/cash-log-${viewport.width}.png`});
       await cp.locator('#cashModal [data-close]').click();
+      assert.equal(await cp.locator('#cashRows [data-cash-edit]').count(),grant==='MANAGE'?1:0);
+      assert.equal(await cp.locator('#cashRows [data-cash-delete]').count(),grant==='MANAGE'?1:0);
       if(grant==='MANAGE'){
+        const editButton=cp.locator('#cashRows [data-cash-edit]');
+        assert.equal(await editButton.innerText(),'');assert.equal(await editButton.getAttribute('aria-label'),'Edit entry');
+        await editButton.click();await cp.locator('#cashEditForm').waitFor();
+        await cp.locator('#cashEditForm [name=activity]').fill('Edited activity');
+        await cp.locator('#cashEditForm [name=outcome]').fill('500.25');
+        if(process.env.EMS_UI_SCREENSHOTS)await cp.screenshot({path:`${process.env.EMS_UI_SCREENSHOTS}/cash-edit-${viewport.width}.png`});
+        await cp.locator('#cashEditForm [type=submit]').click();await cp.locator('#cashModal').waitFor({state:'detached'});
+        const patched=cash.writes.filter(w=>w.method==='PATCH'&&w.path.includes('/api/cash/entries/')).at(-1);
+        assert.equal(JSON.parse(patched.body).outcome,'500.25');assert.equal(JSON.parse(patched.body).version,1);
+        await cp.locator('#cashRows [data-cash-delete]').click();await cp.locator('#cashDeleteForm').waitFor();
+        const writesBefore=cash.writes.length;
+        await cp.locator('#cashDeleteForm [type=submit]').click();assert.equal(cash.writes.length,writesBefore,'Reason is required before delete.');
+        await cp.locator('#cashDeleteForm [name=reason]').fill('Duplicate record');
+        if(process.env.EMS_UI_SCREENSHOTS)await cp.screenshot({path:`${process.env.EMS_UI_SCREENSHOTS}/cash-delete-${viewport.width}.png`});
+        await cp.locator('#cashDeleteForm [type=submit]').click();await cp.locator('#cashModal').waitFor({state:'detached'});
+        const deleted=cash.writes.filter(w=>w.method==='DELETE').at(-1);assert.equal(JSON.parse(deleted.body).reason,'Duplicate record');
         await cp.locator('#cashNew').click();await cp.locator('#cashEntryForm').waitFor();
         await cp.locator('#cashEntryCategoryButton').click();
         await cp.locator('#cashEntryCategoryMenu [data-value="Software & Subscription"]').click();
@@ -811,7 +830,7 @@ try{
       }
     }
     await cp.setViewportSize({width:1440,height:1000});await cp.locator('#cashRows').getByRole('button',{name:'Open',exact:true}).click();
-    await cp.locator('#cashModal').waitFor();assert.equal(await cp.locator('#cashVoidForm').isVisible(),grant==='MANAGE');
+    await cp.locator('#cashModal').waitFor();assert.equal(await cp.locator('#cashModal [data-cash-edit]').count(),grant==='MANAGE'?1:0);
     await cp.locator('#cashModal [data-close]').click();
     await cp.evaluate(()=>logout());assert.equal(await cp.locator('#cashRows').innerText(),'');
     await cash.context.close();

@@ -41,3 +41,10 @@
 .cash-log-item small{display:block;margin:6px 0}.cash-log-item p{white-space:pre-wrap;margin:8px 0}
 
 @media(max-width:700px){#cashImportForm .cash-file-picker{flex-basis:100%}}
+
+.cash-row-actions{display:flex;gap:6px;flex-wrap:nowrap}
+.ems-theme .cash-icon{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;padding:0;flex:none}
+.ems-theme .cash-delete-icon{color:#b42318}.cash-icon svg{pointer-events:none}
+.cash-change-list{display:grid;grid-template-columns:70px minmax(0,1fr);gap:8px;font-size:12px}
+.cash-change-list dt{color:#64748b}.cash-change-list dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:700px){.ems-theme .cash-icon{width:44px;height:44px}}
