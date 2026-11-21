@@ -4,12 +4,12 @@ async function emsLoadDashboardRequests(){
   $('#decisionHistoryTable').classList.add('hidden');
   $('#decisionHistoryEmpty').classList.remove('hidden');
   $('#decisionHistoryEmpty').textContent='Loading…';
-  $('#emsHistoryFilterLabel').textContent=`${filter.formType} · ${filter.state==='progress'?'In Progress':'Approved'}`;
+  $('#emsHistoryFilterLabel').textContent=`${filter.formType==='ALL'?'ERF / ECF':filter.formType} · ${{progress:'In Progress',active:'In Progress',action:'Needs My Action',approved:'Approved'}[filter.state]}`;
   $('#emsHistoryPage').textContent='';
   $('#emsHistoryPrevious').disabled=true;$('#emsHistoryNext').disabled=true;
   try{
     const data=await api('/api/ems/dashboard/requests?'+new URLSearchParams(filter));
-    if(sequence!==emsHistoryLoad||currentEmployee?.email!==owner||emsView!=='history')return;
+    if(sequence!==emsHistoryLoad||currentEmployee?.email!==owner||!['history','requests'].includes(emsView))return;
     $('#decisionHistoryEmpty').textContent='No matching requests.';
     renderRequests(data.requests,'decisionHistoryTable','decisionHistoryBody','decisionHistoryEmpty');
     $('#emsHistoryPage').textContent=data.total?`${data.offset+1}–${Math.min(data.offset+data.requests.length,data.total)} of ${data.total}`:'0 requests';
@@ -19,7 +19,7 @@ async function emsLoadDashboardRequests(){
 }
 function emsHistoryPage(direction){
   if(!emsDashboardFilter)return;
-  emsNavigate('history',{...emsDashboardFilter,offset:Math.max(0,emsDashboardFilter.offset+direction*50)});
+  emsNavigate(emsView,{...emsDashboardFilter,offset:Math.max(0,emsDashboardFilter.offset+direction*50)});
 }
 
 function emsDraftStatus(){
@@ -147,5 +147,3 @@ async function emsDeleteDraft(id,version,button){
 }
 
 // Start only after every navigation/submission extension is available.
-loadAuthMode();
-loadMe();

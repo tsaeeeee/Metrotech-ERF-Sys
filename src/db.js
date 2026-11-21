@@ -1,3 +1,4 @@
+import {saveCashAccess} from './cash.js';
 import {normalizeWorkflowOptions,buildWorkflowPlan,annotateProgress} from './workflow-policy.js';
 import {hasRole,normalizeWorkflowRoles,sameEmail,takeoverRole} from './access.js';
 import pg from 'pg';
@@ -107,7 +108,8 @@ export async function listManagedEmployees() {
   const {rows}=await pool.query(
     `select email,name,employee_id,department,location,division,role,workflow_roles,workflow_options,active,username,must_change_password,must_upload_signature,
        (coalesce(signature_file,'')<>'') as has_signature,
-       (select ecf_role from admin_ecf_roles a where a.email=employees.email) as "ecfRole"
+       (select ecf_role from admin_ecf_roles a where a.email=employees.email) as "ecfRole",
+       coalesce((select access from cash_access ca where ca.employee_email=employees.email),'NONE') as cash_access
      from employees
      where role<>'ADMIN'
      order by active desc,name`
@@ -221,7 +223,7 @@ async function reassignPendingReviewerTx(client,email) {
   return {count:pending.length,replacement};
 }
 
-export async function createManagedEmployee(data) {
+export async function createManagedEmployee(data,actorEmail) {
   const workflowRoles=data.workflowRoles===undefined?null:normalizeWorkflowRoles(data.workflowRoles);
   const role=validateManagedRole(data.role||'NONE');
   const required=['name','email','username','password','employeeId','department','location','division'];
@@ -250,6 +252,7 @@ export async function createManagedEmployee(data) {
         role,String(data.username).trim(),String(data.password)
       ]
     );
+    if(data.cashAccess!==undefined){if(!actorEmail)throw Object.assign(new Error('An administrator is required to change cash access.'),{status:403});await saveCashAccess(client,rows[0].email,data.cashAccess,actorEmail);}
     if(workflowRoles){await persistWorkflowRolesTx(client,rows[0].email,workflowRoles);rows[0].workflow_roles=workflowRoles;}
     if(data.workflowOptions!==undefined){
       const options=normalizeWorkflowOptions(data.workflowOptions,workflowRoles||{ERF:[role],ECF:[]});
@@ -267,7 +270,7 @@ export async function createManagedEmployee(data) {
   }
 }
 
-export async function updateManagedEmployee(email,data) {
+export async function updateManagedEmployee(email,data,actorEmail) {
   const workflowRoles=data.workflowRoles===undefined?null:normalizeWorkflowRoles(data.workflowRoles);
   const role=validateManagedRole(data.role||'NONE');
   const required=['name','username','employeeId','department','location','division'];
@@ -336,6 +339,7 @@ export async function updateManagedEmployee(email,data) {
         nextActive,String(data.password||'')
       ]
     );
+    if(data.cashAccess!==undefined){if(!actorEmail)throw Object.assign(new Error('An administrator is required to change cash access.'),{status:403});await saveCashAccess(client,rows[0].email,data.cashAccess,actorEmail);}
     if(workflowRoles){await persistWorkflowRolesTx(client,email,workflowRoles);rows[0].workflow_roles=workflowRoles;}
     const options=normalizeWorkflowOptions(data.workflowOptions===undefined?current.workflow_options:data.workflowOptions,
       workflowRoles||current.workflow_roles||{ERF:[role],ECF:[]});
@@ -409,7 +413,9 @@ export async function setManagedEmployeeActive(email,active) {
 }
 
 export async function listRequestsForEmployee(employee) {
-  return listMyRequests(employee);
+  return (await pool.query(`select r.* from requests r where lower(r.requester_email)=lower($1)
+    and employee_has_workflow_role($1,r.form_type,'REQUESTOR') and r.status<>'APPROVED'
+    order by r.updated_at desc limit 100`,[employee.email])).rows;
 }
 
 export async function getEcfRole(email){
@@ -426,18 +432,14 @@ export async function listTasksForEmployee(employee){
      from requests r left join ecf_details d on d.request_id=r.id
      where (r.status='PENDING_APPROVAL' or lower(r.requester_email)<>lower($1)) and (
        (r.status='PENDING_CHECK' and lower(d.checker_email)=lower($1) and employee_has_workflow_role($1,r.form_type,'CHECKER'))
-       or (r.status='PENDING_REVIEW' and request_review_available(r.workflow_plan,r.reviewer_email,$1) and employee_has_workflow_role($1,r.form_type,'REVIEWER'))
+       or (r.status='PENDING_REVIEW' and not exists(select 1 from workflow_actions ca where ca.request_id=r.id and ca.revision=r.revision and ca.action='CHECK_APPROVED' and lower(ca.actor_email)=lower($1)) and request_review_available(r.workflow_plan,r.reviewer_email,$1) and employee_has_workflow_role($1,r.form_type,'REVIEWER'))
        or (r.status='PENDING_APPROVAL' and lower(r.approver_email)=lower($1) and employee_has_workflow_role($1,r.form_type,'APPROVER')))
      order by r.updated_at asc limit 100`,[employee.email]);
   return rows;
 }
 
 export async function listMyRequests(employee){
-  const {rows}=await pool.query(
-    `select r.* from requests r where lower(r.requester_email)=lower($1)
-       and employee_has_workflow_role($1,r.form_type,'REQUESTOR')
-     order by r.updated_at desc limit 100`,[employee.email]);
-  return rows;
+  return (await getDashboardRequests(employee,{formType:'ALL',state:'active'})).requests;
 }
 
 // Assigned participants can track progress from submission; past actors retain module-scoped history.
@@ -462,7 +464,7 @@ export async function hasDecisionHistory(requestId,employee){
   return (await pool.query(`select exists(select 1 from requests r where r.id=$2 and ${historyScope()}) as participated`,[employee.email,requestId])).rows[0].participated;
 }
 export async function listDecisionHistory(employee){
-  // Progress includes current tasks too; only My Tasks determines whose turn it is.
+  // Approved records remain available after leaving the active request list.
   return (await pool.query(`select r.*,d.checker_email,
       case r.status when 'PENDING_CHECK' then 'Checker' when 'PENDING_REVIEW' then 'Reviewer'
         when 'PENDING_APPROVAL' then 'Approver' end as waiting_for_role,
@@ -473,9 +475,19 @@ export async function listDecisionHistory(employee){
     left join employees c on lower(c.email)=lower(d.checker_email)
     left join employees v on lower(v.email)=lower(r.reviewer_email)
     left join employees p on lower(p.email)=lower(r.approver_email)
-    where ${historyScope()} order by r.updated_at desc limit 100`,[employee.email])).rows.map(annotateProgress);
+    where ${historyScope()} and r.status='APPROVED' order by r.updated_at desc limit 100`,[employee.email])).rows.map(annotateProgress);
 }
 
+function actionScope(employee){
+  if(employee.role==='ADMIN')return 'false';
+  return `(r.status in ('CHECK_REJECTED','REVIEW_REJECTED','APPROVAL_REJECTED','RECALLED') and lower(r.requester_email)=lower($1)
+    and employee_has_workflow_role($1,r.form_type,'REQUESTOR')) or
+    ((r.status='PENDING_APPROVAL' or lower(r.requester_email)<>lower($1)) and (
+      (r.status='PENDING_CHECK' and exists(select 1 from ecf_details d where d.request_id=r.id and lower(d.checker_email)=lower($1)) and employee_has_workflow_role($1,r.form_type,'CHECKER')) or
+      (r.status='PENDING_REVIEW' and employee_has_workflow_role($1,r.form_type,'REVIEWER') and request_review_available(r.workflow_plan,r.reviewer_email,$1)
+       and not exists(select 1 from workflow_actions a where a.request_id=r.id and a.revision=r.revision and a.action='CHECK_APPROVED' and lower(a.actor_email)=lower($1))) or
+      (r.status='PENDING_APPROVAL' and lower(r.approver_email)=lower($1) and employee_has_workflow_role($1,r.form_type,'APPROVER'))))`;
+}
 function dashboardScope(employee){
   return employee.role==='ADMIN'?'true':`(${historyScope()} or
     (lower(r.reviewer_email)=lower($1) and employee_has_workflow_role($1,r.form_type,'REVIEWER')) or
@@ -508,17 +520,18 @@ export async function getEmsDashboard(employee){
 }
 
 export async function getDashboardRequests(employee,{formType,state,offset=0}){
-  if(!['ERF','ECF'].includes(formType)||!['progress','approved'].includes(state)||!Number.isSafeInteger(offset)||offset<0)
+  if(!['ALL','ERF','ECF'].includes(formType)||!['active','action','progress','approved'].includes(state)||!Number.isSafeInteger(offset)||offset<0)
     throw Object.assign(new Error('Invalid dashboard filter.'),{status:400});
   const args=employee.role==='ADMIN'?[]:[employee.email];
   const formParam=`$${args.push(formType)}`;
-  const states=state==='approved'?['APPROVED']:['PENDING_CHECK','PENDING_REVIEW','PENDING_APPROVAL'];
+  const states=state==='approved'?['APPROVED']:['PENDING_CHECK','PENDING_REVIEW','PENDING_APPROVAL',...(['active','action'].includes(state)?['CHECK_REJECTED','REVIEW_REJECTED','APPROVAL_REJECTED','RECALLED']:[])];
   const stateParam=`$${args.push(states)}`;
-  const where=`${dashboardScope(employee)} and (r.form_type='ECF' or r.request_type='EXPENSE') and r.form_type=${formParam} and r.status=any(${stateParam}::text[])`;
+  const where=`${dashboardScope(employee)} and (r.form_type='ECF' or r.request_type='EXPENSE') and (${formParam}='ALL' or r.form_type=${formParam}) and r.status=any(${stateParam}::text[])`+ (state==='action'?` and (${actionScope(employee)})`:'');
   const count=await pool.query(`select count(*)::integer as total from requests r where ${where}`,args);
   const offsetParam=`$${args.push(offset)}`;
   const rows=await pool.query(`select r.id,r.ref_no,r.form_type,r.requester_email,r.employee_name,r.request_date,
       r.total,r.status,r.revision,r.workflow_plan,r.reviewer_email,r.approver_email,d.checker_email,
+      (select ca.actor_email from workflow_actions ca where ca.request_id=r.id and ca.revision=r.revision and ca.action='CHECK_APPROVED' order by ca.id desc limit 1) as checked_by_email,
       case r.status when 'PENDING_CHECK' then 'Checker' when 'PENDING_REVIEW' then 'Reviewer'
         when 'PENDING_APPROVAL' then 'Approver' end as waiting_for_role,
       case r.status when 'PENDING_CHECK' then coalesce(c.name,d.checker_email)
@@ -685,6 +698,7 @@ export async function getRequestDetail(id) {
     `select revision,actor_email,actor_name,actor_role,action,from_status,to_status,reason,created_at
      from workflow_actions where request_id=$1 order by created_at,id`, [id]
   )).rows;
+  request.checked_by_email=actions.find(a=>Number(a.revision)===Number(request.revision)&&a.action==='CHECK_APPROVED')?.actor_email||null;
   annotateProgress(request);
   request.decision_notes=actions.filter(a=>Number(a.revision)===Number(request.revision)&&a.reason&&['CHECK_APPROVED','CHECK_REJECTED','REVIEW_APPROVED','REVIEW_REJECTED','FINAL_APPROVED','APPROVAL_REJECTED'].includes(a.action));
   return {request,items,actions};
@@ -715,6 +729,8 @@ export async function transitionRequest(id, actor, stage, decision, reason='',ex
     if(!approve&&!reject) throw Object.assign(new Error('Decision must be APPROVE or REJECT.'),{status:400});
     if(reject&&!String(reason).trim()) throw Object.assign(new Error('Rejection reason is required.'),{status:400});
 
+    const checked=(await client.query("select actor_email from workflow_actions where request_id=$1 and revision=$2 and action='CHECK_APPROVED' order by id desc limit 1",[id,request.revision])).rows[0]?.actor_email;
+    if(stage==='REVIEW'&&sameEmail(checked,actor.email))throw Object.assign(new Error('You checked this claim. A different Reviewer must review it.'),{status:403});
     let expected,toStatus,action,ownerEmail;
     if(stage==='CHECK'){
       if(request.form_type!=='ECF') throw Object.assign(new Error('Only ECF has a Checker stage.'),{status:400});
@@ -725,6 +741,13 @@ export async function transitionRequest(id, actor, stage, decision, reason='',ex
       if(String(actor.email).toLowerCase()===String(request.requester_email).toLowerCase())
         throw Object.assign(new Error('You cannot check your own claim.'),{status:403});
       await requireWorkflowRoleTx(client,actor,request.form_type,'CHECKER');
+      if(approve){
+        const plan=request.workflow_plan;
+        const candidates=plan?[...(plan.reviewTakenOver?[{email:request.reviewer_email}]:plan.reviewers),...plan.secondaryReviewers]:[{email:request.reviewer_email}];
+        const eligible=candidates.map(x=>x.email).filter(x=>x&&!sameEmail(x,actor.email)&&!sameEmail(x,request.requester_email));
+        const found=await client.query("select 1 from employees where lower(email)=any($1::text[]) and employee_has_workflow_role(email,'ECF','REVIEWER') limit 1",[eligible.map(x=>x.toLowerCase())]);
+        if(!found.rowCount)throw Object.assign(new Error('No independent Reviewer is available. Configure another Reviewer, then recall and resubmit this claim.'),{status:409});
+      }
     } else if(stage==='REVIEW'){
       expected='PENDING_REVIEW'; ownerEmail=request.reviewer_email;
       toStatus=approve?'PENDING_APPROVAL':'REVIEW_REJECTED';
@@ -759,9 +782,10 @@ export async function transitionRequest(id, actor, stage, decision, reason='',ex
     if(String(ownerEmail).toLowerCase()!==String(actor.email).toLowerCase()) throw Object.assign(new Error('This request is assigned to another user.'),{status:403});
 
     const {rows:updated}=await client.query(
-      `update requests set status=$2,last_rejection_reason=$3,reviewer_email=case when $4 then $5 else reviewer_email end,updated_at=now()
+      `update requests set status=$2,last_rejection_reason=$3,reviewer_email=case when $4 then $5 else reviewer_email end,
+       workflow_plan=case when $6 and workflow_plan is not null then jsonb_set(workflow_plan,'{checkedBy}',to_jsonb($5::text)) else workflow_plan end,updated_at=now()
        where id=$1 returning *`,
-      [id,toStatus,reject?note:'',stage==='REVIEW',actor.email]
+      [id,toStatus,reject?note:'',stage==='REVIEW',actor.email,stage==='CHECK'&&approve]
     );
     const next=updated[0];
     await insertAction(
@@ -783,6 +807,7 @@ export async function takeOverRequest(id,actor,reason,expectedRevision){
     const request=(await client.query('select * from requests where id=$1 for update',[id])).rows[0];
     if(!request)throw Object.assign(new Error('Request not found.'),{status:404});
     if(Number(expectedRevision)!==Number(request.revision))throw Object.assign(new Error('Request revision changed. Refresh before taking over.'),{status:409});
+    request.checked_by_email=(await client.query("select actor_email from workflow_actions where request_id=$1 and revision=$2 and action='CHECK_APPROVED' order by id desc limit 1",[id,request.revision])).rows[0]?.actor_email;
     const fresh=(await client.query('select workflow_options from employees where lower(email)=lower($1)',[actor.email])).rows[0];
     const role=takeoverRole({...actor,workflow_options:fresh?.workflow_options},request);
     if(!role)throw Object.assign(new Error('This stage is unavailable for manual takeover.'),{status:409});

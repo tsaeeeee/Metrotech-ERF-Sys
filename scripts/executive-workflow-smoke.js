@@ -46,6 +46,7 @@ try{
     assert.deepEqual(await snapshot(client),before);
     assert.equal((await client.query("select workflow_plan from requests where ref_no='ERF-LEGACY'")).rows[0].workflow_plan,null);
   }finally{client.release()}
+  await pool.query(await fs.readFile(new URL('../sql/migrations/020-cash-tracker.sql',import.meta.url),'utf8'));
   const legacy=await db.getRequestDetail((await pool.query("select id from requests where ref_no='ERF-LEGACY'")).rows[0].id);
   assert.equal(legacy.actions[0].reason,'Existing audit');
   await pool.query("update employees set active=false where email like 'Legacy%'");
@@ -75,7 +76,7 @@ try{
   const shared=await create();
   assert.deepEqual(shared.workflow_plan.reviewers.map(e=>e.email),[dimas.email,rizal.email]);
   assert(await task(dimas,shared.id));assert(await task(rizal,shared.id));assert(!await task(owner,shared.id));
-  for(const actor of [user,dimas,rizal,owner])assert((await db.listDecisionHistory(actor)).some(r=>r.id===shared.id));
+  for(const actor of [user,dimas,rizal,owner])assert((await db.listMyRequests(actor)).some(r=>r.id===shared.id));
   assert(!(await db.listDecisionHistory(outsider)).some(r=>r.id===shared.id));
   assert.equal((await db.getRequestDetail(shared.id)).request.reviewer_name,'Dimas/Rizal');
   await assert.rejects(decide(shared,owner,'REVIEW'),e=>e.status===403);
@@ -119,7 +120,7 @@ try{
   const claim=await db.createEcfClaim(user,items);
   assert.equal((await db.getRequestDetail(claim.id)).request.checker_email,kilat.email);
   assert(!await task(dimas,claim.id));assert(!await task(owner,claim.id));
-  for(const actor of [user,kilat,dimas,rizal,owner])assert((await db.listDecisionHistory(actor)).some(r=>r.id===claim.id));
+  for(const actor of [user,kilat,dimas,rizal,owner])assert((await db.listMyRequests(actor)).some(r=>r.id===claim.id));
   await decide(claim,kilat,'CHECK','APPROVE','Receipt checked');
   await decide(claim,rizal,'REVIEW','APPROVE','<img src=x onerror=alert(1)> review note');
   await decide(claim,owner,'APPROVAL','APPROVE','Final note');
@@ -142,6 +143,9 @@ try{
   await assert.rejects(db.updateManagedEmployee(owner.email,{...data('Owner',{...full,ECF:['REQUESTOR','REVIEWER','APPROVER']},{...ownOptions,ECF:{...ownOptions.ECF,check:'PRIMARY'}}),password:''}),e=>e.status===409);
   await db.takeOverRequest(ownClaim.id,owner,'Independent check for requester',1);
   await decide(ownClaim,owner,'CHECK');assert(await task(dimas,ownClaim.id));
+  assert.equal(takeoverRole(owner,(await db.getRequestDetail(ownClaim.id)).request),null);
+  await assert.rejects(db.takeOverRequest(ownClaim.id,owner,'Cannot review own check',1),e=>e.status===409);
+  await assert.rejects(decide(ownClaim,owner,'REVIEW'),e=>e.status===403);
   await pool.query('update employees set active=false where email=any($1::text[])',[[dimas.email,rizal.email]]);
   const unavailable=await create();
   assert.equal(unavailable.reviewer_email,null);assert(!await task(owner,unavailable.id));
@@ -195,6 +199,39 @@ try{
   assert.equal((await db.getRequestDetail(manual.id)).request.status,'PENDING_REVIEW');
   assert.equal((await post(manual.id,'review',oc,{decision:'APPROVE',reason:'Executive review',revision:1})).status,200);
   assert.equal((await post(manual.id,'approve',oc,{decision:'APPROVE',reason:'Executive final',revision:1})).status,200);
+  // A backup Checker remains visible, but the other primary Reviewer must act.
+  await pool.query("update employees set active=false where email=$1",[kilat.email]);
+  await db.updateManagedEmployee(dimas.email,{...data('Dimas',{ERF:primary.ERF,ECF:['REQUESTOR','CHECKER','REVIEWER']},{displayName:'Dimas',ERF:{review:'PRIMARY'},ECF:{review:'PRIMARY'}}),password:''});
+  const double=await db.getEmployee(dimas.email);
+  const split=await db.createEcfClaim(user,items);
+  await decide(split,double,'CHECK');
+  assert(!await task(double,split.id));assert(await task(rizal,split.id));
+  assert((await db.listMyRequests(double)).some(r=>r.id===split.id));
+  assert(!(await db.listDecisionHistory(double)).some(r=>r.id===split.id));
+  assert.equal((await post(split.id,'review',dc,{decision:'APPROVE',revision:1})).status,403);
+  assert.equal((await post(split.id,'review',dc,{decision:'REJECT',reason:'Not allowed',revision:1})).status,403);
+  assert(!(await db.getDashboardRequests(double,{formType:'ALL',state:'action'})).requests.some(r=>r.id===split.id));
+  await decide(split,rizal,'REVIEW');await decide(split,owner,'APPROVAL');
+  for(const actor of [user,double,rizal,owner]){
+    assert(!(await db.listMyRequests(actor)).some(r=>r.id===split.id));
+    assert((await db.listDecisionHistory(actor)).some(r=>r.id===split.id));
+  }
+  // Recall removes the item from approved History and restores active visibility.
+  const splitDetail=await db.getRequestDetail(split.id);
+  const splitPdf=path.join(temp,'split-approved.pdf');
+  await buildFormPdf({...splitDetail,outPath:splitPdf});
+  await pool.query('update requests set form_pdf_path=$2 where id=$1',[split.id,splitPdf]);
+  await db.recallApprovedExpenseRequest(split.id,owner,'Correction');
+  assert((await db.listMyRequests(double)).some(r=>r.id===split.id));
+  assert(!(await db.listDecisionHistory(double)).some(r=>r.id===split.id));
+  // Historical pre-plan rows enforce the same separation from their audit records.
+  const old=await db.createEcfClaim(user,items);await decide(old,double,'CHECK');
+  await pool.query('update requests set workflow_plan=null,reviewer_email=$2 where id=$1',[old.id,double.email]);
+  await assert.rejects(decide(old,double,'REVIEW'),e=>e.status===403);
+  assert(!await task(double,old.id));
+  // No automatic escalation or privilege creation if no independent path exists.
+  await pool.query('update employees set active=false where email=any($1::text[])',[[rizal.email,owner.email]]);
+  await assert.rejects(db.createEcfClaim(user,items),e=>e.status===409);
   console.log('EXECUTIVE_WORKFLOW_SMOKE_OK: preservation, roles, concurrency, bypass, takeover, notes, PDF, HTTP and local mail');
 }catch(e){console.error(logs);throw e}
 finally{

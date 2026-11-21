@@ -1,4 +1,4 @@
-// Mirrored from src/access.js; checked by the multi-role regression test.
+// Shared workflow access policy. Keep in sync with src/access.js.
 const FORM_ROLES={ERF:['REQUESTOR','REVIEWER','APPROVER'],ECF:['REQUESTOR','CHECKER','REVIEWER','APPROVER']};
 
 function rolesFor(employee,form='ERF'){
@@ -27,6 +27,7 @@ function assignedRole(employee,request){
   if(request.status!=='PENDING_APPROVAL' && sameEmail(employee?.email,request.requester_email)) return null;
   const stage={PENDING_CHECK:['CHECKER','checker_email'],PENDING_REVIEW:['REVIEWER','reviewer_email'],PENDING_APPROVAL:['APPROVER','approver_email']}[request.status];
   if(!stage||!hasRole(employee,form,stage[0]))return null;
+  if(stage[0]==='REVIEWER'&&sameEmail(employee.email,request.checked_by_email||request.workflow_plan?.checkedBy))return null;
   const plan=request.workflow_plan;
   if(stage[0]!=='APPROVER'&&plan?.bypass)return null;
   if(stage[0]==='REVIEWER'&&plan&&!plan.reviewTakenOver)
@@ -50,6 +51,7 @@ function takeoverRole(employee,request){
   const form=request.form_type||'ERF',plan=request.workflow_plan;
   if(!plan||plan.bypass||sameEmail(employee?.email,request.requester_email)||!hasRole(employee,form,'APPROVER')||!sameEmail(employee.email,request.approver_email))return null;
   for(const [status,role,key,taken,option] of [['PENDING_REVIEW','REVIEWER','secondaryReviewers','reviewTakenOver','review'],['PENDING_CHECK','CHECKER','secondaryCheckers','checkTakenOver','check']]){
+    if(role==='REVIEWER'&&sameEmail(employee.email,request.checked_by_email||plan.checkedBy))continue;
     if(request.status===status&&!plan[taken]&&hasRole(employee,form,role)&&employee.workflow_options?.[form]?.[option]==='SECONDARY'&&plan[key].some(e=>sameEmail(e.email,employee.email)))return role;
   }
   return null;

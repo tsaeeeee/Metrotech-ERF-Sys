@@ -81,7 +81,7 @@ try{
   async function assertProgress(status,activeRole){
     for(const [role,cookie] of participants){
       const me=await request('/api/me',{cookie});
-      const progress=me.data.history.filter(row=>row.id===id);
+      const progress=me.data.myRequests.filter(row=>row.id===id);
       assert(progress.length===1&&progress[0].status===status,`${role} must track ${status} exactly once.`);
       assert(progress[0].waiting_for_role===activeRole&&progress[0].waiting_for_name,`${role} must see who is being waited on.`);
       assert(me.data.tasks.some(row=>row.id===id)===(role===activeRole),`${role} task visibility must match its turn.`);
@@ -98,7 +98,7 @@ try{
     'Reading progress or denied early decisions must not fabricate audit history.');
   for(const cookie of [requestorCookie,await login((await getEmployee(erf.reviewer_email)).username),approverCookie]){
     const me=await request('/api/me',{cookie});
-    assert(me.data.history.some(row=>row.id===erf.id&&row.status==='PENDING_REVIEW'),'ERF must be visible from submission too.');
+    assert(me.data.myRequests.some(row=>row.id===erf.id&&row.status==='PENDING_REVIEW'),'ERF must be visible from submission too.');
   }
   assert(!(await request('/api/me',{cookie:approverCookie})).data.tasks.some(row=>row.id===erf.id),
     'Approver must not receive the ERF task before review.');

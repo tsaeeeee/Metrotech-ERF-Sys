@@ -720,6 +720,7 @@ async function saveAdminUser(event){
     location:$('#adminLocation').value.trim(),
     division:$('#adminDivision').value.trim(),
     role:$('#adminRole').value,
+    cashAccess:$('#adminCashAccess').value,
     workflowRoles:adminSelectedWorkflowRoles(),
     workflowOptions:adminSelectedWorkflowOptions(),
     active:editingAdminEmail?$('#adminActive').checked:true

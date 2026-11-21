@@ -1,3 +1,4 @@
+import {installCashRoutes,cashAccess} from './cash.js';
 import {installDraftRoutes} from './drafts.js';
 import {submissionOptions,reviewRecipients,pendingRecipients} from './workflow-policy.js';
 import {hasRole,sameEmail,recallRole,isWorkflowParticipant} from './access.js';
@@ -449,6 +450,7 @@ app.get('/api/me',requireUser,async(req,res)=>{
   const requests=await listRequestsForEmployee(req.employee);
   const tasks=await listTasksForEmployee(req.employee);
   const myRequests=await listMyRequests(req.employee);
+  req.employee.cash_access=await cashAccess(pool,req.employee.email);
   res.json({employee:req.employee,requests,tasks,myRequests,history,setupRequired:employeeNeedsSetup(req.employee)});
 });
 
@@ -459,6 +461,8 @@ app.get('/api/ems/dashboard',requireUser,async(req,res,next)=>{
 app.get('/api/ems/dashboard/requests',requireUser,async(req,res,next)=>{
   try{res.json(await getDashboardRequests(req.employee,{formType:req.query.formType,state:req.query.state,offset:Number(req.query.offset||0)}))}catch(e){next(e)}
 });
+
+installCashRoutes(app,{pool,requireUser,requireAdmin,upload});
 
 installDraftRoutes(app,{root:DATA_DIR,requireUser,upload,pool,workflowLockPool,getRequestDetail,
   createExpenseRequest,createEcfClaim,getRuntimeAppSettings,parseItemsAndFiles,persistOriginals,
@@ -538,14 +542,14 @@ app.get('/api/admin/users',requireUser,requireAdmin,async(req,res,next)=>{
 
 app.post('/api/admin/users',requireUser,requireAdmin,async(req,res,next)=>{
   try{
-    const user=await createManagedEmployee(req.body||{});
+    const user=await createManagedEmployee(req.body||{},req.employee.email);
     res.status(201).json({ok:true,user});
   }catch(e){next(e)}
 });
 
 app.put('/api/admin/users/:email',requireUser,requireAdmin,async(req,res,next)=>{
   try{
-    const user=await updateManagedEmployee(req.params.email,req.body||{});
+    const user=await updateManagedEmployee(req.params.email,req.body||{},req.employee.email);
     res.json({ok:true,user});
   }catch(e){next(e)}
 });
