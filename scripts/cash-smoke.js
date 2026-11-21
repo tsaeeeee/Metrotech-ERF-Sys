@@ -10,7 +10,8 @@ import {digest,inspectSnapshot} from '../src/cash-model.js';
 import {importCashSnapshot} from '../src/cash.js';
 import {upgrade} from './release-cash/upgrade.js';
 import {captureSnapshot} from './cash-snapshot.js';
-import {backupCash,backupRequests} from '../src/cash-sheets.js';
+import {backupCash} from '../src/cash-sheets.js';
+import {sheetMemory,annualFixture} from './cash-sheet-memory.js';
 
 assert.equal(process.env.CI,'true','This test creates and deletes an isolated fixture database.');
 const database='ems_cash_ci';
@@ -176,27 +177,13 @@ try{
   assert.equal((await http('/api/cash/entries',mc,'POST',{...entry,id:randomUUID()})).status,403,'Revocation applies to an already signed-in account.');
   assert.equal((await http('/api/admin/cash/backup',ac,'PUT',{spreadsheet_id:fixture.spreadsheetId,hour_wib:2,enabled:true})).status,409,'Cannot pretend backups are active without credentials.');
 
-  // All Google writes are stubbed. Verify ownership, atomic publication, retry
-  // behavior and the daily guard without sending mail or touching a live sheet.
-  const legacyMeta={sheets:[{properties:{sheetId:42,title:'2026',gridProperties:{rowCount:100,columnCount:5}}}]};
-  const owned={sheets:[{properties:{sheetId:99,title:'EMS Cash Books',gridProperties:{rowCount:150,columnCount:5}},developerMetadata:[{metadataKey:'metrotech_ems_cash_backup_v1',metadataValue:'EMS Cash Books'}]}]};
-  const updated=backupRequests(owned,{'EMS Cash Books':[['ID'],['x']]});assert(!updated.some(r=>r.addSheet));assert.equal(updated.find(r=>r.updateCells).updateCells.range.endRowIndex,150,'Replacement must also clear stale trailing rows.');
-  const collision={sheets:[{properties:{sheetId:99,title:'EMS Cash Books',gridProperties:{rowCount:100,columnCount:5}}}]};
-  assert.throws(()=>backupRequests(collision,{'EMS Cash Books':[['ID'],['x']]}),e=>e.status===409);
-  let batchCount=0,marker;
-  const stub={spreadsheets:{get:async()=>({data:legacyMeta}),batchUpdate:async({requestBody:{requests}})=>{
-    batchCount++;assert(!requests.some(r=>r.updateCells?.range.sheetId===42),'Legacy tabs must not be changed.');
-    const added=requests.filter(r=>r.addSheet).map(r=>r.addSheet.properties);
-    const metadataId=added.find(s=>s.title==='EMS Cash Backup').sheetId;
-    marker=requests.find(r=>r.updateCells?.range.sheetId===metadataId).updateCells.rows[1].values.map(c=>c.userEnteredValue.numberValue??c.userEnteredValue.stringValue);
-    const sourceString=requests.flatMap(r=>r.updateCells?.rows||[]).flatMap(r=>r.values).find(c=>c.userEnteredValue?.stringValue==='=1+1');assert(sourceString,'Formula-like activity must be exported as a string.');
-    assert.equal(requests.filter(r=>r.createDeveloperMetadata).length,4);
-    return {data:{}};
-  },values:{get:async()=>({data:{values:[marker]}})}}};
+  // Google writes stay inside an isolated native-sheet adapter.
+  const memory=sheetMemory(annualFixture(fixture)),stub=memory.adapter;
   await pool.query('update cash_backup_settings set enabled=true,spreadsheet_id=$1,hour_wib=2',[fixture.spreadsheetId]);
-  const backed=await backupCash(pool,{now:new Date('2026-11-19T20:00:00Z'),sheetsClient:stub});assert(backed.ok);assert.equal(backed.rows,7);assert.equal(batchCount,1);
-  assert((await backupCash(pool,{now:new Date('2026-11-19T21:00:00Z'),sheetsClient:stub})).skipped);assert.equal(batchCount,1);
-  const failed={spreadsheets:{...stub.spreadsheets,batchUpdate:async()=>{throw new Error('Provider unreachable');}}};
+  const backed=await backupCash(pool,{now:new Date('2026-11-19T20:00:00Z'),sheetsClient:stub});assert(backed.ok);assert.equal(backed.rows,5);assert.equal(memory.batches,1);
+  assert((await backupCash(pool,{now:new Date('2026-11-19T21:00:00Z'),sheetsClient:stub})).skipped);assert.equal(memory.batches,1);
+  assert((await backupCash(pool,{manual:true,sheetsClient:stub})).ok);assert.equal(memory.batches,1,'Unchanged repeat performs no Google writes.');
+  const failed={spreadsheets:{...stub.spreadsheets,get:async()=>{throw new Error('Provider unreachable');}}};
   await assert.rejects(backupCash(pool,{manual:true,sheetsClient:failed}),/could not be verified/);
   assert.equal((await pool.query("select count(*)::int n from cash_backups where state='FAILED'")).rows[0].n,1);
   assert((await backupCash(pool,{manual:true,sheetsClient:stub})).ok,'A failed backup must release its lock and allow retry.');

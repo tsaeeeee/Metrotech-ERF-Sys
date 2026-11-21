@@ -42,6 +42,7 @@ jobs:
           node --check src/cash.js
           node --check src/cash-model.js
           node --check src/cash-sheets.js
+          node --check src/cash-sheet-sync.js
           node --check public/cash.js
           node --check scripts/cash-snapshot.js
           node --check scripts/cash-import.js
@@ -87,6 +88,8 @@ jobs:
         run: node scripts/drafts-http-smoke.js
       - name: Test Cash Tracker permissions, imports, audit, retries and daily backup
         run: node scripts/cash-smoke.js
+      - name: Test annual cash spreadsheet synchronization
+        run: node scripts/cash-sheet-sync-smoke.js
       - name: Install browser for UI regression checks
         run: npx playwright install --with-deps chromium
       - name: Test role navigation, mobile approval and session startup
