@@ -412,8 +412,12 @@ export async function setManagedEmployeeActive(email,active) {
   }
 }
 
+// Read only the current revision; keep item order and access scopes unchanged.
+const requestItemSummary=`coalesce((select jsonb_agg(jsonb_build_object('category',i.category,'purpose',i.purpose) order by i.line_no)
+  from request_items i where i.request_id=r.id and i.revision=r.revision),'[]'::jsonb) as payment_summary`;
+
 export async function listRequestsForEmployee(employee) {
-  return (await pool.query(`select r.* from requests r where lower(r.requester_email)=lower($1)
+  return (await pool.query(`select r.*,${requestItemSummary} from requests r where lower(r.requester_email)=lower($1)
     and employee_has_workflow_role($1,r.form_type,'REQUESTOR') and r.status<>'APPROVED'
     order by r.updated_at desc limit 100`,[employee.email])).rows;
 }
@@ -427,7 +431,7 @@ export async function getEcfRole(email){
 
 export async function listTasksForEmployee(employee){
   const {rows}=await pool.query(
-    `select r.*,d.checker_email,
+    `select r.*,${requestItemSummary},d.checker_email,
        case r.status when 'PENDING_CHECK' then 'CHECKER' when 'PENDING_REVIEW' then 'REVIEWER' else 'APPROVER' end as task_role
      from requests r left join ecf_details d on d.request_id=r.id
      where (r.status='PENDING_APPROVAL' or lower(r.requester_email)<>lower($1)) and (
@@ -465,7 +469,7 @@ export async function hasDecisionHistory(requestId,employee){
 }
 export async function listDecisionHistory(employee){
   // Approved records remain available after leaving the active request list.
-  return (await pool.query(`select r.*,d.checker_email,
+  return (await pool.query(`select r.*,${requestItemSummary},d.checker_email,
       case r.status when 'PENDING_CHECK' then 'Checker' when 'PENDING_REVIEW' then 'Reviewer'
         when 'PENDING_APPROVAL' then 'Approver' end as waiting_for_role,
       case r.status when 'PENDING_CHECK' then coalesce(c.name,d.checker_email)
@@ -529,7 +533,7 @@ export async function getDashboardRequests(employee,{formType,state,offset=0}){
   const where=`${dashboardScope(employee)} and (r.form_type='ECF' or r.request_type='EXPENSE') and (${formParam}='ALL' or r.form_type=${formParam}) and r.status=any(${stateParam}::text[])`+ (state==='action'?` and (${actionScope(employee)})`:'');
   const count=await pool.query(`select count(*)::integer as total from requests r where ${where}`,args);
   const offsetParam=`$${args.push(offset)}`;
-  const rows=await pool.query(`select r.id,r.ref_no,r.form_type,r.requester_email,r.employee_name,r.request_date,
+  const rows=await pool.query(`select ${requestItemSummary},r.id,r.ref_no,r.form_type,r.requester_email,r.employee_name,r.request_date,
       r.total,r.status,r.revision,r.workflow_plan,r.reviewer_email,r.approver_email,d.checker_email,
       (select ca.actor_email from workflow_actions ca where ca.request_id=r.id and ca.revision=r.revision and ca.action='CHECK_APPROVED' order by ca.id desc limit 1) as checked_by_email,
       case r.status when 'PENDING_CHECK' then 'Checker' when 'PENDING_REVIEW' then 'Reviewer'

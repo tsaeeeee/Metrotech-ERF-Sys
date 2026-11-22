@@ -19,6 +19,21 @@ function msg(text,type='ok'){
 function clearMsg(){ $('#msg').innerHTML=''; }
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 
+function categoryBadge(value){
+  const label=String(value||'').trim();
+  if(!label)return '—';
+  const key=label.toLowerCase();
+  const palette={'team growth & expenses':0,'office supplies & expenses':1,'warehouse expenses':2,
+    'travel expense':3,'accommodation':4,'transportation':3,'meal':5,'meals':5,
+    'software & subscription':6,'tools':2,'cash deposit':7,'others':8};
+  const hash=[...key].reduce((n,c)=>(n*31+c.charCodeAt(0))>>>0,0);
+  return `<span class="category-badge category-tone-${Object.hasOwn(palette,key)?palette[key]:hash%9}">${esc(label)}</span>`;
+}
+function requestPurposeCell(items){
+  return Array.isArray(items)&&items.length?items.map(item=>
+    `<div class="request-purpose-item">${categoryBadge(item.category)}<div>${esc(item.purpose||'—')}</div></div>`).join(''):'—';
+}
+
 async function api(url,opt={}){
   const headers=opt.body instanceof FormData ? (opt.headers||{}) : {'Content-Type':'application/json',...(opt.headers||{})};
   const r=await fetch(url,{...opt,headers});
@@ -220,7 +235,7 @@ async function loadMe(){
     }
 
     $('#roleTitle').textContent=employee.role==='REQUESTOR'?'Requestor Dashboard':employee.role==='REVIEWER'?'Reviewer Dashboard':employee.role==='APPROVER'?'Approver Dashboard':'Checker Dashboard';
-    $('#queueTitle').textContent=employee.role==='REQUESTOR'?'My Requests':employee.role==='REVIEWER'?'Pending Review':'Pending Approval';
+    $('#queueTitle').textContent=employee.role==='REQUESTOR'?'Request':employee.role==='REVIEWER'?'Pending Review':'Pending Approval';
     $('#requestForm').classList.toggle('hidden',!hasRole(employee,'ERF','REQUESTOR'));
 
     const fields=[
@@ -278,6 +293,7 @@ function renderRequests(requests,tableId='table',bodyId='tbody',emptyId='empty')
     return `<tr>
       <td><strong>${esc(r.ref_no)}</strong>${r.last_rejection_reason?`<div class="reason-mini">${esc(r.last_rejection_reason)}</div>`:''}</td>
       <td>${esc(r.employee_name)}</td>
+      <td class="request-purpose">${requestPurposeCell(r.payment_summary)}</td>
       <td>${String(r.request_date).slice(0,10)}</td>
       <td class="money">${rupiah(r.total)}</td>
       <td class="status-col"><span class="status ${esc(r.status)}">${esc(r.status)}</span>${tableId==='decisionHistoryTable'&&r.waiting_for_role?`<div class="progress-waiting">Waiting for: ${esc(r.waiting_for_name||r.waiting_for_role)} (${esc(r.waiting_for_role)})</div>`:''}</td>
@@ -902,7 +918,7 @@ function renderPayments(){
   if(!payments.length) body.innerHTML='<tr><td colspan="7" class="empty">No payments added yet.</td></tr>';
   else body.innerHTML=payments.map((x,i)=>`<tr>
     <td>${i+1}</td>
-    <td>${esc(x.category)}</td>
+    <td>${categoryBadge(x.category)}</td>
     <td>${esc(x.purpose)}</td>
     <td>${esc(x.paymentDate)}</td>
     <td>${x.evidence.map(f=>`<span class="file-chip">📎 ${esc(f.name)}</span>`).join(' ')}</td>
@@ -1136,6 +1152,7 @@ function renderDetailSummary(r){
   const reviewer=r.workflow_plan&&!r.workflow_plan.bypass&&['PENDING_CHECK','PENDING_REVIEW'].includes(r.status)
     ?`Pending review by ${assignee('reviewer')}`:assignee('reviewer');
   const fields=r.form_type==='ECF'?[
+    ['Requestor',r.employee_name||r.requester_email||'—'],
     ['Checker',assignee('checker')], ['Reviewer',reviewer],
     ['Approver',assignee('approver')]
   ]:[
@@ -1146,6 +1163,7 @@ function renderDetailSummary(r){
   ];
   const rows=[];
   const columns=r.form_type==='ECF'?1:2;
+  if(columns===2)rows.push(`<tr><th scope="row">Requestor</th><td colspan="3">${esc(r.employee_name||r.requester_email||'—')}</td></tr>`);
   for(let i=0;i<fields.length;i+=columns){
     rows.push(`<tr>${fields.slice(i,i+columns).map(([label,value])=>`<th scope="row">${esc(label)}</th><td>${esc(value??'—')}</td>`).join('')}</tr>`);
   }
@@ -1164,7 +1182,7 @@ async function openRequest(id){
     renderDetailSummary(r);
 
     $('#detailItems').innerHTML=data.items.map(it=>`<tr>
-      <td>${it.line_no}</td><td>${esc(it.category)}</td><td>${esc(it.purpose)}</td>
+      <td>${it.line_no}</td><td>${categoryBadge(it.category)}</td><td>${esc(it.purpose)}</td>
       <td>${String(it.payment_date).slice(0,10)}</td>
       <td>${(it.evidence_names||[]).map(n=>`<span class="file-chip">📎 ${esc(n)}</span>`).join(' ')}</td>
       <td class="money">${rupiah(it.amount)}</td>
