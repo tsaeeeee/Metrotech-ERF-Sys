@@ -42,3 +42,50 @@ assert.equal(g[1][3].userEnteredValue.numberValue,50);assert.equal(g[2][4].userE
 assert(!g.slice(3).some(r=>r.slice(0,5).some(c=>c?.userEnteredValue&&Object.keys(c.userEnteredValue).length)),'No old-year transactions in new sheet.');
 await run();assert.equal(memory.document.sheets.length,2,'No duplicate yearly sheet.');
 console.log('CASH_YEAR_SYNC_OK: no duplicate rows; edits, deletes, retries, formula/format preservation, conflicts and new-year template');
+
+// First connection to the office workbook: five active transactions already
+// exist there, while EMS also contains deleted records from testing.
+const reconcileData={books:[{id:'office',year:2026,opening_balance:'0',source_sheet:'1'}],imports:[{id:'office-import',snapshot:structuredClone(fixture)}],entries:fixture.sheets[0].rows.slice(1).map(r=>({id:'legacy-'+r.row,book_id:'office',source_row:r.row,import_id:'office-import',origin:'LEGACY',date:r.values[0],category:r.values[1],activity:r.values[2],income:String(r.values[3]||0),outcome:String(r.values[4]||0),created_at:'2026-01-01'}))};
+const officeSnapshot=structuredClone(fixture);
+for(let i=0;i<5;i++){
+  const values=['2026-11-21','Tools','Office transaction '+i,'',100+i];
+  officeSnapshot.sheets[0].rows.push({row:5+i,values});
+  reconcileData.entries.push({id:'office-'+i,book_id:'office',origin:'EMS',date:values[0],category:values[1],activity:values[2],income:'0',outcome:String(values[4]),created_at:'2026-11-21T00:00:0'+(i+1)+'Z'});
+}
+reconcileData.entries.push({id:'deleted-first',book_id:'office',origin:'EMS',date:'2026-11-21',category:'Tools',activity:'Deleted test',income:'0',outcome:'500',voided:true,created_at:'2026-11-21T00:00:00Z'});
+reconcileData.entries.push({...reconcileData.entries.find(e=>e.id==='office-2'),id:'deleted-duplicate',voided:true,created_at:'2026-11-21T00:00:02Z'});
+const officeInitial=annualFixture(officeSnapshot),office=sheetMemory(officeInitial);
+const officeBefore=office.document;
+const officePlan=planYearSync({metadata:office.document,...reconcileData});
+assert(!officePlan.requests.some(r=>r.updateCells),'Exact matched office rows need no cell writes.');
+await syncAnnualSheets(office.adapter,'office',reconcileData);
+assert.deepEqual(grid(office.document.sheets[0]),grid(officeBefore.sheets[0]),'All values, formulas, formatting and row positions remain unchanged on adoption.');
+const officeState=JSON.parse(office.document.sheets[0].developerMetadata[0].metadataValue);
+for(let i=0;i<5;i++)assert.equal(officeState.entryRows['office-'+i],5+i);
+assert.equal(officeState.entryRows['deleted-first'],10);
+assert.equal(officeState.entryRows['deleted-duplicate'],11);
+assert.equal(planYearSync({metadata:office.document,...reconcileData}).requests.length,0,'Repeat creates no duplicate entries.');
+reconcileData.entries.find(e=>e.id==='office-2').outcome='999';
+await syncAnnualSheets(office.adapter,'office',reconcileData);
+assert.equal(grid(office.document.sheets[0])[6][4].userEnteredValue.numberValue,999,'Edit targets adopted office row.');
+reconcileData.entries.find(e=>e.id==='office-0').voided=true;
+await syncAnnualSheets(office.adapter,'office',reconcileData);
+assert(grid(office.document.sheets[0])[4].slice(0,5).every(c=>!c?.userEnteredValue),'Delete clears only the adopted row.');
+reconcileData.entries.push({...reconcileData.entries.find(e=>e.id==='office-1'),id:'new-after-adoption',activity:'New transaction',created_at:'2026-11-22'});
+await syncAnnualSheets(office.adapter,'office',reconcileData);
+assert.equal(grid(office.document.sheets[0])[11][2].userEnteredValue.stringValue,'New transaction','New entry appends after all reserved positions.');
+assert.equal(planYearSync({metadata:office.document,...reconcileData}).requests.length,0);
+const originalOfficeData=structuredClone(reconcileData);
+originalOfficeData.entries=originalOfficeData.entries.filter(e=>e.id!=='new-after-adoption');
+originalOfficeData.entries.find(e=>e.id==='office-0').voided=false;
+originalOfficeData.entries.find(e=>e.id==='office-2').outcome='102';
+assert.throws(()=>planYearSync({metadata:officeInitial,...originalOfficeData,entries:[...originalOfficeData.entries,{...originalOfficeData.entries.find(e=>e.id==='office-1'),id:'ambiguous'}]}),/no unique active EMS match/);
+const duplicateOffice=structuredClone(officeSnapshot);duplicateOffice.sheets[0].rows.push({...duplicateOffice.sheets[0].rows.at(-1),row:12});
+assert.throws(()=>planYearSync({metadata:annualFixture(duplicateOffice),...originalOfficeData}),/no unique active EMS match/);
+const unknownOffice=structuredClone(officeSnapshot);unknownOffice.sheets[0].rows.at(-1).values[4]=9999;
+assert.throws(()=>planYearSync({metadata:annualFixture(unknownOffice),...originalOfficeData}),/no unique active EMS match/);
+const legacyMismatch=structuredClone(officeSnapshot);legacyMismatch.sheets[0].rows[1].values[2]='Changed legacy description';
+assert.throws(()=>planYearSync({metadata:annualFixture(legacyMismatch),...originalOfficeData}),/differs from the imported/);
+const badMap=office.document,badState=JSON.parse(badMap.sheets[0].developerMetadata[0].metadataValue);badState.entryRows['office-1']=2;badMap.sheets[0].developerMetadata[0].metadataValue=JSON.stringify(badState);
+assert.throws(()=>planYearSync({metadata:badMap,...reconcileData}),/invalid EMS row mapping/);
+console.log('CASH_OFFICE_ADOPTION_OK: exact unique matches, stable row IDs, deleted tests, edit/delete/retry and conflict rejection');

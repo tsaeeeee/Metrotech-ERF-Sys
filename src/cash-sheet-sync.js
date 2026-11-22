@@ -94,7 +94,30 @@ export function planYearSync({metadata,books,entries,imports}){
       if(!Number.isSafeInteger(e.source_row)||e.source_row<2||placements.has(e.source_row))stop(`Invalid source-row mapping in ${title}.`);
       placements.set(e.source_row,e);end=Math.max(end,e.source_row);
     }
-    for(const e of bookEntries.filter(e=>e.origin!=='LEGACY').sort((a,b)=>(new Date(a.created_at).getTime()-new Date(b.created_at).getTime())||a.id.localeCompare(b.id)))placements.set(++end,e);
+    const native=bookEntries.filter(e=>e.origin!=='LEGACY').sort((a,b)=>(new Date(a.created_at).getTime()-new Date(b.created_at).getTime())||a.id.localeCompare(b.id));
+    const entryRows={};
+    const assign=(e,n)=>{
+      if(!e||!Number.isSafeInteger(n)||n<2||placements.has(n)||Object.hasOwn(entryRows,e.id))stop(`Sheet ${title}: invalid EMS row mapping.`);
+      placements.set(n,e);entryRows[e.id]=n;end=Math.max(end,n);
+    };
+    if(tag&&Object.hasOwn(tag.value,'entryRows')){
+      const saved=tag.value.entryRows;
+      if(!saved||typeof saved!=='object'||Array.isArray(saved))stop(`Sheet ${title}: invalid EMS row mapping.`);
+      for(const [id,n] of Object.entries(saved))assign(native.find(e=>e.id===id),n);
+    }else if(!tag&&!isNew){
+      // A different workbook can already contain transactions also entered in
+      // EMS. Adopt their existing positions only on a unique, exact match of
+      // all five input values. Never match a deleted entry or guess by row.
+      for(let r=1;r<rows.length;r++){
+        if(placements.has(r+1)||!rows[r].slice(0,5).some(c=>!blank(c)))continue;
+        const matches=native.filter(e=>!e.voided&&rowEquals(rows[r],inputValues(e)));
+        if(matches.length!==1||Object.hasOwn(entryRows,matches[0]?.id))stop(`Sheet ${title} row ${r+1}: populated row has no unique active EMS match. No cells written.`);
+        assign(matches[0],r+1);
+      }
+    }
+    // Retain deleted-entry positions and allocate new entries after all saved
+    // positions. Later edits and retries cannot shift a matched transaction.
+    for(const e of native)if(!Object.hasOwn(entryRows,e.id))assign(e,end+1);
     if(Number(book.opening_balance)!==0){
       if(book.source_sheet!=null)stop(`Book ${title}: imported opening balance requires reconciliation.`);
       placements.set(2,{id:`opening:${book.id}`,date:`${title}-01-01`,category:'Cash Deposit',activity:`Opening balance ${title}`,income:book.opening_balance,outcome:'0.00',origin:'EMS'});
@@ -107,7 +130,9 @@ export function planYearSync({metadata,books,entries,imports}){
         const cells=rows[i].slice(0,5),e=placements.get(i+1);
         if(!cells.some(c=>!blank(c)))continue;
         const snapshot=e&&snapshots.get(e.import_id),original=snapshot?.sheets.find(s=>String(s.sheetId)===String(book.source_sheet))?.rows.find(r=>r.row===i+1);
-        if(!e||e.origin!=='LEGACY'||!original||(!rowEquals(cells,original.values.slice(0,5))&&!rowEquals(cells,inputValues(e))))stop(`Sheet ${title} row ${i+1}: data differs from the imported source. No cells written.`);
+        if(e?.origin!=='LEGACY'){
+          if(!e||e.voided||!rowEquals(cells,inputValues(e)))stop(`Sheet ${title} row ${i+1}: populated row has no unique active EMS match. No cells written.`);
+        }else if(!original||(!rowEquals(cells,original.values.slice(0,5))&&!rowEquals(cells,inputValues(e))))stop(`Sheet ${title} row ${i+1}: data differs from the imported source. No cells written.`);
       }
       for(const [n,e] of placements)if(e.origin==='LEGACY'&&!rows[n-1]?.slice(0,5).some(c=>!blank(c)))stop(`Sheet ${title} row ${n}: an imported transaction is missing.`);
     }
@@ -141,7 +166,7 @@ export function planYearSync({metadata,books,entries,imports}){
     }
     // Write only changed literals. Existing formulas never appear in a write.
     for(let r=1;r<rows.length;r++)for(let c=0;c<5;c++)if(!eq(raw(before[r][c]),raw(rows[r][c])))requests.push(cellRequest(sheetId,r,c,raw(rows[r][c])));
-    const state={book:book.id,input:digest(inputs(rows)),layout:digest(layout(rows))};
+    const state={book:book.id,input:digest(inputs(rows)),layout:digest(layout(rows)),entryRows};
     if(!tag||!eq(tag.value,state))requests.push(metadataRequest(sheetId,state,tag?.metadata));
     expected.push({title,sheetId,state,formulas,rows,isNew});
   }
