@@ -168,7 +168,7 @@ function emsNavigate(view,filter=null){
   $('#requestForm').classList.toggle('hidden',!canCreate);
   $('#emsClaimFields').classList.toggle('hidden',view!=='ecf');
   if(view==='erf'||view==='ecf'||view==='requests'){
-    $('#queueTitle').textContent=view==='requests'?'My Requests':view==='erf'?'Expense Requests':'Expense Claims';
+    $('#queueTitle').textContent=view==='requests'?'Request':view==='erf'?'Expense Requests':'Expense Claims';
     const data=window.emsBootstrap||{};
     const source=view==='ecf'&&!hasRole(currentEmployee,'ECF','REQUESTOR')
       ? data.tasks||[] : data.requests||[];
@@ -192,7 +192,7 @@ function emsNavigate(view,filter=null){
   if(view==='tasks') emsRenderTasks();
   if(['history','requests'].includes(view)){
     const data=window.emsBootstrap||{};
-    $('#decisionHistoryTitle').textContent=view==='history'?'History':'My Requests';
+    $('#decisionHistoryTitle').textContent=view==='history'?'History':'Request';
     $('#emsActiveFilters').classList.toggle('hidden',view!=='requests');
     document.querySelectorAll('[data-active-filter]').forEach(b=>b.classList.toggle('selected',b.dataset.activeFilter===filter.state));
     $('#emsHistoryFilter').classList.toggle('hidden',!filter);
@@ -299,7 +299,7 @@ async function emsLoadDashboard(){
     const categories=data.categories.filter(row=>types.includes(row.form_type));
     const highest=Math.max(1,...categories.map(row=>Number(row.amount)||0));
     $('#emsCategories').innerHTML=categories.length?`<div class="table-wrap"><table><thead><tr><th>Category</th><th>Form</th><th class="ems-category-share">Relative amount</th><th class="money">Amount (IDR)</th></tr></thead><tbody>${categories.map(row=>
-      `<tr><td>${esc(row.category)}</td><td><span class="role-chip">${esc(row.form_type)}</span></td><td class="ems-category-share"><span class="ems-category-track"><i style="width:${Math.max(0,Number(row.amount)||0)/highest*100}%"></i></span></td><td class="money"><strong>${rupiah(row.amount)}</strong></td></tr>`
+      `<tr><td>${categoryBadge(row.category)}</td><td><span class="role-chip">${esc(row.form_type)}</span></td><td class="ems-category-share"><span class="ems-category-track"><i style="width:${Math.max(0,Number(row.amount)||0)/highest*100}%"></i></span></td><td class="money"><strong>${rupiah(row.amount)}</strong></td></tr>`
     ).join('')}</tbody></table></div>`:'<div class="empty">No approved categories this month.</div>';
   }catch(e){
     if(currentEmployee?.email!==owner) return;
@@ -378,7 +378,7 @@ submitExpense=async function(){
   if(emsSubmitting) return;
   if(!['erf','ecf'].includes(emsView)) return;
   if(revisionTarget && revisionTarget.formType!==(emsView==='ecf'?'ECF':'ERF'))
-    return msg('Open this revision from My Requests before submitting.','err');
+    return msg('Open this revision from Request before submitting.','err');
   if(emsView!=='ecf'){
     emsSubmitting=true;
     try{return await emsOriginalSubmitExpense()}

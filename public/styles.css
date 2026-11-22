@@ -1113,3 +1113,14 @@ h1{margin:0;color:var(--navy);font-size:26px}h2{margin:0 0 12px;color:var(--navy
 .progress-waiting{margin-top:6px;font-size:12px;line-height:1.4;color:var(--muted,#64748b);white-space:normal;overflow-wrap:anywhere}
 
 .decision-note{padding:12px 0;border-bottom:1px solid #e2e8f0}.decision-note small{display:block;margin-top:4px;color:var(--muted,#64748b)}.decision-note p,.audit-row p{white-space:pre-wrap;overflow-wrap:anywhere}.executive-choice-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:16px}#executiveChoiceModal{z-index:1100}#executiveChoiceModal textarea{width:100%;box-sizing:border-box}
+
+/* Readable category labels share a stable palette across request views. */
+.category-badge{display:inline-block;padding:3px 9px;border-radius:6px;font-size:12px;font-weight:600;line-height:1.5;white-space:normal;overflow-wrap:anywhere;max-width:100%;box-sizing:border-box}
+.category-tone-0{background:#e4ecfb;color:#244875}.category-tone-1{background:#fef0cc;color:#704d0b}
+.category-tone-2{background:#e2f1e7;color:#245537}.category-tone-3{background:#e1f2f5;color:#245664}
+.category-tone-4{background:#eee6fa;color:#594078}.category-tone-5{background:#fbe6db;color:#78432b}
+.category-tone-6{background:#f5e3ee;color:#753e60}.category-tone-7{background:#dff2ed;color:#225b4d}
+.category-tone-8{background:#e9edf2;color:#455365}
+.request-list-table .request-purpose{min-width:220px;max-width:420px;white-space:normal;overflow-wrap:anywhere}
+.request-purpose-item+.request-purpose-item{margin-top:10px;padding-top:8px;border-top:1px solid #e9edf2}
+.request-purpose-item .category-badge{margin-bottom:4px}

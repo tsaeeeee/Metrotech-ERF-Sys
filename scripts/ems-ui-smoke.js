@@ -51,6 +51,7 @@ function row(form_type,status,id){
   return {id,ref_no:`${form_type}-${id}`,form_type,request_type:'EXPENSE',status,
     requester_email:'requestor@example.test',employee_name:'UI Requestor',
     checker_email:'checker@example.test',reviewer_email:'reviewer@example.test',approver_email:'approver@example.test',
+    payment_summary:[{category:'Travel Expense',purpose:'Travel <script>literal</script>'},{category:'Others',purpose:'Second purpose visible'}],
     request_date:'2026-09-23',total:100000,revision:1,last_rejection_reason:''};
 }
 const revisionRow={...row('ECF','CHECK_REJECTED','revision'),last_rejection_reason:'Update receipt',
@@ -441,7 +442,10 @@ try{
         await actor.page.locator('#decisionHistoryBody').getByText('ECF-task',{exact:true}).waitFor();
         assert((await actor.page.locator('#decisionHistoryBody').innerText()).includes('ECF-task'));
         assert(!await actor.page.locator('#requestForm').isVisible(),'Work happens in Activity, without a transaction form.');
-        assert.equal(await actor.page.locator('#decisionHistoryTitle').innerText(),'My Requests');
+        assert.equal(await actor.page.locator('#decisionHistoryTitle').innerText(),'Request');
+        assert((await actor.page.locator('#decisionHistoryBody .request-purpose').first().innerText()).includes('Second purpose visible'));
+        assert.equal(await actor.page.locator('#decisionHistoryBody .request-purpose script').count(),0);
+        assert.equal(await actor.page.locator('#decisionHistoryBody .request-purpose .category-badge').first().innerText(),'Travel Expense');
       }
       if(requests||tasks){
         await actor.page.locator('[data-ems-view="history"]').click();
@@ -449,10 +453,13 @@ try{
         assert(!await actor.page.locator('#emsTasks').isVisible());
         assert.equal(await actor.page.locator('#emsTasks #decisionHistoryCard').count(),0);
         await actor.page.getByText('ECF-history',{exact:true}).waitFor();
+        assert((await actor.page.locator('#decisionHistoryBody .request-purpose').first().innerText()).includes('Travel <script>literal</script>'));
+        assert((await actor.page.locator('#decisionHistoryBody .request-purpose').first().innerText()).includes('Second purpose visible'));
+        assert.equal(await actor.page.locator('#decisionHistoryBody .request-purpose script').count(),0);
         await actor.page.locator('#decisionHistoryBody').getByRole('button',{name:'Open',exact:true}).click();
         await actor.page.waitForFunction(()=>emsDetail?.id==='history');
-        assert.deepEqual(await actor.page.locator('#detailSummary th').allTextContents(),['Checker','Reviewer','Approver']);
-        assert.deepEqual(await actor.page.locator('#detailSummary td').allTextContents(),['UI Checker','UI Reviewer','UI Approver']);
+        assert.deepEqual(await actor.page.locator('#detailSummary th').allTextContents(),['Requestor','Checker','Reviewer','Approver']);
+        assert.deepEqual(await actor.page.locator('#detailSummary td').allTextContents(),['UI Requestor','UI Checker','UI Reviewer','UI Approver']);
         assert(!(await actor.page.locator('#detailSummary').innerText()).includes('001234567890'),
           'Bank details belong in the ECF PDF, not the modal summary.');
         assert((await actor.page.locator('#auditTrail').innerText()).includes('UI Checker · CHECKER'),
@@ -578,7 +585,10 @@ try{
       await actor.page.getByText('No matching requests.',{exact:true}).waitFor();
       await actor.page.locator('[data-ems-view="requests"]').click();
       await actor.page.getByText('ECF-history',{exact:true}).waitFor();
-      assert.equal(await actor.page.locator('#decisionHistoryTitle').innerText(),'My Requests');
+      assert.equal(await actor.page.locator('#decisionHistoryTitle').innerText(),'Request');
+        assert((await actor.page.locator('#decisionHistoryBody .request-purpose').first().innerText()).includes('Second purpose visible'));
+        assert.equal(await actor.page.locator('#decisionHistoryBody .request-purpose script').count(),0);
+        assert.equal(await actor.page.locator('#decisionHistoryBody .request-purpose .category-badge').first().innerText(),'Travel Expense');
       assert((await actor.page.locator('#decisionHistoryBody').innerText()).includes('Waiting for: UI Assigned Person'));
       await actor.page.locator('#decisionHistoryBody').getByRole('button',{name:'Open',exact:true}).click();
       await actor.page.waitForFunction(()=>emsDetail?.id==='history');

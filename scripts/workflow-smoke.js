@@ -13,7 +13,7 @@ const {
   pool,getEmployee,createExpenseRequest,transitionRequest,
   reviseExpenseRequest,recallExpenseRequest,createManagedEmployee,updateManagedEmployee,setManagedEmployeeActive,
   createEcfClaim,listRequestsForEmployee,listMyRequests,listTasksForEmployee,getEmsDashboard,getEcfRole,
-  getRequestDetail,listDecisionHistory,hasDecisionHistory
+  getRequestDetail,listDecisionHistory,hasDecisionHistory,getDashboardRequests
 }=await import('../src/db.js');
 
 function assert(condition,message){
@@ -106,6 +106,12 @@ try{
   assert(revised.status==='PENDING_REVIEW','Revision must return to PENDING_REVIEW.');
   assert(Number(revised.revision)===2,'Revision counter must become 2.');
 
+  for(const rows of [await listRequestsForEmployee(requestor),await listTasksForEmployee(reviewer),
+    (await getDashboardRequests(reviewer,{formType:'ALL',state:'active'})).requests]){
+    const summary=rows.find(r=>r.id===first.id)?.payment_summary;
+    assert(summary?.length===1 && summary[0].category==='Testing' && summary[0].purpose==='Revision 2',
+      'Queues must expose only current revision purpose/category, in item order.');
+  }
   const reviewed=await transitionRequest(first.id,reviewer,'REVIEW','APPROVE','');
   assert(reviewed.status==='PENDING_APPROVAL','Reviewer approval after revision must enter PENDING_APPROVAL.');
 
@@ -121,6 +127,11 @@ try{
 
   const finalApproved=await transitionRequest(first.id,approver,'APPROVAL','APPROVE','');
   assert(finalApproved.status==='APPROVED','Final approval must enter APPROVED.');
+  for(const rows of [await listDecisionHistory(reviewer),
+    (await getDashboardRequests(approver,{formType:'ALL',state:'approved'})).requests]){
+    assert(rows.find(r=>r.id===first.id)?.payment_summary[0]?.purpose==='Revision 3',
+      'Approved history must show the final revision purpose.');
+  }
   assert(!(await listRequestsForEmployee(reviewer)).some(r=>r.id===first.id),'Completed review must leave pending queue.');
   assert(!(await listRequestsForEmployee(approver)).some(r=>r.id===first.id),'Completed approval must leave pending queue.');
   assert((await listDecisionHistory(reviewer)).some(r=>r.id===first.id),'Reviewer must see own completed decision.');
