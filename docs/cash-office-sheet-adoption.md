@@ -27,8 +27,11 @@ Before enabling writes to the office workbook:
    transactions already exist unchanged in the office workbook, only metadata
    operations should be needed and CELL_WRITES must be zero.
 6. Preserve the current runtime environment and all three production mounts when
-   deploying, including the Google credential mount. Do not use the old two-mount
-   cash cutover helper unmodified. Enable the schedule after manual verification.
+   deploying, including the Google credential mount. The app-only script
+   `scripts/release-cash/deploy-office-mapping.sh RELEASE_SHA` preserves the
+   reviewed credential mount, requires the schedule paused and rechecks that
+   only metadata operations are planned. It never migrates/restores the database
+   or writes to Google Sheets. Enable the schedule after manual verification.
 
 EMS remains the writing authority after binding. External edits stop future
 syncs; this is not two-way synchronization. Do not silently reconcile ongoing

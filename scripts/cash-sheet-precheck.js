@@ -32,6 +32,7 @@ try{
     console.log('CELL_CHANGE:',JSON.stringify({sheet:sheet?.properties.title||'NEW',row:u.start.rowIndex+1,col:u.start.columnIndex+1,before:before||{},after:u.rows[0].values[0].userEnteredValue||{}}));
   }
   if(writes.length>30)console.log('Cell-change output limited to first 30.');
+  if(process.argv.includes('--metadata-only')&&plan.requests.some(r=>!r.createDeveloperMetadata&&!r.updateDeveloperMetadata))throw Error('Metadata-only gate: the proposed sync would change cells or sheets. Review before rollout.');
   console.log('PRECHECK_OK: no database or spreadsheet writes performed.');
 }catch(error){
   if(transaction)await client.query('rollback');

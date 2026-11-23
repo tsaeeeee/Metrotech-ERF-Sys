@@ -43,10 +43,18 @@ if(mode==='image'){
   assert.equal(app.Config.Labels['com.docker.compose.project.working_dir'],'/srv/metrotech/erf');
   assert.equal(Object.keys(app.HostConfig.PortBindings||{}).length,0,'Unexpected public app ports');
   assert.deepEqual(Object.keys(app.NetworkSettings.Networks).sort(),['metrotech_erf_internal','metrotech_proxy']);
-  assert.equal(app.Mounts.length,2,'Additional mounts require review');
+  const googleMount=app.Mounts.find(m=>m.Destination==='/run/secrets/ems-cash-google.json');
+  assert.equal(app.Mounts.length,googleMount?3:2,'Additional mounts require review');
+  if(googleMount){
+    assert.equal(googleMount.Type,'bind');
+    assert.equal(googleMount.Source,'/srv/metrotech/secrets/ems-cash-google.json');
+    assert.equal(googleMount.RW,false,'Google credential must be read-only');
+  }
   assert(app.Mounts.some(m=>m.Destination==='/data/pdfs'&&m.Type==='volume'&&m.Name==='metrotech_erf_pdfs'&&m.RW));
   assert(app.Mounts.some(m=>m.Destination==='/data/signatures'&&m.Type==='bind'&&m.Source==='/srv/metrotech/erf/signatures'&&!m.RW));
   const env=envMap(app.Config.Env),dbEnv=envMap(db.Config.Env);
+  if(googleMount)assert.equal(env.CASH_GOOGLE_KEY_FILE,googleMount.Destination);
+  else assert(!env.CASH_GOOGLE_KEY_FILE,'Google credential mount is missing');
   assert.equal(env.POSTGRES_DB||'metrotech_erf',dbEnv.POSTGRES_DB);
   assert.equal(env.POSTGRES_USER||'metrotech_erf',dbEnv.POSTGRES_USER);
   assert(env.POSTGRES_PASSWORD===dbEnv.POSTGRES_PASSWORD,'App/DB credentials differ; manual review required');
@@ -62,8 +70,9 @@ if(mode==='image'){
   // Config.Image can be a mutable tag that is reassigned during cutover. Pin
   // rollback to the actual image ID so the saved configuration cannot drift.
   assert(/^sha256:[0-9a-f]{64}$/.test(app.Image),'Missing exact original image ID');
+  const extraMounts=googleMount?{volumes:[{type:'bind',source:googleMount.Source,target:googleMount.Destination,read_only:true,bind:{create_host_path:false}}]}:{};
   for(const [name,image] of [['candidate',target],['rollback',app.Image]])
-    await save(`/release/${name}.compose.json`,{services:{app:{image,environment}}});
+    await save(`/release/${name}.compose.json`,{services:{app:{image,environment,...extraMounts}}});
   const endpoint=app.NetworkSettings.Networks.metrotech_proxy;
   assert(endpoint.IPAddress,'Missing production proxy address');
   assert((endpoint.Aliases||[]).every(alias=>['metrotech-erf-app','app'].includes(alias)||/^[0-9a-f]{12,64}$/.test(alias)),
@@ -86,11 +95,17 @@ if(mode==='image'){
   const [old]=await read('/release/app-before.json'),config=await read(target);
   assert(sorted(config.services.app.environment)===sorted(envMap(old.Config.Env)),
     'Compose would change runtime environment; review configuration before maintenance');
+  const configuredMounts=(config.services.app.volumes||[]).map(m=>[
+    m.target,m.type,m.type==='volume'?config.volumes?.[m.source]?.name||m.source:m.source,!m.read_only
+  ]).sort();
+  const expectedMounts=old.Mounts.map(m=>[m.Destination,m.Type,m.Type==='volume'?m.Name:m.Source,m.RW]).sort();
+  assert.deepEqual(configuredMounts,expectedMounts,'Compose would change production mounts');
   console.log('COMPOSE_RUNTIME_VERIFIED');
 }else if(mode==='container'){
   const [old]=await read('/release/app-before.json'),[current]=await read(target);
   assert(sorted(envMap(current.Config.Env))===sorted(envMap(old.Config.Env)),'Runtime environment changed');
   assert.deepEqual(mounts(current),mounts(old),'Production mounts changed');
+  for(const key of ['User','WorkingDir','Entrypoint','Cmd'])assert.deepEqual(current.Config[key],old.Config[key],`Runtime ${key} changed`);
   assert.equal(current.Image,extra,'Unexpected application image');
   console.log('RUNTIME_AND_MOUNTS_VERIFIED');
 }else if(['files','check-files','check-backup-files'].includes(mode)){
