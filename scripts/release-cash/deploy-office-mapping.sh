@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 umask 077
 repo=/srv/metrotech/erf
-baseline=2e155f0e9b648f22559cc74a2fb46ca029d96f7d
+baseline=63d20128186b0ce1a1e1155fa00e65eae190627f
 release=${1:?Supply the reviewed release SHA}
 office_id=1t3d8Chi78zX2WcvKO-oRsrxwsRCAumD6ZsrHWcw5nf4
 compose_project=erf
@@ -74,7 +74,7 @@ try {
 JS
 docker run --rm --read-only --network container:metrotech-erf-app \
   --volumes-from metrotech-erf-app:ro --env-file "$run/runtime.env" \
-  --entrypoint node "$candidate_image" scripts/cash-sheet-precheck.js "$office_id" --metadata-only
+  --entrypoint node "$candidate_image" scripts/cash-sheet-precheck.js "$office_id" --move-161-to-157
 
 google_override="$repo/docker-compose.google-backup.json"
 if [ -f "$google_override" ]; then cp -p "$google_override" "$run/google-override-before.json"; fi
@@ -133,7 +133,7 @@ connect_proxy
 maintenance=false
 trap - ERR
 cat "$run/health.json"
-printf '\nOFFICE_MAPPING_APP_READY\nCommit: %s\nImage: %s\nDeployment files: %s\nRollback image: %s\n' "$release" "$new_image" "$run" "$rollback_image"
+printf '\nCASH_GAP_FIX_APP_READY\nCommit: %s\nImage: %s\nDeployment files: %s\nRollback image: %s\n' "$release" "$new_image" "$run" "$rollback_image"
 echo 'No spreadsheet writes were performed by this deployment. Daily Backup remains paused.'
-echo 'Next: run Back Up Now in Cash Settings, verify OK, then enable Daily Backup.'
+echo 'Next: run Back Up Now, verify the transaction at row 157 and row 161 empty, then enable Daily Backup.'
 echo 'After first sync, do not use an older mapper for manual or scheduled backups.'

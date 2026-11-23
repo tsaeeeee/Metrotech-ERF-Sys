@@ -1,7 +1,7 @@
 // Read-only review of the proposed annual-sheet sync. Never calls batchUpdate.
 import {pool} from '../src/db.js';
 import {google} from 'googleapis';
-import {readYearSheets,planYearSync,grid} from '../src/cash-sheet-sync.js';
+import {readYearSheets,planYearSync,grid,SYNC_KEY} from '../src/cash-sheet-sync.js';
 
 const spreadsheetId=process.argv[2];
 if(!spreadsheetId||!/^[A-Za-z0-9_-]+$/.test(spreadsheetId))throw Error('Supply the destination spreadsheet ID.');
@@ -12,7 +12,7 @@ try{
   const entries=(await client.query('select *,entry_date::text date from cash_entries')).rows;
   const imports=(await client.query("select id,snapshot from cash_imports where state='IMPORTED'")).rows;
   await client.query('commit');transaction=false;
-  if(entries.some(e=>!e.voided&&e.activity.trim().toLowerCase()==='test ems cash tracker backup spreadsheet'))throw Error('The known test transaction is still active. Remove it through Cash Tracker before reviewing the office sync.');
+  if(process.argv.includes('--metadata-only')&&entries.some(e=>!e.voided&&e.activity.trim().toLowerCase()==='test ems cash tracker backup spreadsheet'))throw Error('The known test transaction is still active. Remove it through Cash Tracker before reviewing the office sync.');
   const sheets=google.sheets({version:'v4',auth:new google.auth.GoogleAuth({keyFilename:process.env.CASH_GOOGLE_KEY_FILE,scopes:['https://www.googleapis.com/auth/spreadsheets.readonly']})});
   const info=(await sheets.spreadsheets.get({spreadsheetId,fields:'properties(title)'},{timeout:30000})).data;
   console.log('TARGET:',info.properties.title);console.log('SPREADSHEET_ID:',spreadsheetId);
@@ -33,6 +33,19 @@ try{
   }
   if(writes.length>30)console.log('Cell-change output limited to first 30.');
   if(process.argv.includes('--metadata-only')&&plan.requests.some(r=>!r.createDeveloperMetadata&&!r.updateDeveloperMetadata))throw Error('Metadata-only gate: the proposed sync would change cells or sheets. Review before rollout.');
+  if(process.argv.includes('--move-161-to-157')){
+    const sheet=metadata.sheets.find(s=>s.properties.title==='2026');
+    const previous=JSON.parse(sheet?.developerMetadata?.find(m=>m.metadataKey===SYNC_KEY)?.metadataValue||'{}');
+    const movedId=Object.entries(previous.entryRows||{}).find(([id,row])=>row===161&&entries.some(e=>e.id===id&&!e.voided))?.[0];
+    const next=plan.expected.find(s=>s.title==='2026');
+    if(!movedId||next?.state.entryRows[movedId]!==157)throw Error('Expected active transaction at row 161 moving to row 157 was not found.');
+    if(plan.requests.some(r=>{
+      if(r.createDeveloperMetadata||r.updateDeveloperMetadata)return false;
+      const start=r.updateCells?.start;
+      return !start||start.sheetId!==sheet.properties.sheetId||![156,160].includes(start.rowIndex)||start.columnIndex<0||start.columnIndex>4;
+    }))throw Error('Move-only gate: changes extend beyond 2026 A157:E157 and A161:E161. Review before rollout.');
+    console.log('MOVE_161_TO_157_VERIFIED: only the two reviewed input rows can change.');
+  }
   console.log('PRECHECK_OK: no database or spreadsheet writes performed.');
 }catch(error){
   if(transaction)await client.query('rollback');

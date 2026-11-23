@@ -11,10 +11,13 @@ Repeated identical records are ambiguous and stop the entire sync. Unknown rows,
 different amounts and changed legacy descriptions also stop the sync.
 
 Accepted EMS IDs retain their office row positions in sheet developer metadata.
-This adds no worksheet columns, headers, formulas or formatting. Deleted records
-receive reserved empty positions; future entries append after all saved
-positions. Existing workbook bindings without this mapping retain their former
-positions when upgraded. No database migration is involved.
+This adds no worksheet columns, headers, formulas or formatting. Deleted EMS
+records stay in the database audit but release their spreadsheet positions.
+Active EMS rows close gaps left by those deleted records; future entries reuse
+the remaining known free positions before appending. Legacy source rows are not
+compacted. All cell changes and the updated ID mapping are committed in one
+Google batch, with the old source cells cleared to prevent duplicates. Rows with
+formulas or annotations stop a move for review. No database migration is involved.
 
 Before enabling writes to the office workbook:
 
@@ -29,8 +32,9 @@ Before enabling writes to the office workbook:
 6. Preserve the current runtime environment and all three production mounts when
    deploying, including the Google credential mount. The app-only script
    `scripts/release-cash/deploy-office-mapping.sh RELEASE_SHA` preserves the
-   reviewed credential mount, requires the schedule paused and rechecks that
-   only metadata operations are planned. It never migrates/restores the database
+   reviewed credential mount and requires the schedule paused. The gap-fix
+   release targets baseline 63d2012 and allows only the reviewed move from
+   2026 row 161 to row 157 (A:E), plus internal metadata updates. It never migrates/restores the database
    or writes to Google Sheets. Enable the schedule after manual verification.
 
 EMS remains the writing authority after binding. External edits stop future
@@ -42,4 +46,6 @@ newer version) in any app rollback. Older sync code does not understand the row
 mapping and could relocate transactions. Disable Daily Backup before reverting
 to an incompatible application image; do not run manual backup from that image.
 
-Isolated regression check: `node scripts/cash-sheet-sync-smoke.js`.
+Isolated regression check: `node scripts/cash-sheet-sync-smoke.js`. This includes
+an upgrade from the earlier four-reserved-row layout, atomic compaction,
+sequential following entries, retries, formatting and annotation protection.

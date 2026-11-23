@@ -62,18 +62,19 @@ await syncAnnualSheets(office.adapter,'office',reconcileData);
 assert.deepEqual(grid(office.document.sheets[0]),grid(officeBefore.sheets[0]),'All values, formulas, formatting and row positions remain unchanged on adoption.');
 const officeState=JSON.parse(office.document.sheets[0].developerMetadata[0].metadataValue);
 for(let i=0;i<5;i++)assert.equal(officeState.entryRows['office-'+i],5+i);
-assert.equal(officeState.entryRows['deleted-first'],10);
-assert.equal(officeState.entryRows['deleted-duplicate'],11);
+assert.equal(officeState.entryRows['deleted-first'],undefined);
+assert.equal(officeState.entryRows['deleted-duplicate'],undefined);
 assert.equal(planYearSync({metadata:office.document,...reconcileData}).requests.length,0,'Repeat creates no duplicate entries.');
 reconcileData.entries.find(e=>e.id==='office-2').outcome='999';
 await syncAnnualSheets(office.adapter,'office',reconcileData);
 assert.equal(grid(office.document.sheets[0])[6][4].userEnteredValue.numberValue,999,'Edit targets adopted office row.');
 reconcileData.entries.find(e=>e.id==='office-0').voided=true;
 await syncAnnualSheets(office.adapter,'office',reconcileData);
-assert(grid(office.document.sheets[0])[4].slice(0,5).every(c=>!c?.userEnteredValue),'Delete clears only the adopted row.');
+assert.equal(grid(office.document.sheets[0])[4][2].userEnteredValue.stringValue,'Office transaction 1','Active entries close a deleted native-row gap.');
+assert(grid(office.document.sheets[0])[8].slice(0,5).every(c=>!c?.userEnteredValue),'The vacated last row is cleared.');
 reconcileData.entries.push({...reconcileData.entries.find(e=>e.id==='office-1'),id:'new-after-adoption',activity:'New transaction',created_at:'2026-11-22'});
 await syncAnnualSheets(office.adapter,'office',reconcileData);
-assert.equal(grid(office.document.sheets[0])[11][2].userEnteredValue.stringValue,'New transaction','New entry appends after all reserved positions.');
+assert.equal(grid(office.document.sheets[0])[8][2].userEnteredValue.stringValue,'New transaction','New entry reuses the vacant row.');
 assert.equal(planYearSync({metadata:office.document,...reconcileData}).requests.length,0);
 const originalOfficeData=structuredClone(reconcileData);
 originalOfficeData.entries=originalOfficeData.entries.filter(e=>e.id!=='new-after-adoption');
@@ -89,3 +90,39 @@ assert.throws(()=>planYearSync({metadata:annualFixture(legacyMismatch),...origin
 const badMap=office.document,badState=JSON.parse(badMap.sheets[0].developerMetadata[0].metadataValue);badState.entryRows['office-1']=2;badMap.sheets[0].developerMetadata[0].metadataValue=JSON.stringify(badState);
 assert.throws(()=>planYearSync({metadata:badMap,...reconcileData}),/invalid EMS row mapping/);
 console.log('CASH_OFFICE_ADOPTION_OK: exact unique matches, stable row IDs, deleted tests, edit/delete/retry and conflict rejection');
+
+// Upgrade a bound workbook produced by the previous mapper: four deleted IDs
+// occupy blank slots and one active transaction sits immediately after them.
+const gapData=structuredClone(originalOfficeData);
+for(let i=0;i<2;i++)gapData.entries.push({...gapData.entries.find(e=>e.id==='deleted-first'),id:'extra-deleted-'+i});
+gapData.entries.push({id:'after-four-gaps',book_id:'office',origin:'EMS',date:'2026-11-22',category:'Tools',activity:'After four deleted rows',income:'1000000',outcome:'0',created_at:'2026-11-22'});
+const gapSnapshot=structuredClone(officeSnapshot);
+gapSnapshot.sheets[0].rows.push({row:14,values:['2026-11-22','Tools','After four deleted rows',1000000,'']});
+const gapMemory=sheetMemory(annualFixture(gapSnapshot));
+await syncAnnualSheets(gapMemory.adapter,'office',gapData);
+const oldGap=gapMemory.document;
+const oldGapState=JSON.parse(oldGap.sheets[0].developerMetadata[0].metadataValue);
+delete oldGapState.freeRows;
+for(const [i,e] of gapData.entries.filter(e=>e.voided).entries())oldGapState.entryRows[e.id]=10+i;
+oldGap.sheets[0].developerMetadata[0].metadataValue=JSON.stringify(oldGapState);
+const gap=sheetMemory(oldGap),gapBefore=gap.document;
+const gapPlan=planYearSync({metadata:gap.document,...gapData});
+assert(gapPlan.requests.filter(r=>r.updateCells).every(r=>[9,13].includes(r.updateCells.start.rowIndex)&&r.updateCells.start.columnIndex<5),'Only A:E of source and destination rows are changed.');
+await syncAnnualSheets(gap.adapter,'office',gapData);
+const gapRows=grid(gap.document.sheets[0]);
+assert.equal(gapRows[9][2].userEnteredValue.stringValue,'After four deleted rows');
+assert.equal(gapRows[9][3].userEnteredValue.numberValue,1000000);
+assert(gapRows[13].slice(0,5).every(c=>!c?.userEnteredValue),'Original copy cleared in the same batch.');
+for(let r=0;r<80;r++)for(let c=0;c<25;c++){
+  const before=grid(gapBefore.sheets[0])[r][c],after=gapRows[r][c];
+  if(![9,13].includes(r)||c>=5)assert.deepEqual(after,before,'Unrelated cells unchanged.');
+  else assert.deepEqual(after?.userEnteredFormat,before?.userEnteredFormat,'Formatting remains in place.');
+}
+assert.equal(planYearSync({metadata:gap.document,...gapData}).requests.length,0,'Compaction retries do not duplicate or move again.');
+const withNote=structuredClone(oldGap);withNote.sheets[0].data[0].rowData[13].values[2].note='Keep this annotation';
+assert.throws(()=>planYearSync({metadata:withNote,...gapData}),/annotated transaction/);
+gapData.entries.push({...gapData.entries.at(-1),id:'following-entry',activity:'Following transaction',created_at:'2026-11-23'});
+await syncAnnualSheets(gap.adapter,'office',gapData);
+assert.equal(grid(gap.document.sheets[0])[10][2].userEnteredValue.stringValue,'Following transaction');
+assert.equal(planYearSync({metadata:gap.document,...gapData}).requests.length,0);
+console.log('CASH_GAP_REUSE_OK: four deleted slots reclaimed, one atomic move, no duplicates, sequential inserts, format and annotation protection');

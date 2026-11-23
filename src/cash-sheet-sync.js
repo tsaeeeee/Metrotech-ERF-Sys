@@ -94,16 +94,27 @@ export function planYearSync({metadata,books,entries,imports}){
       if(!Number.isSafeInteger(e.source_row)||e.source_row<2||placements.has(e.source_row))stop(`Invalid source-row mapping in ${title}.`);
       placements.set(e.source_row,e);end=Math.max(end,e.source_row);
     }
+    const legacyEnd=end;
     const native=bookEntries.filter(e=>e.origin!=='LEGACY').sort((a,b)=>(new Date(a.created_at).getTime()-new Date(b.created_at).getTime())||a.id.localeCompare(b.id));
-    const entryRows={};
+    const entryRows={},freeRows=new Set(),ownedRows=new Set();
     const assign=(e,n)=>{
       if(!e||!Number.isSafeInteger(n)||n<2||placements.has(n)||Object.hasOwn(entryRows,e.id))stop(`Sheet ${title}: invalid EMS row mapping.`);
+      if(n>capacity)stop(`Sheet ${title}: transactions exceed formula capacity at row ${capacity}. No rows or formulas were changed.`);
       placements.set(n,e);entryRows[e.id]=n;end=Math.max(end,n);
     };
     if(tag&&Object.hasOwn(tag.value,'entryRows')){
       const saved=tag.value.entryRows;
       if(!saved||typeof saved!=='object'||Array.isArray(saved))stop(`Sheet ${title}: invalid EMS row mapping.`);
-      for(const [id,n] of Object.entries(saved))assign(native.find(e=>e.id===id),n);
+      for(const [id,n] of Object.entries(saved).sort((a,b)=>a[1]-b[1])){assign(native.find(e=>e.id===id),n);ownedRows.add(n);}
+      if(tag.value.freeRows!==undefined&&!Array.isArray(tag.value.freeRows))stop(`Sheet ${title}: invalid reusable row mapping.`);
+      for(const n of tag.value.freeRows||[]){
+        if(!Number.isSafeInteger(n)||n<=legacyEnd||n>capacity||placements.has(n)||freeRows.has(n))stop(`Sheet ${title}: invalid reusable row mapping.`);
+        if(rows[n-1]?.slice(0,5).some(c=>!blank(c)))stop(`Sheet ${title} row ${n}: reserved free row is not empty.`);
+        freeRows.add(n);ownedRows.add(n);end=Math.max(end,n);
+      }
+    }else if(tag){
+      // Infer the positions used by the original mapper before introducing IDs.
+      for(const e of native){assign(e,end+1);ownedRows.add(end);}
     }else if(!tag&&!isNew){
       // A different workbook can already contain transactions also entered in
       // EMS. Adopt their existing positions only on a unique, exact match of
@@ -115,9 +126,28 @@ export function planYearSync({metadata,books,entries,imports}){
         assign(matches[0],r+1);
       }
     }
-    // Retain deleted-entry positions and allocate new entries after all saved
-    // positions. Later edits and retries cannot shift a matched transaction.
-    for(const e of native)if(!Object.hasOwn(entryRows,e.id))assign(e,end+1);
+    // Deleted records remain in the EMS audit, but do not reserve visible gaps.
+    // Reuse only positions already owned by this integration, never arbitrary
+    // blank rows in the template or the legacy import area.
+    for(const [n,e] of [...placements])if(e.origin!=='LEGACY'&&e.voided){
+      placements.delete(n);delete entryRows[e.id];if(n>legacyEnd)freeRows.add(n);
+    }
+    const takeFree=()=>{
+      const n=Math.min(...freeRows);
+      if(rows[n-1]?.slice(0,5).some(c=>raw(c).formulaValue||c?.note))stop(`Sheet ${title} row ${n}: reusing a formula or annotated transaction requires review.`);
+      freeRows.delete(n);return n;
+    };
+    for(const [n,e] of [...placements].sort((a,b)=>a[0]-b[0]))if(e.origin!=='LEGACY'&&freeRows.size&&Math.min(...freeRows)<n){
+      const target=takeFree();placements.delete(n);delete entryRows[e.id];assign(e,target);freeRows.add(n);
+      for(const row of [n,target])if(rows[row-1]?.slice(0,5).some(c=>raw(c).formulaValue||c?.note))stop(`Sheet ${title} row ${row}: moving a formula or annotated transaction requires review.`);
+    }
+    for(const e of native)if(!e.voided&&!Object.hasOwn(entryRows,e.id))assign(e,freeRows.size?takeFree():end+1);
+    for(const n of ownedRows)if(!placements.has(n)){
+      for(let c=0;c<5;c++){
+        if(raw(rows[n-1]?.[c]).formulaValue||rows[n-1]?.[c]?.note)stop(`Sheet ${title} row ${n}: clearing a formula or annotated transaction requires review.`);
+        rows[n-1][c]={...rows[n-1][c],userEnteredValue:{}};
+      }
+    }
     if(Number(book.opening_balance)!==0){
       if(book.source_sheet!=null)stop(`Book ${title}: imported opening balance requires reconciliation.`);
       placements.set(2,{id:`opening:${book.id}`,date:`${title}-01-01`,category:'Cash Deposit',activity:`Opening balance ${title}`,income:book.opening_balance,outcome:'0.00',origin:'EMS'});
@@ -166,7 +196,7 @@ export function planYearSync({metadata,books,entries,imports}){
     }
     // Write only changed literals. Existing formulas never appear in a write.
     for(let r=1;r<rows.length;r++)for(let c=0;c<5;c++)if(!eq(raw(before[r][c]),raw(rows[r][c])))requests.push(cellRequest(sheetId,r,c,raw(rows[r][c])));
-    const state={book:book.id,input:digest(inputs(rows)),layout:digest(layout(rows)),entryRows};
+    const state={book:book.id,input:digest(inputs(rows)),layout:digest(layout(rows)),entryRows,freeRows:[...freeRows].sort((a,b)=>a-b)};
     if(!tag||!eq(tag.value,state))requests.push(metadataRequest(sheetId,state,tag?.metadata));
     expected.push({title,sheetId,state,formulas,rows,isNew});
   }
