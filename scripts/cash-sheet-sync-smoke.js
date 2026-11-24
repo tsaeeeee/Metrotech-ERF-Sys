@@ -126,3 +126,24 @@ await syncAnnualSheets(gap.adapter,'office',gapData);
 assert.equal(grid(gap.document.sheets[0])[10][2].userEnteredValue.stringValue,'Following transaction');
 assert.equal(planYearSync({metadata:gap.document,...gapData}).requests.length,0);
 console.log('CASH_GAP_REUSE_OK: four deleted slots reclaimed, one atomic move, no duplicates, sequential inserts, format and annotation protection');
+
+// Reconciled production case: the fifth entry was deleted in EMS and Sheets.
+const deletedGap=structuredClone(oldGap),deletedData=structuredClone(gapData);
+deletedData.entries=deletedData.entries.filter(e=>e.id!=='following-entry');
+deletedData.entries.find(e=>e.id==='after-four-gaps').voided=true;
+for(let c=0;c<5;c++)delete deletedGap.sheets[0].data[0].rowData[13].values[c].userEnteredValue;
+const {digest}=await import('../src/cash-model.js');
+const deletedState=JSON.parse(deletedGap.sheets[0].developerMetadata[0].metadataValue);
+deletedState.input=digest(grid(deletedGap.sheets[0]).slice(1).map(r=>Array.from({length:5},(_,c)=>r[c]?.userEnteredValue||{})));
+deletedGap.sheets[0].developerMetadata[0].metadataValue=JSON.stringify(deletedState);
+const deletedMemory=sheetMemory(deletedGap);
+const reclaim=planYearSync({metadata:deletedMemory.document,...deletedData});
+assert(reclaim.requests.every(r=>r.updateDeveloperMetadata||r.createDeveloperMetadata),'Reconciled deletion only updates markers.');
+assert.deepEqual(reclaim.expected[0].state.freeRows,[10,11,12,13,14]);
+await syncAnnualSheets(deletedMemory.adapter,'office',deletedData);
+assert.equal(planYearSync({metadata:deletedMemory.document,...deletedData}).requests.length,0);
+deletedData.entries.push({...deletedData.entries.find(e=>e.id==='after-four-gaps'),id:'next-after-deletion',voided:false,activity:'Next after deletion',created_at:'2026-11-24'});
+await syncAnnualSheets(deletedMemory.adapter,'office',deletedData);
+assert.equal(grid(deletedMemory.document.sheets[0])[9][2].userEnteredValue.stringValue,'Next after deletion');
+assert.equal(planYearSync({metadata:deletedMemory.document,...deletedData}).requests.length,0);
+console.log('CASH_RECONCILED_DELETION_OK: metadata-only reclamation, next entry uses first vacant slot, repeat has no writes');

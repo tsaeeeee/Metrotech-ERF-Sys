@@ -74,7 +74,7 @@ try {
 JS
 docker run --rm --read-only --network container:metrotech-erf-app \
   --volumes-from metrotech-erf-app:ro --env-file "$run/runtime.env" \
-  --entrypoint node "$candidate_image" scripts/cash-sheet-precheck.js "$office_id" --move-161-to-157
+  --entrypoint node "$candidate_image" scripts/cash-sheet-precheck.js "$office_id" --reclaim-deleted-157
 
 google_override="$repo/docker-compose.google-backup.json"
 if [ -f "$google_override" ]; then cp -p "$google_override" "$run/google-override-before.json"; fi
@@ -135,5 +135,5 @@ trap - ERR
 cat "$run/health.json"
 printf '\nCASH_GAP_FIX_APP_READY\nCommit: %s\nImage: %s\nDeployment files: %s\nRollback image: %s\n' "$release" "$new_image" "$run" "$rollback_image"
 echo 'No spreadsheet writes were performed by this deployment. Daily Backup remains paused.'
-echo 'Next: run Back Up Now, verify the transaction at row 157 and row 161 empty, then enable Daily Backup.'
+echo 'Next: run Back Up Now to record reclaimed slots, then test a new EMS entry at row 157 and retry without duplicates before enabling Daily Backup.'
 echo 'After first sync, do not use an older mapper for manual or scheduled backups.'
