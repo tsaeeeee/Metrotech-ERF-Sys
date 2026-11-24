@@ -18,7 +18,7 @@ git diff --cached --quiet
 git merge-base --is-ancestor "$baseline" "$release"
 while IFS= read -r file; do
   case "$file" in
-    src/cash-sheet-sync.js|scripts/cash-sheet-sync-smoke.js|scripts/cash-sheet-precheck.js|docs/cash-office-sheet-adoption.md|scripts/release-cash/cutover-check.js|scripts/release-cash/deploy-office-mapping.sh) ;;
+    src/cash-sheet-sync.js|scripts/cash-office-row-adopt.js|scripts/cash-sheet-sync-smoke.js|scripts/cash-sheet-precheck.js|docs/cash-office-sheet-adoption.md|scripts/release-cash/cutover-check.js|scripts/release-cash/deploy-office-mapping.sh) ;;
     *) echo "STOP: unexpected release file: $file"; exit 1 ;;
   esac
 done < <(git diff --name-only "$baseline" "$release")
@@ -36,7 +36,7 @@ rollback_image="erf-app:before-office-mapping-$stamp"
 candidate_image="erf-app:office-mapping-$stamp"
 docker image tag "$old_image" "$rollback_image"
 mkdir "$run/context"
-git archive "$release" src/cash-sheet-sync.js scripts/cash-sheet-sync-smoke.js \
+git archive "$release" src/cash-sheet-sync.js scripts/cash-office-row-adopt.js scripts/cash-sheet-sync-smoke.js \
   scripts/cash-sheet-memory.js scripts/cash-sheet-precheck.js scripts/release-cash |
   tar -x -C "$run/context"
 cp -a "$run/context/scripts/release-cash" "$run/tooling"
@@ -74,7 +74,7 @@ try {
 JS
 docker run --rm --read-only --network container:metrotech-erf-app \
   --volumes-from metrotech-erf-app:ro --env-file "$run/runtime.env" \
-  --entrypoint node "$candidate_image" scripts/cash-sheet-precheck.js "$office_id" --reclaim-deleted-157
+  --entrypoint node "$candidate_image" scripts/cash-sheet-precheck.js "$office_id" --reclaim-deleted-158
 
 google_override="$repo/docker-compose.google-backup.json"
 if [ -f "$google_override" ]; then cp -p "$google_override" "$run/google-override-before.json"; fi
@@ -135,5 +135,5 @@ trap - ERR
 cat "$run/health.json"
 printf '\nCASH_GAP_FIX_APP_READY\nCommit: %s\nImage: %s\nDeployment files: %s\nRollback image: %s\n' "$release" "$new_image" "$run" "$rollback_image"
 echo 'No spreadsheet writes were performed by this deployment. Daily Backup remains paused.'
-echo 'Next: run Back Up Now to record reclaimed slots, then test a new EMS entry at row 157 and retry without duplicates before enabling Daily Backup.'
+echo 'Next: run Back Up Now to record reclaimed slots, then test a new EMS entry at row 158 and retry without duplicates before enabling Daily Backup.'
 echo 'After first sync, do not use an older mapper for manual or scheduled backups.'
